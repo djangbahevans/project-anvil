@@ -1,9 +1,11 @@
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/main_window.hpp"
 
+#include <QAction>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
@@ -651,4 +653,73 @@ TEST_F(MainWindowTest, ExtensionCommandsAreAvailableFromTheCommandList) {
     }
     const auto ids = window_->bridge().host()->commands().command_ids();
     EXPECT_NE(std::find(ids.begin(), ids.end(), "anvil.docs.insert"), ids.end());
+}
+
+TEST_F(MainWindowTest, FindAndReplaceAreReachableFromTheEditMenuAndTheirShortcuts) {
+    create_window();
+    window_->activateWindow();
+    EXPECT_TRUE(window_->find_bar()->isHidden());
+
+    QTest::keyClick(window_->view(), Qt::Key_F, Qt::ControlModifier);
+    EXPECT_FALSE(window_->find_bar()->isHidden());
+    EXPECT_TRUE(window_->find_bar()->find_field()->hasFocus());
+    EXPECT_FALSE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
+
+    window_->find_bar()->close_bar();
+    QTest::keyClick(window_->view(), Qt::Key_H, Qt::ControlModifier);
+    EXPECT_TRUE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
+}
+
+TEST_F(MainWindowTest, TheFindBarSitsBetweenTheTabBarAndTheEditor) {
+    create_window();
+    window_->find_bar()->open();
+    QApplication::processEvents();
+    const int tabs_bottom = window_->tab_bar()->geometry().bottom();
+    const int bar_top = window_->find_bar()->geometry().top();
+    const int bar_bottom = window_->find_bar()->geometry().bottom();
+    const int editor_top = window_->view()->geometry().top();
+    EXPECT_LE(tabs_bottom, bar_top);
+    EXPECT_LE(bar_bottom, editor_top);
+}
+
+TEST_F(MainWindowTest, FindNextAndPreviousWorkFromTheMenuShortcuts) {
+    create_window();
+    window_->activateWindow();
+    window_->view()->setFocus();
+    type("a b a b");
+    window_->find_bar()->open();
+    window_->find_bar()->find_field()->setText("b");
+    ASSERT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
+
+    QTest::keyClick(window_->view(), Qt::Key_F3);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{6, 7}));
+    QTest::keyClick(window_->view(), Qt::Key_F3, Qt::ShiftModifier);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
+}
+
+TEST_F(MainWindowTest, SwitchingTabsSearchesTheNewDocument) {
+    create_window();
+    const auto path = write("b.txt", "x x x x");
+    window_->find_bar()->open();
+    window_->find_bar()->find_field()->setText("x");
+    ASSERT_EQ(window_->find_bar()->match_count(), 0u);
+
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    EXPECT_EQ(window_->find_bar()->match_count(), 4u);
+    window_->tab_bar()->setCurrentIndex(0);
+    EXPECT_EQ(window_->find_bar()->match_count(), 0u);
+}
+
+TEST_F(MainWindowTest, ReplacingMarksTheDocumentModifiedAndReachesTheTab) {
+    create_window();
+    const auto path = write("c.txt", "one two one");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    ASSERT_FALSE(window_->isWindowModified());
+    window_->find_bar()->open(true);
+    window_->find_bar()->find_field()->setText("one");
+    window_->find_bar()->replace_field()->setText("1");
+    window_->find_bar()->replace_all();
+    EXPECT_EQ(window_->current_document()->text().to_string(), "1 two 1");
+    EXPECT_TRUE(window_->isWindowModified());
+    EXPECT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● c.txt"));
 }

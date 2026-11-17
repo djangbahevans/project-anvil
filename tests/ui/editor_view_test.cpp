@@ -266,6 +266,108 @@ TEST_F(EditorViewTest, PaintsTextLineNumbersAndSelections) {
     }
 }
 
+TEST_F(EditorViewTest, HighlightsAreShadedInAColorDifferentFromTheSelection) {
+    open("find me, find me\nsecond line");
+    const QColor background = view_.palette().color(QPalette::Base);
+    // The line with the caret has its own shade.
+    const QColor caret_line = view_.palette().color(QPalette::AlternateBase);
+    const QColor selection = view_.palette().color(QPalette::Highlight);
+    view_.set_highlights({{0, 4}, {9, 13}});
+    QApplication::processEvents();
+
+    QImage image = view_.viewport()->grab().toImage();
+    const auto color_at = [&](std::size_t offset) {
+        const QRect rect = view_.cursor_rect(offset);
+        return image.pixelColor(rect.x() + 2, rect.y() + 1);
+    };
+    EXPECT_NE(color_at(1), caret_line);
+    EXPECT_NE(color_at(1), selection);
+    EXPECT_EQ(color_at(10), color_at(1));
+    EXPECT_EQ(color_at(6), caret_line);
+    EXPECT_EQ(color_at(20), background);
+
+    // A selection over a highlighted match is drawn as a selection.
+    view_.select_range({9, 13});
+    QApplication::processEvents();
+    image = view_.viewport()->grab().toImage();
+    EXPECT_EQ(color_at(10), selection);
+    EXPECT_NE(color_at(1), background);
+    EXPECT_NE(color_at(1), caret_line);
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/editor_view_highlights.png");
+    }
+}
+
+TEST_F(EditorViewTest, HighlightsAcrossLineBreaksAndEmptyRangesArePainted) {
+    open("ab\ncd");
+    const QColor background = view_.palette().color(QPalette::Base);
+    const QColor caret_line = view_.palette().color(QPalette::AlternateBase);
+    view_.set_highlights({{1, 1}, {1, 5}});
+    QApplication::processEvents();
+    const QImage image = view_.viewport()->grab().toImage();
+    const auto color_at = [&](std::size_t offset) {
+        const QRect rect = view_.cursor_rect(offset);
+        return image.pixelColor(rect.x() + 2, rect.y() + 1);
+    };
+    EXPECT_NE(color_at(1), caret_line);
+    EXPECT_NE(color_at(3), background);
+    EXPECT_NE(color_at(4), background);
+    EXPECT_EQ(color_at(0), caret_line);
+}
+
+TEST_F(EditorViewTest, ShowingAnotherDocumentRemovesTheHighlights) {
+    open("abc");
+    view_.set_highlights({{0, 3}});
+    view_.set_document(make_document("abc"));
+    QApplication::processEvents();
+    const QImage image = view_.viewport()->grab().toImage();
+    const QRect rect = view_.cursor_rect(1);
+    EXPECT_EQ(image.pixelColor(rect.x() + 2, rect.y() + 1),
+              view_.palette().color(QPalette::AlternateBase));
+}
+
+TEST_F(EditorViewTest, SelectRangeSelectsAndScrollsToShowIt) {
+    std::string lines;
+    for (int i = 0; i < 500; ++i) {
+        lines += "line " + std::to_string(i) + "\n";
+    }
+    open(lines);
+    QSignalSpy selections(&view_, &EditorView::selections_changed);
+    const std::size_t begin = text().find("line 400");
+    view_.select_range({begin, begin + 8});
+    EXPECT_EQ(primary(), (core::Selection{begin, begin + 8}));
+    EXPECT_EQ(selections.count(), 1);
+    const QRect rect = view_.cursor_rect(begin);
+    EXPECT_GE(rect.y(), 0);
+    EXPECT_LT(rect.y(), view_.viewport()->height());
+}
+
+TEST_F(EditorViewTest, ReplaceRangesReportsOneChangeAndUndoesAsOneStep) {
+    open("one two one");
+    QSignalSpy changes(&view_, &EditorView::text_changed);
+    QSignalSpy content(&view_, &EditorView::content_changed);
+    view_.replace_ranges({{0, 3, "1"}, {8, 11, "1"}});
+    EXPECT_EQ(text(), "1 two 1");
+    EXPECT_EQ(changes.count(), 1);
+    EXPECT_EQ(content.count(), 1);
+    view_.undo();
+    EXPECT_EQ(text(), "one two one");
+}
+
+TEST_F(EditorViewTest, ContentChangedIsReportedForEditsAndForOtherDocuments) {
+    open("abc");
+    QSignalSpy content(&view_, &EditorView::content_changed);
+    type("x");
+    EXPECT_EQ(content.count(), 1);
+    key(Qt::Key_Left);
+    EXPECT_EQ(content.count(), 1);
+    view_.document_changed_elsewhere();
+    EXPECT_EQ(content.count(), 2);
+    view_.set_document(make_document("other"));
+    EXPECT_EQ(content.count(), 3);
+}
+
 TEST_F(EditorViewTest, TheGutterWidensForLongDocuments) {
     open("a\nb");
     const int narrow = view_.cursor_rect(0).x();

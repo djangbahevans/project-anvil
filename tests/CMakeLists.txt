@@ -2,9 +2,11 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(anvil_core_tests
+  core/char_class_test.cpp
   core/document_model_test.cpp
   core/document_test.cpp
   core/editing_test.cpp
+  core/search_test.cpp
   core/selection_test.cpp
   core/text_buffer_test.cpp
   core/text_file_test.cpp
@@ -70,6 +72,7 @@ if(TARGET anvil_ui)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   add_executable(anvil_ui_tests
     ui/editor_view_test.cpp
+    ui/find_bar_test.cpp
     ui/main_window_test.cpp
     ui/ui_test_main.cpp
   )

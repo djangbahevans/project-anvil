@@ -5,6 +5,7 @@
 #include "anvil/core/uri.hpp"
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
+#include "anvil/ui/find_bar.hpp"
 
 #include <QMainWindow>
 #include <memory>
@@ -27,8 +28,9 @@ struct MainWindowOptions {
 };
 
 // The application window: a tab bar of the open documents above one editor showing the selected
-// one, menus for files, editing and extension commands, and a status bar. With an extension host
-// configured, extensions see the open documents and can edit and show them.
+// one, a find and replace bar between them, menus for files, editing and extension commands, and a
+// status bar. With an extension host configured, extensions see the open documents and can edit and
+// show them.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -52,6 +54,9 @@ public:
     }
     QTabBar* tab_bar() {
         return tabs_;
+    }
+    FindBar* find_bar() {
+        return find_bar_;
     }
     ExtensionHostBridge& bridge() {
         return bridge_;
@@ -105,6 +110,7 @@ private:
     Options options_;
     QTabBar* tabs_ = nullptr;
     EditorView* view_ = nullptr;
+    FindBar* find_bar_ = nullptr;
     ExtensionHostBridge bridge_;
     // Parallel to the tabs: documents_[i] is shown by tab i.
     std::vector<OpenDocument> documents_;

@@ -2,12 +2,15 @@
 
 #include "anvil/core/document.hpp"
 #include "anvil/core/editing.hpp"
+#include "anvil/core/search.hpp"
 
 #include <QAbstractScrollArea>
 #include <QElapsedTimer>
 #include <QString>
 #include <QTimer>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace anvil::ui {
 
@@ -43,6 +46,17 @@ public:
     // Call after something other than this view changed the document or its selections.
     void document_changed_elsewhere();
 
+    // Makes `range` the only selection and scrolls to show it.
+    void select_range(core::Selection range);
+    // Applies the edits as one undo step, as the user's own change: the window is told through
+    // `text_changed`. See EditController::replace_ranges.
+    void replace_ranges(std::vector<core::Edit> edits,
+                        std::optional<core::Selection> selection_after = std::nullopt);
+
+    // Shades the given byte ranges, which must be ordered and must not overlap, in a color that
+    // differs from the selection. Empty ranges are not shown.
+    void set_highlights(std::vector<core::Match> highlights);
+
     // The caret rectangle of byte `offset`, in viewport coordinates.
     QRect cursor_rect(std::size_t offset) const;
     // The byte offset nearest to a point in viewport coordinates.
@@ -60,6 +74,9 @@ signals:
     void text_changed(const anvil::core::DocumentChange& change);
     // The selections changed, whether or not the text did.
     void selections_changed();
+    // The text shown may differ from before: the user or someone else edited it, or another
+    // document is shown.
+    void content_changed();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -100,6 +117,7 @@ private:
     QTimer caret_timer_;
     QElapsedTimer since_double_click_;
     QString preedit_;
+    std::vector<core::Match> highlights_;
 };
 
 } // namespace anvil::ui

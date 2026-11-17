@@ -20,6 +20,7 @@ namespace {
 constexpr int text_padding = 6;
 constexpr int gutter_padding = 8;
 constexpr int tab_columns = 4;
+const QColor match_highlight(255, 190, 0, 90);
 
 QString to_qstring(const std::string& utf8) {
     return QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
@@ -83,14 +84,36 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     document_ = std::move(document);
     controller_ = document_ ? std::make_unique<core::EditController>(*document_) : nullptr;
     max_line_width_ = 0;
+    highlights_.clear();
     verticalScrollBar()->setValue(0);
     horizontalScrollBar()->setValue(0);
     update_scroll_bars();
     viewport()->update();
+    emit content_changed();
 }
 
 void EditorView::document_changed_elsewhere() {
     update_scroll_bars();
+    viewport()->update();
+    emit content_changed();
+}
+
+void EditorView::select_range(core::Selection range) {
+    if (controller_) {
+        apply(controller_->select(range));
+        ensure_cursor_visible();
+    }
+}
+
+void EditorView::replace_ranges(std::vector<core::Edit> edits,
+                                std::optional<core::Selection> selection_after) {
+    if (controller_) {
+        apply(controller_->replace_ranges(std::move(edits), selection_after));
+    }
+}
+
+void EditorView::set_highlights(std::vector<core::Match> highlights) {
+    highlights_ = std::move(highlights);
     viewport()->update();
 }
 
@@ -208,6 +231,7 @@ void EditorView::apply(const core::EditOutcome& outcome) {
     viewport()->update();
     if (outcome.change) {
         emit text_changed(*outcome.change);
+        emit content_changed();
     }
     if (outcome.selections_changed) {
         emit selections_changed();
@@ -493,6 +517,24 @@ void EditorView::paintEvent(QPaintEvent*) {
         const std::size_t line_units = text.utf16_offset(line_begin);
 
         QList<QTextLayout::FormatRange> formats;
+        // Highlights go first so that a selection over a highlighted match is drawn on top.
+        auto highlight = std::lower_bound(
+            highlights_.begin(), highlights_.end(), line_begin,
+            [](const core::Match& match, std::size_t offset) { return match.end <= offset; });
+        for (; highlight != highlights_.end() && highlight->begin <= line_end; ++highlight) {
+            const std::size_t from = std::max(highlight->begin, line_begin);
+            const std::size_t to = std::min(highlight->end, line_end);
+            if (from < to) {
+                QTextCharFormat format;
+                format.setBackground(match_highlight);
+                const int start_column = static_cast<int>(text.utf16_offset(from) - line_units);
+                const int end_column = static_cast<int>(text.utf16_offset(to) - line_units);
+                formats.push_back(
+                    {start_column,
+                     std::min(end_column, static_cast<int>(layout->size())) - start_column,
+                     format});
+            }
+        }
         for (const core::Selection& selection : selections) {
             const std::size_t from = std::max(selection.start(), line_begin);
             const std::size_t to = std::min(selection.end(), line_end);

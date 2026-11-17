@@ -50,7 +50,9 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     tabs_->setDocumentMode(true);
     tabs_->setFocusPolicy(Qt::NoFocus);
     view_ = new EditorView(central);
+    find_bar_ = new FindBar(view_, central);
     layout->addWidget(tabs_);
+    layout->addWidget(find_bar_);
     layout->addWidget(view_, 1);
     setCentralWidget(central);
 
@@ -133,6 +135,13 @@ void MainWindow::build_menus() {
     edit->addAction(tr("&Paste"), QKeySequence::Paste, view_, &EditorView::paste);
     edit->addSeparator();
     edit->addAction(tr("Select &All"), QKeySequence::SelectAll, view_, &EditorView::select_all);
+    edit->addSeparator();
+    edit->addAction(tr("&Find…"), QKeySequence::Find, this, [this] { find_bar_->open(false); });
+    edit->addAction(tr("Find &Next"), QKeySequence::FindNext, find_bar_, &FindBar::find_next);
+    edit->addAction(tr("Find Pre&vious"), QKeySequence::FindPrevious, find_bar_,
+                    &FindBar::find_previous);
+    edit->addAction(tr("&Replace…"), QKeySequence::Replace, this,
+                    [this] { find_bar_->open(true); });
 
     QMenu* commands = menuBar()->addMenu(tr("&Commands"));
     commands->addAction(tr("&Run Command…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this,
