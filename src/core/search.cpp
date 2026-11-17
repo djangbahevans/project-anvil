@@ -81,9 +81,10 @@ struct SearchImpl {
     Code code;
     bool jit = false;
     std::size_t window_bytes = Search::default_window_bytes;
-    // The longest a match can be, as bytes, so that a window reaching that far past a position
-    // holds every match that begins there. A character can match other-case forms that are
-    // longer than itself, but never by more than four bytes in total.
+    // An upper bound on the length of a match, as bytes, so that a window reaching that far past
+    // a position holds every match that begins there. Each character of the pattern matches
+    // characters of at most four bytes, whatever its own length: "k" matches the three-byte
+    // Kelvin sign when case is ignored.
     std::size_t max_match_bytes = 0;
 };
 
@@ -98,13 +99,9 @@ struct Found {
     std::size_t begin = 0;
     std::size_t end = 0;
     std::string_view subject;
-    std::size_t subject_start = 0;
     const PCRE2_SIZE* ovector = nullptr;
     std::size_t pairs = 0;
 
-    std::size_t group_count() const {
-        return pairs;
-    }
     std::string_view group(std::size_t index) const {
         if (index >= pairs || ovector[2 * index] == PCRE2_UNSET) {
             return {};
@@ -131,9 +128,14 @@ public:
     }
 
     // Reports the matches that begin in [from, start_limit), where no match extends past
-    // `bound`, in order and without overlap.
+    // `bound`, in order and without overlap. An offset inside a character moves to the next
+    // character start for `from` and back to the previous one for `bound`.
     std::expected<void, Error> scan(std::size_t from, std::size_t start_limit, std::size_t bound,
                                     const Visitor& visit) {
+        bound = std::min(bound, text_.size());
+        while (!text_.is_char_boundary(bound)) {
+            --bound;
+        }
         if (from > bound) {
             return {};
         }
@@ -274,8 +276,8 @@ private:
                 position = begin + char_length(subject[begin]);
                 continue;
             }
-            const Found found{base + begin, base + end, subject,
-                              base,         ovector,    pcre2_get_ovector_count(data_.get())};
+            const Found found{base + begin, base + end, subject, ovector,
+                              pcre2_get_ovector_count(data_.get())};
             if (!visit(found)) {
                 return Progress{true, base + end};
             }
@@ -358,7 +360,7 @@ std::string expand(const std::vector<ReplacementPiece>& pieces, const Found& fou
         if (piece.one < 0) {
             continue;
         }
-        const auto count = static_cast<int>(found.group_count());
+        const auto count = static_cast<int>(found.pairs);
         if (piece.two >= 0 && piece.two < count) {
             result += found.group(static_cast<std::size_t>(piece.two));
         } else if (piece.one < count) {

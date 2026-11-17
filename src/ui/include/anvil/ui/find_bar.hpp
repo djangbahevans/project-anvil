@@ -87,8 +87,10 @@ private:
         std::optional<Error> error;
     };
 
-    static Results search_snapshot(const core::Search& search, const core::Text& text,
-                                   std::optional<std::size_t> navigate_from,
+    // Fills in the matches of `results`, whose identity fields are already set. With
+    // `navigate_from`, also finds the match to select.
+    static Results search_snapshot(Results results, const core::Search& search,
+                                   const core::Text& text, std::optional<std::size_t> navigate_from,
                                    const std::stop_token& stop);
 
     core::Query query() const;
@@ -99,6 +101,8 @@ private:
     void apply(Results results);
     void navigate(Direction direction);
     void select(const core::Match& match, bool wrapped);
+    // True when `match` is an empty match that the selection (a caret) already sits on.
+    static bool is_selected_empty_match(const core::Match& match, const core::Selection& selection);
     bool results_are_current() const;
     void cancel_search();
     void update_status();

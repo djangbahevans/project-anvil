@@ -1,11 +1,13 @@
 #include "anvil/ui/find_bar.hpp"
 
+#include <QCoreApplication>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMetaObject>
+#include <QPointer>
 #include <QThreadPool>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -191,10 +193,10 @@ void FindBar::cancel_search() {
     navigate_when_done_.reset();
 }
 
-FindBar::Results FindBar::search_snapshot(const core::Search& search, const core::Text& text,
+FindBar::Results FindBar::search_snapshot(Results results, const core::Search& search,
+                                          const core::Text& text,
                                           std::optional<std::size_t> navigate_from,
                                           const std::stop_token& stop) {
-    Results results;
     if (navigate_from) {
         auto target = search.find_next(text, *navigate_from, true);
         if (target) {
@@ -232,32 +234,35 @@ void FindBar::refresh(bool navigate) {
     if (navigate) {
         from = document->selections().primary().start();
     }
-    Results results;
-    results.generation = generation_;
-    results.document = document.get();
-    results.version = document->version();
+    Results identity;
+    identity.generation = generation_;
+    identity.document = document.get();
+    identity.version = document->version();
 
     if (text.size() <= synchronous_limit_bytes) {
-        Results found = search_snapshot(*search_, text, from, {});
-        found.generation = results.generation;
-        found.document = results.document;
-        found.version = results.version;
-        apply(std::move(found));
+        apply(search_snapshot(identity, *search_, text, from, {}));
         return;
     }
 
     searching_ = true;
     update_status();
-    QThreadPool::globalInstance()->start(
-        [this, search = *search_, text, from, results, token = stop_.get_token()] {
-            Results found = search_snapshot(search, text, from, token);
-            found.generation = results.generation;
-            found.document = results.document;
-            found.version = results.version;
+    // The task may outlive this bar. It hands its result to the application object, which
+    // outlives every widget, and the bar is looked up there on the GUI thread, where it cannot be
+    // destroyed in between.
+    QThreadPool::globalInstance()->start([self = QPointer<FindBar>(this), search = *search_, text,
+                                          from, identity, token = stop_.get_token()] {
+        Results found = search_snapshot(identity, search, text, from, token);
+        if (QCoreApplication* application = QCoreApplication::instance()) {
             QMetaObject::invokeMethod(
-                this, [this, found = std::move(found)]() mutable { apply(std::move(found)); },
+                application,
+                [self, found = std::move(found)]() mutable {
+                    if (self) {
+                        self->apply(std::move(found));
+                    }
+                },
                 Qt::QueuedConnection);
-        });
+        }
+    });
 }
 
 void FindBar::apply(Results results) {
@@ -321,8 +326,12 @@ void FindBar::navigate(Direction direction) {
             matches_.begin(), matches_.end(), from,
             [](const core::Match& match, std::size_t offset) { return match.begin < offset; });
         if (direction == Direction::forward) {
-            const bool wrapped = first_at_or_after == matches_.end();
-            select(wrapped ? matches_.front() : *first_at_or_after, wrapped);
+            auto next = first_at_or_after;
+            if (next != matches_.end() && is_selected_empty_match(*next, selection)) {
+                ++next;
+            }
+            const bool wrapped = next == matches_.end();
+            select(wrapped ? matches_.front() : *next, wrapped);
         } else {
             const bool wrapped = first_at_or_after == matches_.begin();
             select(wrapped ? matches_.back() : *(first_at_or_after - 1), wrapped);
@@ -330,15 +339,28 @@ void FindBar::navigate(Direction direction) {
         return;
     }
 
-    auto hit = direction == Direction::forward
-                   ? search_->find_next(document->text(), from, true)
-                   : search_->find_previous(document->text(), from, true);
+    const core::Text text = document->text();
+    auto hit = direction == Direction::forward ? search_->find_next(text, from, true)
+                                               : search_->find_previous(text, from, true);
+    if (hit && *hit && direction == Direction::forward &&
+        is_selected_empty_match((*hit)->match, selection)) {
+        std::size_t after = from + 1;
+        while (after < text.size() && !text.is_char_boundary(after)) {
+            ++after;
+        }
+        hit = search_->find_next(text, after, true);
+    }
     if (!hit) {
         search_error_ = QString::fromStdString(hit.error().message);
         update_status();
     } else if (*hit) {
         select((*hit)->match, (*hit)->wrapped);
     }
+}
+
+// An empty match is a caret, so searching on from the caret would find it again.
+bool FindBar::is_selected_empty_match(const core::Match& match, const core::Selection& selection) {
+    return selection.empty() && match.begin == match.end && match.begin == selection.start();
 }
 
 void FindBar::select(const core::Match& match, bool wrapped) {

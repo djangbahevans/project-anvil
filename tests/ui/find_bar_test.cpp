@@ -5,6 +5,7 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QTest>
+#include <QThreadPool>
 #include <QToolButton>
 #include <gtest/gtest.h>
 
@@ -438,4 +439,74 @@ TEST_F(FindBarTest, ASearchThatCannotFinishReportsAnErrorInsteadOfFreezing) {
     toggle(bar_.regex_button());
     find("(a+)+$");
     EXPECT_NE(bar_.status().indexOf("too complex"), -1);
+}
+
+TEST_F(FindBarTest, EmptyMatchesAreSteppedThroughInsteadOfFoundAgain) {
+    open("ab\ncd\nef");
+    toggle(bar_.regex_button());
+    find("^");
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+    EXPECT_EQ(bar_.status(), "1 of 3");
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(3));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(6));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+    EXPECT_TRUE(bar_.status().contains("wrapped"));
+
+    bar_.find_previous();
+    EXPECT_EQ(primary(), core::Selection::caret(6));
+    bar_.find_previous();
+    EXPECT_EQ(primary(), core::Selection::caret(3));
+}
+
+TEST_F(FindBarTest, EmptyMatchesBetweenCharactersAreSteppedThrough) {
+    open("aé");
+    toggle(bar_.regex_button());
+    find("x*");
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(1));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(3));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+}
+
+TEST_F(FindBarTest, EmptyMatchesAreSteppedThroughWhenTheListIsIncomplete) {
+    open(std::string(FindBar::match_limit + 100, '\n'));
+    toggle(bar_.regex_button());
+    find("^");
+    ASSERT_EQ(bar_.match_count(), FindBar::match_limit);
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(1));
+    bar_.find_next();
+    EXPECT_EQ(primary(), core::Selection::caret(2));
+}
+
+TEST_F(FindBarTest, ANonEmptyMatchAtTheCaretIsSelectedByFindNext) {
+    open("ab ab");
+    find("ab");
+    view_.select_range({3, 3});
+    bar_.find_next();
+    EXPECT_EQ(primary(), (core::Selection{3, 5}));
+}
+
+TEST_F(FindBarTest, ABarDestroyedWhileSearchingDoesNotReceiveTheResult) {
+    std::string big;
+    while (big.size() < 3 * FindBar::synchronous_limit_bytes) {
+        big += "line " + std::to_string(big.size()) + "\n";
+    }
+    view_.set_document(make_document(big));
+    view_.show();
+    auto bar = std::make_unique<FindBar>(&view_);
+    bar->open();
+    bar->find_field()->setText("line");
+    ASSERT_TRUE(bar->is_searching());
+    bar.reset();
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+    SUCCEED();
 }
