@@ -41,6 +41,9 @@ public:
         // An extension asked to show the document in an editor. The service has made its editor
         // the active one.
         std::function<void(const core::Uri&)> show_requested;
+        // An extension saved the document to its file. The service has written the file, marked
+        // the document saved and told the extension host.
+        std::function<void(const core::Uri&)> saved;
     };
     void set_observer(Observer observer) {
         observer_ = std::move(observer);

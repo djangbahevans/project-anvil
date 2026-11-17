@@ -446,6 +446,31 @@ TEST_F(DocumentsServiceTest, SaveDocumentWritesTheFileMarksSavedAndAnnounces) {
     EXPECT_NE(out.index_of_call("ExtHostDocuments.$acceptModelSaved"), out.messages.size());
 }
 
+TEST_F(DocumentsServiceTest, TheObserverLearnsOfExtensionSaves) {
+    const auto path = scratch_ / "observed.txt";
+    ASSERT_TRUE(anvil::platform::write_file(path, "a").has_value());
+    const core::Uri uri = core::Uri::file(path);
+    ASSERT_TRUE(service_.add_document(uri, make_document("a")).has_value());
+    synchronize();
+    std::vector<std::string> saved;
+    DocumentsService::Observer observer;
+    observer.saved = [&](const core::Uri& u) {
+        saved.push_back(u.path);
+        EXPECT_FALSE(service_.find(u)->is_dirty()); // already marked saved when observers run
+    };
+    service_.set_observer(observer);
+
+    ASSERT_TRUE(service_.find(uri)->apply_edits(std::vector<core::Edit>{{1, 1, "!"}}).has_value());
+    request(ProxyId::MainThreadDocuments, "$trySaveDocument", json::array({uri_to_json(uri)}));
+    EXPECT_EQ(saved, (std::vector<std::string>{uri.path}));
+
+    // a save the editor performs itself is not reported back to it, and neither is a failure
+    service_.document_saved(uri);
+    request(ProxyId::MainThreadDocuments, "$trySaveDocument",
+            json::array({uri_to_json(core::Uri{"untitled", "", "Untitled-1", "", ""})}));
+    EXPECT_EQ(saved.size(), 1u);
+}
+
 TEST_F(DocumentsServiceTest, SaveDocumentReportsFalseForUnsavableDocuments) {
     synchronize();
     EXPECT_EQ(request(ProxyId::MainThreadDocuments, "$trySaveDocument",

@@ -36,6 +36,11 @@ std::expected<void, Error> ExtensionHostBridge::start(const Config& config,
             callbacks_.show_requested(uri);
         }
     };
+    observer.saved = [this](const core::Uri& uri) {
+        if (callbacks_.saved) {
+            callbacks_.saved(uri);
+        }
+    };
     host_->documents().set_observer(std::move(observer));
     timer_.start();
     return {};

@@ -10,6 +10,8 @@
 #include <QTabBar>
 #include <QTest>
 #include <QTimer>
+#include <chrono>
+#include <functional>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
@@ -102,19 +104,25 @@ protected:
         return {};
     }
 
-    // Presses `button` in the next modal message box the window opens; `prompt_shown_` tells
-    // whether one opened.
-    void answer_next_prompt(QMessageBox::StandardButton button) {
+    // Presses `button` in the next modal message box the window opens, after running `while_open`
+    // with the box on screen; `prompt_shown_` tells whether one opened.
+    void answer_next_prompt(QMessageBox::StandardButton button,
+                            std::function<void()> while_open = {}) {
         prompt_shown_ = false;
         auto* timer = new QTimer(window_.get());
         timer->setInterval(5);
-        QObject::connect(timer, &QTimer::timeout, timer, [this, timer, button] {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                prompt_shown_ = true;
-                timer->deleteLater();
-                box->button(button)->click();
-            }
-        });
+        QObject::connect(
+            timer, &QTimer::timeout, timer,
+            [this, timer, button, while_open = std::move(while_open)] {
+                if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                    prompt_shown_ = true;
+                    timer->deleteLater();
+                    if (while_open) {
+                        while_open();
+                    }
+                    box->button(button)->click();
+                }
+            });
         timer->start();
     }
 
@@ -389,6 +397,39 @@ TEST_F(MainWindowTest, ClosingAModifiedTabAsksAndSaveWritesTheFile) {
     EXPECT_EQ(*platform::read_file(path), "!A");
 }
 
+TEST_F(MainWindowTest, SavingFromTheClosePromptWritesTheDocumentBeingClosed) {
+    create_window(false, true);
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    const auto c = write("c.txt", "C");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(b.string())));
+
+    // An extension can show another document while the question is open.
+    answer_next_prompt(QMessageBox::Save,
+                       [&] { window_->open_file(QString::fromStdString(c.string())); });
+    EXPECT_TRUE(window_->close_document(1));
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(*platform::read_file(a), "!A");
+    EXPECT_EQ(*platform::read_file(c), "C");
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "b.txt", "c.txt"}));
+}
+
+TEST_F(MainWindowTest, SavingFromTheQuitPromptWritesTheDocumentBeingAskedAbout) {
+    create_window(false, true);
+    const auto a = write("a.txt", "A");
+    const auto c = write("c.txt", "C");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+
+    answer_next_prompt(QMessageBox::Save,
+                       [&] { window_->open_file(QString::fromStdString(c.string())); });
+    EXPECT_TRUE(window_->close());
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(*platform::read_file(a), "!A");
+}
+
 TEST_F(MainWindowTest, CancellingTheCloseKeepsTheTab) {
     create_window(false, true);
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
@@ -475,6 +516,38 @@ TEST_F(MainWindowTest, ExtensionsEditingAnotherDocumentUpdateItsTab) {
     EXPECT_EQ(window_->tab_bar()->currentIndex(), 2);
 }
 
+TEST_F(MainWindowTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
+    create_window();
+    constexpr int keystrokes = 200;
+    const auto time_typing = [&] {
+        using clock = std::chrono::steady_clock;
+        auto best = clock::duration::max();
+        for (int round = 0; round < 5; ++round) {
+            const auto start = clock::now();
+            for (int i = 0; i < keystrokes; ++i) {
+                type("x");
+            }
+            best = std::min(best, clock::now() - start);
+        }
+        return best;
+    };
+    const auto one_tab = time_typing();
+
+    for (int i = 0; i < 300; ++i) {
+        ASSERT_TRUE(window_->open_file(
+            QString::fromStdString(write("tab" + std::to_string(i) + ".txt", "x").string())));
+    }
+    ASSERT_EQ(window_->tab_bar()->count(), 301);
+    const auto many_tabs = time_typing();
+
+    // Typing into the last tab costs about as much as typing into the only one. Re-laying out the
+    // tab bar on every keystroke costs tens of times as much.
+    EXPECT_LT(many_tabs, one_tab * 5 + std::chrono::milliseconds(5))
+        << "one tab: " << std::chrono::duration_cast<std::chrono::microseconds>(one_tab).count()
+        << " us, 301 tabs: "
+        << std::chrono::duration_cast<std::chrono::microseconds>(many_tabs).count() << " us";
+}
+
 // --- with the extension host ---
 
 TEST_F(MainWindowTest, ExtensionsSeeTheShownDocument) {
@@ -552,6 +625,23 @@ TEST_F(MainWindowTest, SavingTheDocumentIsReportedToExtensions) {
     ASSERT_TRUE(window_->save());
     ASSERT_TRUE(wait_until([&] { return !run("anvil.docs.active")["isDirty"].get<bool>(); }));
     EXPECT_EQ(run("anvil.docs.saves").size(), 1u);
+}
+
+TEST_F(MainWindowTest, SavingFromAnExtensionClearsTheModifiedMarkers) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = write("a.txt", "abc");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!");
+    ASSERT_TRUE(window_->isWindowModified());
+    ASSERT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● a.txt"));
+
+    run("anvil.docs.save");
+    EXPECT_EQ(*platform::read_file(path), "!abc");
+    EXPECT_FALSE(window_->isWindowModified());
+    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
 }
 
 TEST_F(MainWindowTest, ExtensionCommandsAreAvailableFromTheCommandList) {
