@@ -20,7 +20,7 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0002](0002-language-and-build-system.md) | C++23 with CMake and vcpkg | Accepted |
 | [0003](0003-ui-toolkit-qt6-widgets.md) | Qt 6 Widgets for UI chrome | Accepted |
 | [0004](0004-extension-host-node-child-process.md) | Run extensions in a Node child process | Accepted |
-| [0005](0005-reuse-upstream-extension-host.md) | Reuse the upstream VS Code extension host | Proposed |
+| [0005](0005-reuse-upstream-extension-host.md) | Reuse the upstream VS Code extension host | Accepted |
 | [0006](0006-editor-core-and-text-encoding.md) | Toolkit-independent editor core with UTF-8 buffer | Proposed |
 | [0007](0007-extension-registry-open-vsx.md) | Open VSX as the extension registry | Proposed |
 | [0008](0008-cross-platform-from-the-start.md) | Cross-platform from the start, Linux first | Accepted |

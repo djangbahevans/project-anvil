@@ -1,6 +1,6 @@
 # 0005. Reuse the upstream VS Code extension host
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-17
 
 ## Context
@@ -15,7 +15,7 @@ The editor runs the unmodified upstream extension host bundle, built from a pinn
 
 The pinned tag is a vendored dependency. Upgrading it is a deliberate change that re-validates the implemented services.
 
-This ADR remains Proposed until a spike demonstrates the extension host starting, completing its handshake with the C++ side, and activating an extension that registers and executes a command.
+An automated end-to-end test (`tests/exthost/host_process_test.cpp`) validates the decision: the C++ session starts the pinned extension host, completes the handshake, runs the startup sequence, activates an extension that registers a command, and executes that command. A recording of real extension host traffic is replayed against the session as a regression check when the pinned release changes.
 
 ## Consequences
 

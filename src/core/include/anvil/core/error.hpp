@@ -8,6 +8,8 @@ enum class ErrorCode {
     invalid_encoding,
     environment_unavailable,
     protocol_error,
+    io_error,
+    unsupported,
 };
 
 struct Error {

@@ -52,7 +52,7 @@ C++23, CMake with Ninja and per-platform presets, vcpkg manifest for dependencie
 ## Milestones
 
 1. **Editor slice:** window, open a file, edit in the custom editor widget, save.
-2. **Extension-host spike:** start the pinned extension host, complete the handshake, activate an extension that registers a command, and execute it. Validates [0005](adr/0005-reuse-upstream-extension-host.md).
+2. **Extension-host session:** codecs, session, launcher and startup sequence in `src/exthost`, verified by an end-to-end test that activates an extension and runs its command ([0005](adr/0005-reuse-upstream-extension-host.md)).
 3. **Language features:** LSP client, tree-sitter highlighting, diagnostics, completion.
 4. **Workbench:** explorer, search, command palette, settings, themes, terminal.
 5. **Extension breadth:** widen the supported `vscode` API surface, driven by real extensions.
