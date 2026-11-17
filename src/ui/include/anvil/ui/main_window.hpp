@@ -83,6 +83,8 @@ private:
     void move_document(int from, int to);
     std::optional<std::size_t> index_of(const core::Uri& uri) const;
     void update_tab(std::size_t index);
+    // Refreshes the tab of the document at `index`, and the window title when it is shown.
+    void update_document(std::size_t index);
     void update_title();
     void update_status();
     void on_text_changed(const core::DocumentChange& change);
@@ -90,7 +92,14 @@ private:
     void save_as_dialog();
     void open_dialog();
     void run_command();
-    bool write_current(const std::filesystem::path& path);
+    // The document at `index` is saved whichever one is shown, because an extension can change the
+    // shown document while a dialog is open.
+    bool save_document(std::size_t index);
+    bool save_document_as(std::size_t index, const QString& path);
+    bool write_document(std::size_t index, const std::filesystem::path& path);
+    // Shows the document and, when it has unsaved changes, asks whether to save them. False means
+    // the user cancelled or saving failed.
+    bool confirm_close(std::size_t index);
     bool resolve_unsaved_changes();
 
     Options options_;

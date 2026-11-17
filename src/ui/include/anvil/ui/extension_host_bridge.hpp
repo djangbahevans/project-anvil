@@ -34,6 +34,8 @@ public:
         std::function<void(const core::Uri&, const core::DocumentChange&)> edited;
         // An extension asked to show a document.
         std::function<void(const core::Uri&)> show_requested;
+        // An extension saved a document.
+        std::function<void(const core::Uri&)> saved;
         // The extension host stopped, with the reason.
         std::function<void(const std::string&)> stopped;
     };

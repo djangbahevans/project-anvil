@@ -359,6 +359,9 @@ std::optional<HandlerResult> DocumentsService::try_save_document(const json& arg
     }
     entry->document->mark_saved();
     document_saved(entry->uri);
+    if (observer_.saved) {
+        observer_.saved(entry->uri);
+    }
     return boolean(true);
 }
 

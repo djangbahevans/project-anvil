@@ -78,11 +78,15 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             if (!index) {
                 return;
             }
-            update_tab(*index);
+            update_document(*index);
             if (index == current_) {
                 view_->document_changed_elsewhere();
-                update_title();
                 update_status();
+            }
+        };
+        callbacks.saved = [this](const core::Uri& uri) {
+            if (const auto index = index_of(uri)) {
+                update_document(*index);
             }
         };
         callbacks.show_requested = [this](const core::Uri& uri) {
@@ -206,15 +210,8 @@ bool MainWindow::close_document(std::size_t index) {
     if (index >= documents_.size()) {
         return false;
     }
-    if (documents_[index].document->is_dirty() && options_.confirm_unsaved_changes) {
-        activate(index);
-        const auto answer = QMessageBox::question(
-            this, tr("Unsaved changes"),
-            tr("Save changes to %1?").arg(display_name(documents_[index].uri)),
-            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-        if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !save())) {
-            return false;
-        }
+    if (!confirm_close(index)) {
+        return false;
     }
     // The replacement goes in first so the window never has nothing to show.
     if (documents_.size() == 1) {
@@ -234,13 +231,39 @@ bool MainWindow::close_document(std::size_t index) {
     return true;
 }
 
+bool MainWindow::confirm_close(std::size_t index) {
+    if (!documents_[index].document->is_dirty() || !options_.confirm_unsaved_changes) {
+        return true;
+    }
+    activate(index);
+    const auto answer =
+        QMessageBox::question(this, tr("Unsaved changes"),
+                              tr("Save changes to %1?").arg(display_name(documents_[index].uri)),
+                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    return answer == QMessageBox::Discard || (answer == QMessageBox::Save && save_document(index));
+}
+
+void MainWindow::update_document(std::size_t index) {
+    update_tab(index);
+    if (index == current_) {
+        update_title();
+    }
+}
+
 void MainWindow::update_tab(std::size_t index) {
     const auto& open = documents_[index];
     const int tab = static_cast<int>(index);
-    tabs_->setTabText(tab, tab_title(open.uri, *open.document));
-    tabs_->setTabToolTip(tab, QString::fromStdString(open.uri.file_path()
-                                                         ? open.uri.file_path()->string()
-                                                         : open.uri.to_string()));
+    const QString title = tab_title(open.uri, *open.document);
+    const QString tooltip = QString::fromStdString(
+        open.uri.file_path() ? open.uri.file_path()->string() : open.uri.to_string());
+    // Setting a tab property, even to its current value, makes Qt lay out the whole tab bar,
+    // which would make every keystroke cost time proportional to the number of tabs.
+    if (tabs_->tabText(tab) != title) {
+        tabs_->setTabText(tab, title);
+    }
+    if (tabs_->tabToolTip(tab) != tooltip) {
+        tabs_->setTabToolTip(tab, tooltip);
+    }
 }
 
 bool MainWindow::open_file(const QString& path) {
@@ -270,46 +293,56 @@ bool MainWindow::open_file(const QString& path) {
     return true;
 }
 
-bool MainWindow::write_current(const std::filesystem::path& path) {
-    auto& open = documents_[current_];
+bool MainWindow::write_document(std::size_t index, const std::filesystem::path& path) {
+    auto& open = documents_[index];
     if (auto written = platform::write_file(path, open.document->to_file_bytes()); !written) {
         QMessageBox::critical(this, tr("Save"), QString::fromStdString(written.error().message));
         return false;
     }
     open.document->mark_saved();
     bridge_.saved(open.uri);
-    update_title();
+    update_document(index);
     return true;
 }
 
 bool MainWindow::save() {
-    if (const auto path = current_uri().file_path()) {
-        return write_current(*path);
-    }
-    const QString chosen = QFileDialog::getSaveFileName(this, tr("Save As"));
-    return !chosen.isEmpty() && save_as(chosen);
+    return save_document(current_);
 }
 
 bool MainWindow::save_as(const QString& path) {
+    return save_document_as(current_, path);
+}
+
+bool MainWindow::save_document(std::size_t index) {
+    if (const auto path = documents_[index].uri.file_path()) {
+        return write_document(index, *path);
+    }
+    const QString chosen = QFileDialog::getSaveFileName(this, tr("Save As"));
+    return !chosen.isEmpty() && save_document_as(index, chosen);
+}
+
+bool MainWindow::save_document_as(std::size_t index, const QString& path) {
     const std::filesystem::path file = QFileInfo(path).absoluteFilePath().toStdString();
     const core::Uri new_uri = core::Uri::file(file);
-    if (index_of(new_uri) && *index_of(new_uri) != current_) {
+    if (const auto existing = index_of(new_uri); existing && *existing != index) {
         QMessageBox::warning(this, tr("Save As"),
                              tr("%1 is already open in the editor.").arg(path));
         return false;
     }
-    auto& open = documents_[current_];
-    if (!write_current(file)) {
+    if (!write_document(index, file)) {
         return false;
     }
+    auto& open = documents_[index];
     if (!(open.uri == new_uri)) {
         // The document keeps its text and history; extensions see it under its new name.
         bridge_.remove_document(open.uri);
         open.uri = new_uri;
         bridge_.add_document(new_uri, open.document);
-        bridge_.show(new_uri);
+        if (index == current_) {
+            bridge_.show(new_uri);
+        }
     }
-    update_title();
+    update_document(index);
     return true;
 }
 
@@ -359,7 +392,7 @@ void MainWindow::run_command() {
 
 void MainWindow::on_text_changed(const core::DocumentChange& change) {
     bridge_.text_changed(current_uri(), change);
-    update_title();
+    update_document(current_);
     update_status();
 }
 
@@ -372,7 +405,6 @@ void MainWindow::update_title() {
     const auto& open = documents_[current_];
     setWindowTitle(tr("%1 — Anvil[*]").arg(display_name(open.uri)));
     setWindowModified(open.document->is_dirty());
-    update_tab(current_);
 }
 
 void MainWindow::update_status() {
@@ -389,19 +421,8 @@ void MainWindow::update_status() {
 }
 
 bool MainWindow::resolve_unsaved_changes() {
-    if (!options_.confirm_unsaved_changes) {
-        return true;
-    }
     for (std::size_t i = 0; i < documents_.size(); ++i) {
-        if (!documents_[i].document->is_dirty()) {
-            continue;
-        }
-        show_document(documents_[i].uri, documents_[i].document);
-        const auto answer =
-            QMessageBox::question(this, tr("Unsaved changes"),
-                                  tr("Save changes to %1?").arg(display_name(documents_[i].uri)),
-                                  QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-        if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !save())) {
+        if (!confirm_close(i)) {
             return false;
         }
     }
