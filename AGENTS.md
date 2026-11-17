@@ -11,6 +11,33 @@ Read these first, in this order:
 
 What is done and what comes next is tracked on GitHub, not in this repository: see the milestones and open issues of `djangbahevans/project-anvil` (`gh issue list --milestone "<title>"`). Pick work from the lowest-numbered open milestone unless told otherwise.
 
+**Start with the `start-session` playbook** below; it leads to the right next step whether or not a task was given.
+
+## Playbooks
+
+Step-by-step procedures live in `.claude/skills/<name>/SKILL.md`. They are plain Markdown and apply to any agent; Claude Code loads them as skills.
+
+| Playbook | Use when |
+| --- | --- |
+| [start-session](.claude/skills/start-session/SKILL.md) | Beginning any session, or unsure what to do next |
+| [groom-issue](.claude/skills/groom-issue/SKILL.md) | An issue is not `agent-ready`: undecided, too large, blocked, research, or vague |
+| [implement-issue](.claude/skills/implement-issue/SKILL.md) | Implementing a ready issue, from worktree to finished branch |
+| [open-pull-request](.claude/skills/open-pull-request/SKILL.md) | Pushing a branch, writing the description, handling CI and review |
+| [review-pull-request](.claude/skills/review-pull-request/SKILL.md) | Reviewing a pull request or another session's work |
+| [investigate-failure](.claude/skills/investigate-failure/SKILL.md) | A build, test or CI failure, or a flaky test |
+| [mutation-check](.claude/skills/mutation-check/SKILL.md) | Proving that new tests can fail |
+| [file-issue](.claude/skills/file-issue/SKILL.md) | Recording a bug, follow-up or planned work |
+| [write-adr](.claude/skills/write-adr/SKILL.md) | A design choice that others will build on |
+
+## Issue labels
+
+- Area: `area:core`, `area:platform`, `area:exthost`, `area:ui`, `area:build`, `area:docs`.
+- Type: `type:feature`, `type:tech-debt`, `type:performance`, `type:research`.
+- Readiness, at most one per issue: `agent-ready` (can be implemented as written), `needs-decision` (a design choice is open; the maintainer decides), `needs-split` (too large for one pull request), `blocked` (waits on another issue), `needs-human` (needs hardware, an account or a judgment only the maintainer can make).
+- `in-progress`: a session has claimed the issue. Remove it when work stops without a merged pull request.
+
+An issue without a readiness label has not been groomed: run `groom-issue` on it before implementing.
+
 ## Setup
 
 ```sh
@@ -55,7 +82,8 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 - Comments explain a non-obvious trade-off, quirk or workaround, never what the code plainly does. Remove redundant comments from code you touch.
 - Documentation and commit messages are self-contained and in the present tense. They describe the current design and its rationale, and never the history of how it was reached: no "previously", "now fixed", "as discussed". Avoid "I" and "we".
 - Commit messages start with a short imperative subject, then a body explaining what and why. Do not add attribution footers or trailers of any kind.
-- Commit to `main` in small steps, and keep `main` building with all tests passing. Push only when asked.
+- Work on a branch named `<issue>-<slug>` in its own `git worktree`, in small commits. Changes reach `main` through pull requests (`open-pull-request`), which the maintainer merges; `main` always builds with all tests passing. Do not push to `main`, merge your own pull request, or force-push anything but your own feature branch. A maintainer who works directly in the main checkout may commit to `main` and push when asked.
+- Never stage with `git add -A` or `git commit -a` in a checkout that may hold another session's changes; stage files by name.
 - What extensions do to a document the window shows (edit it, save it, ask to show it) reaches the window through callbacks on `DocumentsService::Observer`, carried by `ExtensionHostBridge::Callbacks`. A new operation that extensions can perform on documents needs its own callback, or the tabs, title and views go stale.
 - The project is MIT licensed ([LICENSE](LICENSE)); contributions are made under the same license. Do not copy code from sources with an incompatible license, and keep the notices of any third-party code that is added.
 - Record a significant decision as an ADR (`docs/adr/template.md`), and record a newly discovered fact about the VS Code protocol in `docs/extension-host-protocol.md`.
@@ -94,3 +122,4 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 3. New behavior has tests that were shown to be able to fail.
 4. Decisions, protocol facts and user-visible behavior are documented where they belong.
 5. The relevant GitHub issue is updated or closed, and new problems found along the way are filed as issues instead of being left in a code comment.
+6. Anything that was missing, wrong or misleading in AGENTS.md or a playbook while doing the work is fixed in the same pull request, or reported in its "gaps found" section.
