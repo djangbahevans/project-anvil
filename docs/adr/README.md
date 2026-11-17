@@ -27,3 +27,4 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0009](0009-scope-and-non-goals.md) | Scope and non-goals | Accepted |
 | [0010](0010-syntax-highlighting.md) | tree-sitter for syntax highlighting | Proposed |
 | [0011](0011-document-model.md) | Document model with edit-based undo history | Accepted |
+| [0012](0012-editing-commands-in-core.md) | Editing commands in the core, painting in the view | Accepted |

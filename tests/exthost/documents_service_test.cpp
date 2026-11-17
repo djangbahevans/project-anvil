@@ -484,6 +484,33 @@ TEST_F(DocumentsServiceTest, ShowTextDocumentOpensAnEditorAndMakesItActive) {
     EXPECT_EQ(json::parse(again.reply_to(2)).get<std::string>(), id);
 }
 
+TEST_F(DocumentsServiceTest, TheObserverLearnsOfExtensionEditsAndShowRequests) {
+    const core::Uri uri = open("a.txt", "hello");
+    const std::string editor = *service_.add_editor(uri);
+    synchronize();
+    std::vector<std::string> events;
+    DocumentsService::Observer observer;
+    observer.edited = [&](const core::Uri& edited, const core::DocumentChange& change) {
+        events.push_back("edited " + edited.path + " v" + std::to_string(change.version));
+    };
+    observer.show_requested = [&](const core::Uri& shown) {
+        events.push_back("show " + shown.path);
+    };
+    service_.set_observer(observer);
+
+    const json edits = json::parse(
+        R"([{"range":{"startLineNumber":1,"startColumn":1,"endLineNumber":1,"endColumn":1},"text":"X"}])");
+    request(ProxyId::MainThreadTextEditors, "$tryApplyEdits",
+            json::array({editor, 1, edits, json::object()}));
+    request(ProxyId::MainThreadTextEditors, "$tryShowTextDocument",
+            json::array({uri_to_json(uri), json::object()}), 2);
+    // edits the editor itself makes are not the observer's business
+    const auto own = service_.find(uri)->apply_edits(std::vector<core::Edit>{{0, 0, "!"}});
+    service_.document_changed(uri, *own);
+
+    EXPECT_EQ(events, (std::vector<std::string>{"edited " + uri.path + " v2", "show " + uri.path}));
+}
+
 TEST_F(DocumentsServiceTest, WorkspaceEditsApplyToEveryDocument) {
     const core::Uri a = open("a.txt", "aaa");
     const core::Uri b = open("b.txt", "bbb");

@@ -46,11 +46,10 @@ public:
     std::expected<bool, Error> pump(std::chrono::milliseconds timeout);
 
 private:
-    HostProcess(std::string init_data_json, std::filesystem::path socket_directory,
-                platform::Process process, platform::LocalConnection connection);
+    HostProcess(std::string init_data_json, platform::Process process,
+                platform::LocalConnection connection);
 
     Session session_;
-    std::filesystem::path socket_directory_;
     platform::Process process_;
     platform::LocalConnection connection_;
     bool closed_ = false;

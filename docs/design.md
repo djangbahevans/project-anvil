@@ -31,7 +31,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 | Layer | Responsibility |
 | --- | --- |
-| `ui` | Qt Widgets: main window, editor widget painting, trees, dialogs, theming. |
+| `ui` | Qt Widgets: the main window, the editor view that paints a document and turns input into editing commands, and the bridge that runs the extension host from the event loop. |
 | `workbench` | Commands, keybindings, configuration, workspace model, language-feature routing, terminal sessions. |
 | `exthost` | Node process supervision and the C++ implementation of the `MainThread*` RPC services, including commands and the documents and editors that extensions see ([0005](adr/0005-reuse-upstream-extension-host.md)). |
 | `core` | Text buffer, undo, cursors and selections, line layout, highlighting, UTF-16 boundary conversion ([0006](adr/0006-editor-core-and-text-encoding.md), [0010](adr/0010-syntax-highlighting.md)). |
@@ -40,6 +40,8 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 ## Editor core
 
 `core::Text` is an immutable, persistent rope of UTF-8 chunks whose nodes cache byte, UTF-16 and newline counts; copying it is a snapshot. `core::TextBuffer` holds the current text and reports each edit as a `TextChange`. The text uses `\n` line breaks only. Positions exchanged with extensions and language servers are zero-based line and UTF-16 column, converted by `Text::position_at` and `Text::offset_at` ([0006](adr/0006-editor-core-and-text-encoding.md)).
+
+`core::EditController` implements the editing commands (typing, deleting, motion, selection, undo) on a document, for all cursors at once; the Qt editor view only paints and forwards input ([0012](adr/0012-editing-commands-in-core.md)).
 
 `core::Document` adds selections, an undo history and the file format (line ending, byte order mark) to a buffer. Edits are applied as validated batches and reported as ordered change lists; undo steps hold forward and inverse replacements that share storage with the text, and edits can be joined into undo groups ([0011](adr/0011-document-model.md)).
 

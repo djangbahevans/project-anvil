@@ -225,6 +225,13 @@ std::expected<std::string, Error> DocumentsService::add_editor(const core::Uri& 
     return editor.id;
 }
 
+std::optional<std::string> DocumentsService::editor_for(const core::Uri& uri) const {
+    const std::string key = uri.to_string();
+    const auto found = std::find_if(editors_.begin(), editors_.end(),
+                                    [&](const Editor& editor) { return editor.uri_key == key; });
+    return found == editors_.end() ? std::nullopt : std::optional<std::string>(found->id);
+}
+
 void DocumentsService::remove_editor(const std::string& id) {
     const auto found = std::find_if(editors_.begin(), editors_.end(),
                                     [&](const Editor& editor) { return editor.id == id; });
@@ -390,6 +397,9 @@ DocumentsService::apply_protocol_edits(Entry& entry, const json& edits, bool joi
     if (!(entry.document->selections() == selections_before)) {
         selections_changed(entry.uri);
     }
+    if (observer_.edited) {
+        observer_.edited(entry.uri, *change);
+    }
     return change;
 }
 
@@ -461,6 +471,9 @@ std::optional<HandlerResult> DocumentsService::try_show_text_document(const json
                 selections_changed(*uri);
             }
         }
+    }
+    if (observer_.show_requested) {
+        observer_.show_requested(*uri);
     }
     return OkJson{json(id).dump()};
 }

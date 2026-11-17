@@ -1,0 +1,119 @@
+#pragma once
+
+#include "anvil/core/document.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+
+namespace anvil::core {
+
+enum class Motion {
+    left,
+    right,
+    up,
+    down,
+    line_start,
+    line_end,
+    document_start,
+    document_end,
+    word_left,
+    word_right,
+};
+
+// What an editing command did.
+struct EditOutcome {
+    // Set when the text changed, including by undo and redo.
+    std::optional<DocumentChange> change;
+    // True when the selections differ from before the command.
+    bool selections_changed = false;
+
+    bool changed_anything() const {
+        return change.has_value() || selections_changed;
+    }
+};
+
+// The editing commands a user triggers with the keyboard and mouse, applied to a document: typing,
+// deleting, moving and selecting, and undo. They work on every selection at once, so multiple
+// cursors need no special handling.
+//
+// Characters are Unicode code points; a base character with combining marks counts as several.
+//
+// The controller keeps the state that is not part of the document: the column that vertical
+// movement tries to return to, and whether the last edit may be joined by the next one into a
+// single undo step. The document must outlive the controller.
+class EditController {
+public:
+    explicit EditController(Document& document) : document_(document) {}
+
+    // --- editing ---
+
+    // Replaces every selection with `text`, leaving a caret after it. Typing that follows typing
+    // without other changes in between undoes as one step; text with a line break never joins.
+    EditOutcome type(std::string_view text);
+    // Like type(), but never joins an undo step.
+    EditOutcome paste(std::string_view text);
+    // Replaces every selection with a line break followed by the indentation of its line.
+    EditOutcome insert_newline();
+    // Deletes the selections, or the character before each caret.
+    EditOutcome delete_backward();
+    // Deletes the selections, or the character after each caret.
+    EditOutcome delete_forward();
+    // Deletes the selections, for cut.
+    EditOutcome delete_selection();
+
+    EditOutcome undo();
+    EditOutcome redo();
+
+    // --- selecting ---
+
+    // Moves every active end; the anchors move too unless `extend` is set. Without `extend`, left
+    // and right collapse a selection to its start or end instead of moving.
+    EditOutcome move(Motion motion, bool extend = false);
+    EditOutcome select_all();
+    // Places a single caret, or with `extend` moves the active end of the primary selection.
+    EditOutcome set_caret(std::size_t offset, bool extend = false);
+    // Drops every selection but the primary one, which keeps its extent.
+    EditOutcome keep_primary_selection();
+    // Adds a caret without removing the others.
+    EditOutcome add_caret(std::size_t offset);
+    // Selects the word at `offset`, or the run of punctuation or spaces there.
+    EditOutcome select_word_at(std::size_t offset);
+    // Selects the whole line containing `offset`, including its line break.
+    EditOutcome select_line_at(std::size_t offset);
+
+    // The text of the selections, joined by line breaks when there are several; empty when only
+    // carets are present.
+    std::string selected_text() const;
+
+private:
+    enum class EditKind {
+        none,
+        typing,
+        deleting_backward,
+        deleting_forward,
+    };
+
+    EditOutcome apply(std::vector<Edit> edits, std::vector<Selection> selections_after,
+                      EditKind kind, bool may_join);
+    EditOutcome replace_selections(std::string_view text, EditKind kind, bool may_join);
+    enum class DeleteMode {
+        backward,
+        forward,
+        selections_only,
+    };
+    EditOutcome delete_with(DeleteMode mode);
+    EditOutcome adopt(SelectionSet selections);
+    EditOutcome after_history(std::expected<std::optional<DocumentChange>, Error> result);
+
+    Document& document_;
+    std::optional<std::size_t> goal_column_;
+    EditKind last_kind_ = EditKind::none;
+    // The document version and selections right after the last joinable edit.
+    std::uint64_t last_version_ = 0;
+    SelectionSet last_selections_;
+};
+
+} // namespace anvil::core

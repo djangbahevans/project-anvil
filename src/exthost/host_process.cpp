@@ -51,10 +51,10 @@ std::vector<std::string> extension_host_environment(const std::vector<std::strin
     return environment;
 }
 
-HostProcess::HostProcess(std::string init_data_json, std::filesystem::path socket_directory,
-                         platform::Process process, platform::LocalConnection connection)
-    : session_(std::move(init_data_json)), socket_directory_(std::move(socket_directory)),
-      process_(std::move(process)), connection_(std::move(connection)) {}
+HostProcess::HostProcess(std::string init_data_json, platform::Process process,
+                         platform::LocalConnection connection)
+    : session_(std::move(init_data_json)), process_(std::move(process)),
+      connection_(std::move(connection)) {}
 
 std::expected<std::unique_ptr<HostProcess>, Error> HostProcess::start(const HostOptions& options) {
     const auto bootstrap = options.vscode_dir / "out" / "bootstrap-fork.js";
@@ -102,9 +102,8 @@ std::expected<std::unique_ptr<HostProcess>, Error> HostProcess::start(const Host
             return std::unexpected(accepted.error());
         }
         if (*accepted) {
-            cleanup.release = true;
             return std::unique_ptr<HostProcess>(new HostProcess(
-                options.init_data_json, *directory, std::move(*process), std::move(**accepted)));
+                options.init_data_json, std::move(*process), std::move(**accepted)));
         }
         if (const auto exit_code = process->wait(std::chrono::milliseconds(0))) {
             return std::unexpected(
@@ -126,8 +125,6 @@ HostProcess::~HostProcess() {
     if (!process_.wait(std::chrono::milliseconds(2000))) {
         process_.kill();
     }
-    std::error_code ignored;
-    std::filesystem::remove_all(socket_directory_, ignored);
 }
 
 std::expected<bool, Error> HostProcess::pump(std::chrono::milliseconds timeout) {

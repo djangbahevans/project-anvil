@@ -21,6 +21,23 @@ ctest --preset linux-clang-debug
 
 Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-gcc-debug`, `windows-msvc-debug`, `windows-msvc-release`, `macos-debug`, `macos-release`. Build output goes to `build/<preset>/`.
 
+## Running
+
+```sh
+build/linux-clang-debug/bin/anvil [file...]
+```
+
+The editor opens the given files in one window with menus for files, editing and extension commands (Ctrl+Shift+P runs a command). It uses the extension host when a Node.js binary and the checkout from `scripts/fetch-vscode.sh` are found, and reads these environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `ANVIL_EXTENSIONS` | unpacked extension directories, separated like `PATH` entries |
+| `ANVIL_NODE` | the Node.js binary (default: `node` on `PATH`) |
+| `ANVIL_VSCODE_DIR` | the VS Code checkout (default: `.deps/vscode` of the source tree) |
+| `ANVIL_EXTENSION_HOST=off` | run the editor without the extension host |
+
+Extension host messages are printed to standard error. Under WSLg the window appears through Wayland or X11; `QT_QPA_PLATFORM=xcb` forces X11.
+
 ## Extension host tests
 
 `scripts/fetch-vscode.sh` fetches and transpiles the pinned VS Code release into `.deps/vscode` and builds the two native modules the extension host uses (this needs make, a C++ compiler and Python). With it and Node.js on `PATH`, the integration test starts the real extension host and runs an extension command; without them that test is skipped.
@@ -33,9 +50,9 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 | Path | Contents |
 | --- | --- |
-| `src/core` | Text buffer and encoding primitives with no UI or OS dependencies |
+| `src/core` | Text buffer, documents, editing commands and encoding, with no UI or OS dependencies |
 | `src/exthost` | Extension host protocol: codecs, session, and host process launcher |
 | `src/platform` | Per-OS code behind portable interfaces |
-| `src/ui` | Qt Widgets user interface |
+| `src/ui` | Qt Widgets user interface: main window, editor view, extension host bridge |
 | `src/app` | The `anvil` executable |
 | `tests` | Unit tests, mirroring `src` |

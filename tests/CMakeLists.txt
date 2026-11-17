@@ -4,6 +4,7 @@ include(GoogleTest)
 add_executable(anvil_core_tests
   core/document_model_test.cpp
   core/document_test.cpp
+  core/editing_test.cpp
   core/selection_test.cpp
   core/text_buffer_test.cpp
   core/text_file_test.cpp
@@ -64,3 +65,19 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_LOGGING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/logging-extension"
   ANVIL_FAILING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/failing-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
+
+if(TARGET anvil_ui)
+  find_package(Qt6 REQUIRED COMPONENTS Test)
+  add_executable(anvil_ui_tests
+    ui/editor_view_test.cpp
+    ui/main_window_test.cpp
+    ui/ui_test_main.cpp
+  )
+  target_link_libraries(anvil_ui_tests
+    PRIVATE anvil::ui anvil::platform Qt6::Test nlohmann_json::nlohmann_json GTest::gtest anvil_compile_options)
+  target_compile_definitions(anvil_ui_tests PRIVATE
+    ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
+    ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
+    ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension")
+  gtest_discover_tests(anvil_ui_tests)
+endif()

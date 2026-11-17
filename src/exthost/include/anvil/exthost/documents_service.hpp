@@ -33,6 +33,19 @@ public:
 
     DocumentsService(Session& session, RequestRouter& router);
 
+    // Callbacks for what extensions do to documents that the editor shows.
+    struct Observer {
+        // An extension edited the document. The service has applied the change and told the
+        // extension host; the callback is for refreshing views.
+        std::function<void(const core::Uri&, const core::DocumentChange&)> edited;
+        // An extension asked to show the document in an editor. The service has made its editor
+        // the active one.
+        std::function<void(const core::Uri&)> show_requested;
+    };
+    void set_observer(Observer observer) {
+        observer_ = std::move(observer);
+    }
+
     // Picks a language id for a resource; "plaintext" without a resolver.
     void set_language_resolver(LanguageResolver resolver) {
         language_resolver_ = std::move(resolver);
@@ -51,6 +64,8 @@ public:
     // Shows a registered document in an editor, whose selections are the document's selections.
     // Returns the editor id.
     std::expected<std::string, Error> add_editor(const core::Uri& uri);
+    // The id of an editor showing the document, if there is one.
+    std::optional<std::string> editor_for(const core::Uri& uri) const;
     void remove_editor(const std::string& id);
     // Makes the editor active; an empty id means no editor is active.
     void set_active_editor(const std::string& id);
@@ -102,6 +117,7 @@ private:
 
     Session& session_;
     LanguageResolver language_resolver_;
+    Observer observer_;
     std::map<std::string, Entry> entries_;
     std::vector<Editor> editors_;
     std::string active_editor_;

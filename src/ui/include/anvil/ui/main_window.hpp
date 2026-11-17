@@ -1,14 +1,97 @@
 #pragma once
 
+#include "anvil/core/document.hpp"
+#include "anvil/core/log.hpp"
+#include "anvil/core/uri.hpp"
+#include "anvil/ui/editor_view.hpp"
+#include "anvil/ui/extension_host_bridge.hpp"
+
 #include <QMainWindow>
+#include <memory>
+#include <optional>
+#include <vector>
+
+class QLabel;
+class QMenu;
 
 namespace anvil::ui {
 
+struct MainWindowOptions {
+    // The extension host to run; none runs the editor without extension support.
+    std::optional<ExtensionHostBridge::Config> extension_host;
+    // Receives the extension host's messages; discarded when unset.
+    std::shared_ptr<core::Logger> logger;
+    // Whether closing asks what to do with unsaved documents.
+    bool confirm_unsaved_changes = true;
+};
+
+// The application window: one editor showing one of the open documents, menus for files, editing
+// and extension commands, and a status bar. With an extension host configured, extensions see the
+// open documents and can edit and show them.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    using Options = MainWindowOptions;
+
+    explicit MainWindow(Options options = {}, QWidget* parent = nullptr);
+    ~MainWindow() override;
+
+    // Opens the file in the editor, or shows it when it is already open.
+    bool open_file(const QString& path);
+    // Writes the shown document to its file, asking for one when it has none.
+    bool save();
+    bool save_as(const QString& path);
+
+    EditorView* view() {
+        return view_;
+    }
+    ExtensionHostBridge& bridge() {
+        return bridge_;
+    }
+    const core::Uri& current_uri() const {
+        return documents_[current_].uri;
+    }
+    const std::shared_ptr<core::Document>& current_document() const {
+        return documents_[current_].document;
+    }
+    std::size_t open_document_count() const {
+        return documents_.size();
+    }
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
+private:
+    struct OpenDocument {
+        core::Uri uri;
+        std::shared_ptr<core::Document> document;
+    };
+
+    void build_menus();
+    void add_untitled_document();
+    // Makes the document the shown one, adding it to the open documents when it is new.
+    void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
+    std::optional<std::size_t> index_of(const core::Uri& uri) const;
+    void update_title();
+    void update_status();
+    void on_text_changed(const core::DocumentChange& change);
+    void on_selections_changed();
+    void save_as_dialog();
+    void open_dialog();
+    void run_command();
+    bool write_current(const std::filesystem::path& path);
+    bool resolve_unsaved_changes();
+
+    Options options_;
+    EditorView* view_ = nullptr;
+    ExtensionHostBridge bridge_;
+    std::vector<OpenDocument> documents_;
+    std::size_t current_ = 0;
+    std::size_t next_untitled_ = 1;
+    QLabel* position_label_ = nullptr;
+    QLabel* host_label_ = nullptr;
+    QMenu* window_menu_ = nullptr;
 };
 
 } // namespace anvil::ui
