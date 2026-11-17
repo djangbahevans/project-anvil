@@ -174,3 +174,45 @@ TEST(Text, LargeTextIsBalancedAndChunked) {
     EXPECT_EQ(text.line(39999), "line 39999 \xE2\x82\xAC");
     EXPECT_EQ(text.to_string(), big);
 }
+
+TEST(Text, SubstrSharesTheRangeAsText) {
+    const Text text = text_of("hello world");
+    EXPECT_EQ(text.substr(6, 5).to_string(), "world");
+    EXPECT_EQ(text.substr(0, 0).to_string(), "");
+    EXPECT_EQ(text.substr(6, 100).to_string(), "world");
+    EXPECT_EQ(text.substr(50, 3).to_string(), "");
+    EXPECT_EQ(text.to_string(), "hello world");
+}
+
+TEST(Text, SubstrOfLargeTextStaysBalanced) {
+    std::string big;
+    for (int i = 0; i < 20000; ++i) {
+        big += "line " + std::to_string(i) + "\n";
+    }
+    const Text text = text_of(big);
+    const Text middle = text.substr(5000, 100000);
+    EXPECT_EQ(middle.to_string(), big.substr(5000, 100000));
+    EXPECT_FALSE(middle.check_invariants().has_value()) << *middle.check_invariants();
+}
+
+TEST(Text, ReplacedWithATextSplicesLargeReplacementsInPlace) {
+    std::string big;
+    for (int i = 0; i < 5000; ++i) {
+        big += "row " + std::to_string(i) + "\n";
+    }
+    const Text replacement = text_of(big);
+    const Text base = text_of("start|end");
+    const auto result = base.replaced(6, 6, replacement);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->to_string(), "start|" + big + "end");
+    EXPECT_FALSE(result->check_invariants().has_value()) << *result->check_invariants();
+}
+
+TEST(Text, ReplacedWithATextHandlesSmallReplacementsAndErrors) {
+    const Text base = text_of("abcdef");
+    EXPECT_EQ(base.replaced(1, 3, text_of("XY"))->to_string(), "aXYdef");
+    EXPECT_EQ(base.replaced(0, 6, Text{})->to_string(), "");
+    const Text big = text_of(std::string(5000, 'z'));
+    ASSERT_FALSE(base.replaced(4, 9, big).has_value());
+    EXPECT_EQ(base.replaced(4, 9, big).error().code, ErrorCode::invalid_argument);
+}

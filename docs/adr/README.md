@@ -26,3 +26,4 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0008](0008-cross-platform-from-the-start.md) | Cross-platform from the start, Linux first | Accepted |
 | [0009](0009-scope-and-non-goals.md) | Scope and non-goals | Accepted |
 | [0010](0010-syntax-highlighting.md) | tree-sitter for syntax highlighting | Proposed |
+| [0011](0011-document-model.md) | Document model with edit-based undo history | Accepted |

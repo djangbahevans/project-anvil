@@ -2,7 +2,11 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(anvil_core_tests
+  core/document_model_test.cpp
+  core/document_test.cpp
+  core/selection_test.cpp
   core/text_buffer_test.cpp
+  core/text_file_test.cpp
   core/text_model_test.cpp
   core/text_test.cpp
   core/utf_test.cpp

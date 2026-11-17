@@ -60,6 +60,9 @@ public:
     std::string to_string() const;
     // The bytes of [offset, offset + length), clamped to the end of the text.
     std::string slice(std::size_t offset, std::size_t length) const;
+    // The same range as text that shares storage with this one instead of copying it. The
+    // range's ends must fall on character boundaries.
+    Text substr(std::size_t offset, std::size_t length) const;
 
     // Offset of the first byte of `line`; the size of the text for a line past the end.
     std::size_t line_start(std::size_t line) const;
@@ -84,6 +87,11 @@ public:
     // `replacement` is not valid UTF-8. Line breaks in `replacement` are normalized.
     std::expected<Text, Error> replaced(std::size_t start, std::size_t end,
                                         std::string_view replacement) const;
+
+    // Like replaced(start, end, std::string_view), with a replacement that is already valid and
+    // normalized. Large replacements are spliced in without copying.
+    std::expected<Text, Error> replaced(std::size_t start, std::size_t end,
+                                        const Text& replacement) const;
 
     // Diagnostics for tests and benchmarks: the first violated internal invariant, if any, and the
     // number of storage chunks.

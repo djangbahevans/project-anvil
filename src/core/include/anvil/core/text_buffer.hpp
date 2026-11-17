@@ -41,8 +41,12 @@ public:
         return replace(offset, offset, text);
     }
     std::expected<TextChange, Error> erase(std::size_t start, std::size_t end) {
-        return replace(start, end, {});
+        return replace(start, end, std::string_view{});
     }
+    // Replaces [start, end) with text that is already valid and normalized, without copying
+    // large replacements.
+    std::expected<TextChange, Error> replace(std::size_t start, std::size_t end,
+                                             const Text& replacement);
     // Replaces the text in `range`, whose positions are clamped to the text.
     std::expected<TextChange, Error> replace(Range range, std::string_view replacement);
 

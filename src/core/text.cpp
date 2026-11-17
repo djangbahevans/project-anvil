@@ -59,6 +59,14 @@ std::string Text::slice(std::size_t offset, std::size_t length) const {
     return result;
 }
 
+Text Text::substr(std::size_t offset, std::size_t length) const {
+    offset = std::min(offset, size());
+    length = std::min(length, size() - offset);
+    auto [head, rest] = rope::split(root_, offset + length);
+    auto [before, middle] = rope::split(head, offset);
+    return Text(std::move(middle));
+}
+
 std::size_t Text::line_start(std::size_t line) const {
     if (line >= line_count()) {
         return size();
@@ -107,17 +115,40 @@ std::size_t Text::offset_at(Position position) const {
     return rope::offset_at_utf16(root_, start_units + column);
 }
 
+namespace {
+
+std::optional<Error> check_range(const Text& text, std::size_t start, std::size_t end) {
+    if (start > end || end > text.size()) {
+        return Error{
+            ErrorCode::invalid_argument,
+            std::format("range [{}, {}) is invalid for text of {} bytes", start, end, text.size()),
+        };
+    }
+    if (!text.is_char_boundary(start) || !text.is_char_boundary(end)) {
+        return Error{ErrorCode::invalid_argument, "range boundaries must fall between characters"};
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::expected<Text, Error> Text::replaced(std::size_t start, std::size_t end,
+                                          const Text& replacement) const {
+    if (replacement.size() <= rope::max_chunk_bytes) {
+        return replaced(start, end, replacement.to_string());
+    }
+    if (auto error = check_range(*this, start, end)) {
+        return std::unexpected(std::move(*error));
+    }
+    auto [head, rest] = rope::split(root_, end);
+    auto [left, removed] = rope::split(head, start);
+    return Text(rope::concat(rope::concat(left, replacement.root_), rest));
+}
+
 std::expected<Text, Error> Text::replaced(std::size_t start, std::size_t end,
                                           std::string_view replacement) const {
-    if (start > end || end > size()) {
-        return std::unexpected(Error{
-            ErrorCode::invalid_argument,
-            std::format("range [{}, {}) is invalid for text of {} bytes", start, end, size()),
-        });
-    }
-    if (!is_char_boundary(start) || !is_char_boundary(end)) {
-        return std::unexpected(
-            Error{ErrorCode::invalid_argument, "range boundaries must fall between characters"});
+    if (auto error = check_range(*this, start, end)) {
+        return std::unexpected(std::move(*error));
     }
     if (auto valid = core::utf16_length(replacement); !valid) {
         return std::unexpected(valid.error());

@@ -21,6 +21,23 @@ std::expected<TextChange, Error> TextBuffer::replace(std::size_t start, std::siz
     return change;
 }
 
+std::expected<TextChange, Error> TextBuffer::replace(std::size_t start, std::size_t end,
+                                                     const Text& replacement) {
+    auto updated = text_.replaced(start, end, replacement);
+    if (!updated) {
+        return std::unexpected(std::move(updated.error()));
+    }
+
+    TextChange change;
+    change.offset = start;
+    change.removed_bytes = end - start;
+    change.range = {text_.position_at(start), text_.position_at(end)};
+    change.removed_utf16 = text_.utf16_offset(end) - text_.utf16_offset(start);
+    change.text = replacement.to_string();
+    text_ = std::move(*updated);
+    return change;
+}
+
 std::expected<TextChange, Error> TextBuffer::replace(Range range, std::string_view replacement) {
     return replace(text_.offset_at(range.start), text_.offset_at(range.end), replacement);
 }

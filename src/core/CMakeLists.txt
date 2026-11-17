@@ -1,7 +1,10 @@
 add_library(anvil_core STATIC
+  document.cpp
   rope.cpp
+  selection.cpp
   text.cpp
   text_buffer.cpp
+  text_file.cpp
   utf.cpp
 )
 add_library(anvil::core ALIAS anvil_core)

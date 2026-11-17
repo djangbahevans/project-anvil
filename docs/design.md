@@ -41,6 +41,8 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 `core::Text` is an immutable, persistent rope of UTF-8 chunks whose nodes cache byte, UTF-16 and newline counts; copying it is a snapshot. `core::TextBuffer` holds the current text and reports each edit as a `TextChange`. The text uses `\n` line breaks only. Positions exchanged with extensions and language servers are zero-based line and UTF-16 column, converted by `Text::position_at` and `Text::offset_at` ([0006](adr/0006-editor-core-and-text-encoding.md)).
 
+`core::Document` adds selections, an undo history and the file format (line ending, byte order mark) to a buffer. Edits are applied as validated batches and reported as ordered change lists; undo steps hold forward and inverse replacements that share storage with the text, and edits can be joined into undo groups ([0011](adr/0011-document-model.md)).
+
 ## Extension compatibility
 
 The upstream extension host runs unmodified from a pinned VS Code release. The editor answers its RPC calls for the in-scope API surface and reports unsupported API use explicitly. Extensions are installed from Open VSX or from local `.vsix` files ([0007](adr/0007-extension-registry-open-vsx.md)).
