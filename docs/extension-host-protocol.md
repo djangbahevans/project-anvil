@@ -1,0 +1,130 @@
+# Extension host protocol
+
+Reference for the wire protocol between the editor and the upstream VS Code extension host ([ADR 0005](adr/0005-reuse-upstream-extension-host.md)). Source references are to VS Code release **1.146.0**, the pinned version; paths are relative to the VS Code repository root. The protocol is internal to VS Code and unversioned, so this document is valid only for the pinned release.
+
+## Layers
+
+```text
+RPC messages        proxy calls and replies between ExtHost* and MainThread* services
+Handshake           Ready, init data, Initialized
+Framing             13-byte header, ids and acknowledgements (PersistentProtocol)
+Transport           Unix domain socket or Windows named pipe
+```
+
+## Transport
+
+The extension host entrypoint is `src/vs/workbench/api/node/extensionHostProcess.ts`. It selects a transport from its environment (`src/vs/workbench/services/extensions/common/extensionHostEnv.ts`):
+
+| Mode | Selected by | Used by |
+| --- | --- | --- |
+| Named pipe or Unix domain socket | `VSCODE_EXTHOST_IPC_HOOK=<path>` | Anvil. The extension host connects out to a listener owned by the editor. |
+| Node IPC socket handoff | `VSCODE_EXTHOST_WILL_SEND_SOCKET=1` | VS Code remote server. |
+| Electron `MessagePort` | utility-process parent port | VS Code desktop. |
+
+Anvil listens on a socket path, passes it in `VSCODE_EXTHOST_IPC_HOOK`, and accepts one connection. When the connection closes the extension host terminates.
+
+## Framing
+
+Every message on the socket is a frame with a 13-byte big-endian header followed by `DATA_LENGTH` bytes (`src/vs/base/parts/ipc/common/ipc.net.ts`):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | `TYPE` |
+| 1 | 4 | `ID`: sequence number of this frame; counted only for `Regular` frames, 0 otherwise |
+| 5 | 4 | `ACK`: highest `ID` received from the peer |
+| 9 | 4 | `DATA_LENGTH` |
+
+Frame types: `None` 0, `Regular` 1, `Control` 2, `Ack` 3, `Disconnect` 5, `ReplayRequest` 6, `Pause` 7, `Resume` 8, `KeepAlive` 9.
+
+- `Regular` frames carry the payload that the layers above exchange. Each sender numbers them from 1.
+- A receiver acknowledges by sending an `Ack` frame (or setting `ACK` on a `Regular` frame) within 2 seconds. A sender that has an unacknowledged frame for 20 seconds and has received no data in that time treats the connection as timed out.
+- A `KeepAlive` frame is sent every 5 seconds when idle.
+- The extension host sends a `Resume` frame immediately after connecting.
+
+## Handshake
+
+Handshake payloads travel in `Regular` frames:
+
+1. Extension host sends a 1-byte payload `0x02` (`Ready`).
+2. Editor sends one payload containing the UTF-8 JSON of `IExtensionHostInitData` (`src/vs/workbench/services/extensions/common/extensionHostProtocol.ts`).
+3. Extension host sends a 1-byte payload `0x01` (`Initialized`) and constructs the `ExtensionHostMain` instance.
+
+A 1-byte payload `0x03` (`Terminate`) from the editor shuts the extension host down. When `initData.commit` and the extension host's own `product.commit` are both set and differ, the extension host exits with code 55.
+
+`initData.parentPid`, when non-zero, makes the extension host poll for that process and exit when it disappears. A value of `0` disables the poll.
+
+## RPC messages
+
+After the handshake every payload is an RPC message (`src/vs/workbench/services/extensions/common/rpcProtocol.ts`). Each starts with a 5-byte header, `TYPE` (1 byte) and `REQ` (u32be, the request number chosen by the caller), followed by a type-specific body.
+
+| `TYPE` | Name | Body |
+| --- | --- | --- |
+| 1 | `RequestJSONArgs` | `rpcId` u8, method short string, args long string (JSON array) |
+| 2 | `RequestJSONArgsWithCancellation` | same as 1 |
+| 3 | `RequestMixedArgs` | `rpcId` u8, method short string, mixed array |
+| 4 | `RequestMixedArgsWithCancellation` | same as 3 |
+| 5 | `Acknowledged` | empty |
+| 6 | `Cancel` | empty |
+| 7 | `ReplyOKEmpty` | empty |
+| 8 | `ReplyOKVSBuffer` | buffer |
+| 9 | `ReplyOKJSON` | long string (JSON) |
+| 10 | `ReplyOKJSONWithBuffers` | u32 buffer count, long string (JSON), buffers |
+| 11 | `ReplyErrError` | long string (JSON-serialized error) |
+| 12 | `ReplyErrEmpty` | empty |
+
+- A short string is a u8 byte length followed by UTF-8 bytes; a long string is a u32be byte length followed by UTF-8 bytes.
+- The receiver of a request sends `Acknowledged` for it immediately, then a reply with the same `REQ` when the handler completes. A sender that receives no `Acknowledged` within 3 seconds marks the peer unresponsive.
+- `Cancel` aborts an in-flight request that was sent with a cancellation variant.
+- Method names are the method names of the target service shape and all begin with `$`, for example `$registerCommand`.
+
+### Proxy identifiers
+
+`rpcId` selects the target service. Identifiers are created by `createProxyIdentifier` in `src/vs/workbench/api/common/extHost.protocol.ts` and numbered by a global counter in order of creation (`src/vs/workbench/services/extensions/common/proxyIdentifier.ts`), starting at 1. The `MainContext` table is created first, then `ExtHostContext`. The numbering therefore depends on source order and changes whenever an identifier is added or reordered. The editor derives its identifier table from the pinned source with a generator rather than maintaining it by hand.
+
+Requests from the extension host target `MainContext` identifiers, which the editor implements. Requests from the editor target `ExtHostContext` identifiers.
+
+## Launching the extension host
+
+The editor starts `out/bootstrap-fork.js --type=extensionHost` from a transpiled VS Code checkout (`scripts/fetch-vscode.sh`) using the Node binary it ships, with these environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `VSCODE_ESM_ENTRYPOINT` | `vs/workbench/api/node/extensionHostProcess` |
+| `VSCODE_EXTHOST_IPC_HOOK` | socket path the editor listens on |
+| `VSCODE_HANDLES_UNCAUGHT_ERRORS` | `true` |
+
+The inherited environment must not contain `ELECTRON_RUN_AS_NODE` or any `VSCODE_*` variable other than those above. `ELECTRON_RUN_AS_NODE` switches the module loader to Electron-only behavior (`node:original-fs`) and the process fails at startup under plain Node.
+
+## Startup sequence
+
+After the handshake the extension host does not run any extension until the editor has made these calls, in this order. Each is a request to an `ExtHost*` service; the extension host acknowledges and replies after it has processed the call.
+
+1. `ExtHostConfiguration.$initializeConfiguration(data)` with `IConfigurationInitData`. Empty configuration models are sufficient.
+2. `ExtHostWorkspace.$initializeWorkspace(workspace | null, trusted)`. Extension activation waits for this call; without it `$activateByEvent` is acknowledged and never replied to.
+3. `ExtHostExtensionService.$activateByEvent(event, activationKind)`, for example `"*"` for eager extensions.
+
+An extension's command is then runnable with `ExtHostCommands.$executeContributedCommand(id, ...args)`.
+
+Observed requests from the extension host while starting and activating one extension, with the reply each needs:
+
+| Request | Reply |
+| --- | --- |
+| `MainThreadWindow.$getInitialState` | `{ isFocused, isActive }`; an empty reply causes an unhandled rejection in the extension host |
+| `MainThreadChatSkills.$getTools` | an array; an empty reply causes an unhandled rejection |
+| `MainThreadLogger.$registerLogger`, `MainThreadCommands.$registerCommand`, `MainThreadExtensionService.$onWillActivateExtension`, `$onDidActivateExtension`, `MainThreadTask.*`, `MainThreadSearch.*`, `MainThreadTerminalService.$registerProcessSupport`, `MainThreadDebugService.$registerDebugTypes`, `MainThreadStatusBar.$setEntry` | empty |
+
+Every request must still be acknowledged and replied to; a service the editor does not implement replies empty (`ReplyOKEmpty`) so that the extension host does not wait on it.
+
+## Init data details
+
+- `ExtensionIdentifier` values in the init data (`extensions.allExtensions[].identifier` and `extensions.myExtensions`) must include the precomputed lowercase `_lower` field alongside `value`. Without it identifier comparisons fail and extensions silently never activate.
+- URIs in the init data are `UriComponents` objects such as `{ "$mid": 1, "scheme": "file", "path": "/..." }`.
+- Each entry of `extensions.allExtensions` is the extension's `package.json` manifest merged with `identifier`, `extensionLocation`, `isBuiltin`, `isUserBuiltin`, `isUnderDevelopment` and `targetPlatform`.
+
+## Native modules
+
+A checkout installed with `--ignore-scripts` lacks the compiled `@vscode/spdlog` and `@vscode/native-watchdog` modules. The extension host reports both as errors (`MainThreadErrors.$onUnexpectedError`, `MainThreadConsole.$logExtensionHostMessage`) and continues.
+
+## Measured cost
+
+On Linux, with the transpiled but unbundled sources, one trivial extension activated and its command executed, the extension host process has a resident set of about 135 MB. A bundled and minified build is expected to start faster and use less; this has not been measured.
