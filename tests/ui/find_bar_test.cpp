@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QImage>
+#include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QTest>
@@ -274,6 +275,55 @@ TEST_F(FindBarTest, EscapeClosesTheBar) {
     open("ab");
     press(bar_.find_field(), Qt::Key_Escape);
     EXPECT_TRUE(bar_.isHidden());
+}
+
+TEST_F(FindBarTest, EscapeInTheEditorClosesTheBarAndKeepsTheSelection) {
+    open("ab ab");
+    find("ab");
+    ASSERT_EQ(primary(), (core::Selection{0, 2}));
+    press(&view_, Qt::Key_Escape);
+    EXPECT_TRUE(bar_.isHidden());
+    EXPECT_EQ(primary(), (core::Selection{0, 2}));
+}
+
+TEST_F(FindBarTest, EscapeInTheEditorClosesTheBarBeforeDroppingExtraCursors) {
+    open("ab ab");
+    ASSERT_TRUE(document_
+                    ->set_selections(core::SelectionSet::from(
+                        {core::Selection::caret(1), core::Selection::caret(4)}))
+                    .has_value());
+    press(&view_, Qt::Key_Escape);
+    EXPECT_TRUE(bar_.isHidden());
+    EXPECT_EQ(document_->selections().all().size(), 2u);
+
+    press(&view_, Qt::Key_Escape);
+    EXPECT_EQ(document_->selections().all().size(), 1u);
+}
+
+TEST_F(FindBarTest, EscapeInTheEditorIsLeftToAnInputMethodComposition) {
+    open("ab");
+    QInputMethodEvent composing("ka", {});
+    QApplication::sendEvent(&view_, &composing);
+    ASSERT_TRUE(view_.composing());
+    press(&view_, Qt::Key_Escape);
+    EXPECT_FALSE(bar_.isHidden());
+
+    QInputMethodEvent finished;
+    QApplication::sendEvent(&view_, &finished);
+    ASSERT_FALSE(view_.composing());
+    press(&view_, Qt::Key_Escape);
+    EXPECT_TRUE(bar_.isHidden());
+}
+
+TEST_F(FindBarTest, EscapeInTheEditorStillDropsExtraCursorsWhenTheBarIsClosed) {
+    open("ab ab");
+    bar_.close_bar();
+    ASSERT_TRUE(document_
+                    ->set_selections(core::SelectionSet::from(
+                        {core::Selection::caret(1), core::Selection::caret(4)}))
+                    .has_value());
+    press(&view_, Qt::Key_Escape);
+    EXPECT_EQ(document_->selections().all().size(), 1u);
 }
 
 TEST_F(FindBarTest, ReopeningShowsTheHighlightsOfTheKeptPattern) {
