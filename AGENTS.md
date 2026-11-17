@@ -19,6 +19,8 @@ sudo apt install build-essential clang cmake ninja-build libgtest-dev nlohmann-j
 scripts/fetch-vscode.sh          # pinned VS Code checkout in .deps/vscode, needs Node.js 24 and pnpm
 ```
 
+The script also builds the two native modules the extension host loads, which needs `make`, a C++ compiler and Python, and fails if it cannot. Set `ANVIL_ALLOW_MISSING_NATIVE_MODULES=1` to continue without them (the extension host then writes no log files and does not watch its parent process).
+
 Without `.deps/vscode` and Node.js, everything builds and the tests that need the extension host skip themselves.
 
 ## Everyday commands
@@ -54,6 +56,8 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 - Documentation and commit messages are self-contained and in the present tense. They describe the current design and its rationale, and never the history of how it was reached: no "previously", "now fixed", "as discussed". Avoid "I" and "we".
 - Commit messages start with a short imperative subject, then a body explaining what and why. Do not add attribution footers or trailers of any kind.
 - Commit to `main` in small steps, and keep `main` building with all tests passing. Push only when asked.
+- What extensions do to a document the window shows (edit it, save it, ask to show it) reaches the window through callbacks on `DocumentsService::Observer`, carried by `ExtensionHostBridge::Callbacks`. A new operation that extensions can perform on documents needs its own callback, or the tabs, title and views go stale.
+- The project is MIT licensed ([LICENSE](LICENSE)); contributions are made under the same license. Do not copy code from sources with an incompatible license, and keep the notices of any third-party code that is added.
 - Record a significant decision as an ADR (`docs/adr/template.md`), and record a newly discovered fact about the VS Code protocol in `docs/extension-host-protocol.md`.
 
 ## Testing practice
@@ -68,7 +72,9 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 - Clang with libstdc++ hides `<expected>` because it reports `__cpp_concepts` as 201907L; `cmake/AnvilCompileOptions.cmake` overrides the macro.
 - A shell started from a VS Code terminal inherits `ELECTRON_RUN_AS_NODE` and `VSCODE_*`, which make the extension host fail at startup under plain Node. The launcher and the probe strip them; do the same for any other process that starts the host.
-- The extension host needs two native modules (`spdlog`, `native-watchdog`), which `scripts/fetch-vscode.sh` builds. Without them extension logging is empty.
+- The two native modules (`spdlog`, `native-watchdog`) are built by `scripts/fetch-vscode.sh` one after the other. node-gyp unpacks one shared header download for both, so building them at the same time races and fails intermittently. Do not parallelize those builds, and do not turn a failed build into a warning in CI.
+- Modal dialogs (`QMessageBox::exec`, file dialogs) run a nested event loop in which the extension host keeps being serviced. An extension can show another document, edit one or save one while a prompt is open. Code that asks a question acts on the object the question was about (an index or identity captured before asking), never on "the current" one.
+- Work on a per-keystroke path must not grow with the number of open tabs or documents. Setting a `QTabBar` tab's text or tooltip re-lays out the whole bar even when the value is unchanged, so set them only when they differ. Measure typing cost with hundreds of tabs when touching such code.
 - The numeric proxy ids come from the VS Code source and change between releases. `proxy_ids.hpp` is generated; `node scripts/generate-proxy-ids.mjs --check` verifies it.
 - `GTEST` macros split on commas, so wrap braced initializers in parentheses. A raw string containing `)"` needs its own delimiter, such as `R"j(...)j"`.
 - Designated initializers need a default member initializer on every member, or `-Wmissing-field-initializers` fires.
