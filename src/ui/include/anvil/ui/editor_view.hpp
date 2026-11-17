@@ -62,6 +62,11 @@ public:
     // The byte offset nearest to a point in viewport coordinates.
     std::size_t offset_at(const QPoint& point) const;
 
+    // True while an input method composition is shown, which owns the keys it is using.
+    bool composing() const {
+        return !preedit_.isEmpty();
+    }
+
     int line_height() const {
         return line_height_;
     }

@@ -55,6 +55,7 @@ FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(vie
     find_edit_->setPlaceholderText(tr("Find"));
     find_edit_->setClearButtonEnabled(true);
     find_edit_->installEventFilter(this);
+    view_->installEventFilter(this);
     case_button_ = make_toggle(tr("Aa"), tr("Match Case"), this);
     word_button_ = make_toggle(tr("ab"), tr("Match Whole Word"), this);
     regex_button_ = make_toggle(tr(".*"), tr("Use Regular Expression"), this);
@@ -448,6 +449,15 @@ bool FindBar::eventFilter(QObject* watched, QEvent* event) {
         return QWidget::eventFilter(watched, event);
     }
     const auto* key = static_cast<QKeyEvent*>(event);
+    if (watched == view_) {
+        // The editor drops extra cursors on Escape; while the bar is open, the key closes the bar
+        // instead, unless an input method composition is using it.
+        if (key->key() != Qt::Key_Escape || isHidden() || view_->composing()) {
+            return QWidget::eventFilter(watched, event);
+        }
+        close_bar();
+        return true;
+    }
     if (key->key() == Qt::Key_Escape) {
         close_bar();
         return true;
