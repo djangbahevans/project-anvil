@@ -174,7 +174,7 @@ Extensions see a document only after the editor has announced it with `ExtHostDo
 
 ## Native modules
 
-The extension host loads two native modules, `@vscode/spdlog` (log files) and `@vscode/native-watchdog` (exits when the parent process dies). `scripts/fetch-vscode.sh` installs the checkout without running install scripts and then builds just these two with `pnpm rebuild`, which needs make, a C++ compiler and Python. Without them the extension host still runs, but it reports a startup error for each, writes no log files, and output channels stay empty.
+The extension host loads two native modules, `@vscode/spdlog` (log files) and `@vscode/native-watchdog` (exits when the parent process dies). `scripts/fetch-vscode.sh` installs the checkout without running install scripts and then builds just these two with `pnpm rebuild`, one after the other, because node-gyp unpacks one shared header download and two simultaneous builds can read a half-written header and fail to compile. A module that is already built is not rebuilt, a failed build is retried once, and the script fails when a module is still missing unless `ANVIL_ALLOW_MISSING_NATIVE_MODULES=1` is set. Building needs make, a C++ compiler and Python. Without the modules the extension host still runs, but it reports a startup error for each, writes no log files, and output channels stay empty.
 
 ## Measured cost
 
