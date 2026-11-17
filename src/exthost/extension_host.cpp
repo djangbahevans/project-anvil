@@ -37,7 +37,8 @@ void register_startup_services(RequestRouter& router) {
 } // namespace
 
 ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host)
-    : host_(std::move(host)), commands_(host_->session(), router_) {
+    : host_(std::move(host)), commands_(host_->session(), router_),
+      documents_(host_->session(), router_) {
     register_startup_services(router_);
     host_->session().set_request_handler(
         [this](const Request& request) { return router_.dispatch(request); });
@@ -46,6 +47,9 @@ ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host)
             {ProxyId::ExtHostConfiguration, "$initializeConfiguration",
              initial_configuration_json()},
             {ProxyId::ExtHostWorkspace, "$initializeWorkspace", "[null,true]"},
+            // Extensions that activate at startup must already see the open documents.
+            {ProxyId::ExtHostDocumentsAndEditors, "$acceptDocumentsAndEditorsDelta",
+             documents_.initial_delta_args()},
             {ProxyId::ExtHostExtensionService, "$activateByEvent", R"(["*",0])"},
         };
         run_step(0);

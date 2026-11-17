@@ -33,7 +33,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 | --- | --- |
 | `ui` | Qt Widgets: main window, editor widget painting, trees, dialogs, theming. |
 | `workbench` | Commands, keybindings, configuration, workspace model, language-feature routing, terminal sessions. |
-| `exthost` | Node process supervision and the C++ implementation of the `MainThread*` RPC services ([0005](adr/0005-reuse-upstream-extension-host.md)). |
+| `exthost` | Node process supervision and the C++ implementation of the `MainThread*` RPC services, including commands and the documents and editors that extensions see ([0005](adr/0005-reuse-upstream-extension-host.md)). |
 | `core` | Text buffer, undo, cursors and selections, line layout, highlighting, UTF-16 boundary conversion ([0006](adr/0006-editor-core-and-text-encoding.md), [0010](adr/0010-syntax-highlighting.md)). |
 | `platform` | Pseudo-terminals, file watching, process spawning, OS paths. The only layer with per-OS code ([0008](adr/0008-cross-platform-from-the-start.md)). |
 

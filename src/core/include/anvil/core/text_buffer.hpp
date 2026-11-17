@@ -15,8 +15,10 @@ struct TextChange {
     // Byte offset and length of the replaced range.
     std::size_t offset = 0;
     std::size_t removed_bytes = 0;
-    // The replaced range with UTF-16 columns, and its length in UTF-16 code units.
+    // The replaced range with UTF-16 columns, its start as a UTF-16 offset from the start of the
+    // text, and its length in UTF-16 code units.
     Range range;
+    std::size_t utf16_offset = 0;
     std::size_t removed_utf16 = 0;
     // The inserted text, with normalized line breaks.
     std::string text;

@@ -5,6 +5,7 @@ add_library(anvil_core STATIC
   text.cpp
   text_buffer.cpp
   text_file.cpp
+  uri.cpp
   utf.cpp
 )
 add_library(anvil::core ALIAS anvil_core)

@@ -164,8 +164,8 @@ Document::apply_replacements(const std::vector<Replacement>& replacements) {
     return changes;
 }
 
-std::expected<DocumentChange, Error> Document::apply_edits(std::span<const Edit> edits,
-                                                           EditOptions options) {
+std::expected<std::vector<Document::Replacement>, Error>
+Document::to_replacements(std::span<const Edit> edits) const {
     std::vector<Replacement> forward;
     forward.reserve(edits.size());
     for (const Edit& edit : edits) {
@@ -190,6 +190,24 @@ std::expected<DocumentChange, Error> Document::apply_edits(std::span<const Edit>
             return std::unexpected(invalid("edits must not overlap"));
         }
     }
+    return forward;
+}
+
+std::expected<void, Error> Document::validate_edits(std::span<const Edit> edits) const {
+    auto replacements = to_replacements(edits);
+    if (!replacements) {
+        return std::unexpected(std::move(replacements.error()));
+    }
+    return {};
+}
+
+std::expected<DocumentChange, Error> Document::apply_edits(std::span<const Edit> edits,
+                                                           EditOptions options) {
+    auto converted = to_replacements(edits);
+    if (!converted) {
+        return std::unexpected(std::move(converted.error()));
+    }
+    std::vector<Replacement> forward = std::move(*converted);
     if (forward.empty()) {
         return DocumentChange{version_, ChangeCause::edit, {}};
     }

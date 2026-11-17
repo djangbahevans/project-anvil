@@ -2,6 +2,7 @@ find_package(nlohmann_json REQUIRED)
 
 add_library(anvil_exthost STATIC
   commands_service.cpp
+  documents_service.cpp
   extension_host.cpp
   frame.cpp
   host_process.cpp
@@ -9,6 +10,7 @@ add_library(anvil_exthost STATIC
   request_router.cpp
   rpc_message.cpp
   session.cpp
+  vscode_types.cpp
 )
 add_library(anvil::exthost ALIAS anvil_exthost)
 

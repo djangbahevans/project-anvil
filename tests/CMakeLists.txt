@@ -9,6 +9,7 @@ add_executable(anvil_core_tests
   core/text_file_test.cpp
   core/text_model_test.cpp
   core/text_test.cpp
+  core/uri_test.cpp
   core/utf_test.cpp
 )
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)
@@ -20,6 +21,7 @@ if(UNIX)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/paths_linux_test.cpp)
   endif()
+  list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/file_test.cpp)
   add_executable(anvil_platform_tests ${ANVIL_PLATFORM_TEST_SOURCES})
   target_link_libraries(anvil_platform_tests
     PRIVATE anvil::platform GTest::gtest_main anvil_compile_options)
@@ -28,12 +30,14 @@ endif()
 
 add_executable(anvil_exthost_tests
   exthost/commands_service_test.cpp
+  exthost/documents_service_test.cpp
   exthost/frame_test.cpp
   exthost/init_data_test.cpp
   exthost/replay_test.cpp
   exthost/request_router_test.cpp
   exthost/rpc_message_test.cpp
   exthost/session_test.cpp
+  exthost/vscode_types_test.cpp
 )
 find_package(nlohmann_json REQUIRED)
 target_link_libraries(anvil_exthost_tests PRIVATE nlohmann_json::nlohmann_json)
@@ -43,11 +47,16 @@ gtest_discover_tests(anvil_exthost_tests)
 
 find_package(nlohmann_json REQUIRED)
 find_program(ANVIL_NODE node)
-add_executable(anvil_exthost_integration_tests exthost/host_process_test.cpp exthost/extension_host_test.cpp)
+add_executable(anvil_exthost_integration_tests
+  exthost/documents_integration_test.cpp
+  exthost/extension_host_test.cpp
+  exthost/host_process_test.cpp
+)
 target_link_libraries(anvil_exthost_integration_tests
   PRIVATE anvil::exthost nlohmann_json::nlohmann_json GTest::gtest_main anvil_compile_options)
 target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
   ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
-  ANVIL_FIXTURE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/hello-extension")
+  ANVIL_FIXTURE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/hello-extension"
+  ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)

@@ -22,6 +22,7 @@ TEST(TextBuffer, ReplaceUpdatesTheTextAndDescribesTheChange) {
     EXPECT_EQ(change->offset, 4u);
     EXPECT_EQ(change->removed_bytes, 5u);
     EXPECT_EQ(change->range, (Range{{1, 0}, {2, 1}}));
+    EXPECT_EQ(change->utf16_offset, 4u);
     EXPECT_EQ(change->removed_utf16, 5u);
     EXPECT_EQ(change->text, "2\nxx\nyy");
 }
@@ -31,6 +32,7 @@ TEST(TextBuffer, ChangeLengthsCountUtf16Units) {
     const auto change = buffer.erase(1, 5);
     ASSERT_TRUE(change.has_value());
     EXPECT_EQ(change->removed_bytes, 4u);
+    EXPECT_EQ(change->utf16_offset, 1u);
     EXPECT_EQ(change->removed_utf16, 2u);
     EXPECT_EQ(change->range, (Range{{0, 1}, {0, 3}}));
     EXPECT_EQ(buffer.snapshot().to_string(), "az");

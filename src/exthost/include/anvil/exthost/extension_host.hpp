@@ -2,6 +2,7 @@
 
 #include "anvil/core/error.hpp"
 #include "anvil/exthost/commands_service.hpp"
+#include "anvil/exthost/documents_service.hpp"
 #include "anvil/exthost/host_process.hpp"
 #include "anvil/exthost/request_router.hpp"
 
@@ -63,6 +64,11 @@ public:
         return commands_;
     }
 
+    // The documents and editors that extensions can see.
+    DocumentsService& documents() {
+        return documents_;
+    }
+
     // Registers handlers for further services before pumping starts.
     RequestRouter& router() {
         return router_;
@@ -93,6 +99,7 @@ private:
     RequestRouter router_;
     std::unique_ptr<HostProcess> host_;
     CommandsService commands_;
+    DocumentsService documents_;
     std::vector<Step> startup_steps_;
     HostState state_ = HostState::starting;
     std::string failure_;

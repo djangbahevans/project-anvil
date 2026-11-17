@@ -1,4 +1,5 @@
 add_library(anvil_ui STATIC
+  include/anvil/ui/main_window.hpp
   main_window.cpp
 )
 add_library(anvil::ui ALIAS anvil_ui)

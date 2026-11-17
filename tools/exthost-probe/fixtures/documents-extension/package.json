@@ -1,0 +1,22 @@
+{
+  "name": "documents",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "commands": [
+      { "command": "anvil.docs.active", "title": "Anvil: Active Document" },
+      { "command": "anvil.docs.insert", "title": "Anvil: Insert" },
+      { "command": "anvil.docs.replaceTwo", "title": "Anvil: Replace Two" },
+      { "command": "anvil.docs.open", "title": "Anvil: Open" },
+      { "command": "anvil.docs.show", "title": "Anvil: Show" },
+      { "command": "anvil.docs.changes", "title": "Anvil: Changes" },
+      { "command": "anvil.docs.saves", "title": "Anvil: Saves" },
+      { "command": "anvil.docs.select", "title": "Anvil: Select" },
+      { "command": "anvil.docs.save", "title": "Anvil: Save" },
+      { "command": "anvil.docs.workspaceEdit", "title": "Anvil: Workspace Edit" }
+    ]
+  }
+}

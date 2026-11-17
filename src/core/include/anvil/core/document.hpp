@@ -84,6 +84,9 @@ public:
     // boundaries.
     std::expected<void, Error> set_selections(SelectionSet selections);
 
+    // Checks that apply_edits would accept the edits, without applying them.
+    std::expected<void, Error> validate_edits(std::span<const Edit> edits) const;
+
     // Applies the edits as one undo step. The edits are given in coordinates of the current
     // text, in any order, and must not overlap; edits at the same offset keep the order given.
     // Nothing changes when an edit is invalid. An empty list changes nothing and returns no
@@ -120,6 +123,9 @@ private:
         SelectionSet selections_after;
     };
 
+    // The edits as replacements sorted by position, or the reason they are invalid.
+    std::expected<std::vector<Replacement>, Error>
+    to_replacements(std::span<const Edit> edits) const;
     std::expected<std::vector<TextChange>, Error>
     apply_replacements(const std::vector<Replacement>& replacements);
     std::expected<std::optional<DocumentChange>, Error> replay(bool undoing);

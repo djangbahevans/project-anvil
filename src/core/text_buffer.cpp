@@ -15,7 +15,8 @@ std::expected<TextChange, Error> TextBuffer::replace(std::size_t start, std::siz
     change.offset = start;
     change.removed_bytes = end - start;
     change.range = {text_.position_at(start), text_.position_at(end)};
-    change.removed_utf16 = text_.utf16_offset(end) - text_.utf16_offset(start);
+    change.utf16_offset = text_.utf16_offset(start);
+    change.removed_utf16 = text_.utf16_offset(end) - change.utf16_offset;
     change.text = normalize_line_endings(replacement);
     text_ = std::move(*updated);
     return change;
@@ -32,7 +33,8 @@ std::expected<TextChange, Error> TextBuffer::replace(std::size_t start, std::siz
     change.offset = start;
     change.removed_bytes = end - start;
     change.range = {text_.position_at(start), text_.position_at(end)};
-    change.removed_utf16 = text_.utf16_offset(end) - text_.utf16_offset(start);
+    change.utf16_offset = text_.utf16_offset(start);
+    change.removed_utf16 = text_.utf16_offset(end) - change.utf16_offset;
     change.text = replacement.to_string();
     text_ = std::move(*updated);
     return change;
