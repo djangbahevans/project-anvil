@@ -1,10 +1,19 @@
+find_package(nlohmann_json REQUIRED)
+
 add_library(anvil_exthost STATIC
+  commands_service.cpp
+  extension_host.cpp
   frame.cpp
   host_process.cpp
+  init_data.cpp
+  request_router.cpp
   rpc_message.cpp
   session.cpp
 )
 add_library(anvil::exthost ALIAS anvil_exthost)
 
 target_include_directories(anvil_exthost PUBLIC include)
-target_link_libraries(anvil_exthost PUBLIC anvil::core anvil::platform PRIVATE anvil_compile_options)
+target_link_libraries(anvil_exthost
+  PUBLIC anvil::core anvil::platform nlohmann_json::nlohmann_json
+  PRIVATE anvil_compile_options
+)

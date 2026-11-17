@@ -46,6 +46,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+std::int64_t current_process_id();
+
 // The environment of the current process as "NAME=value" entries.
 std::vector<std::string> current_environment();
 

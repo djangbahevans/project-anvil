@@ -17,18 +17,23 @@ if(UNIX)
 endif()
 
 add_executable(anvil_exthost_tests
+  exthost/commands_service_test.cpp
   exthost/frame_test.cpp
+  exthost/init_data_test.cpp
   exthost/replay_test.cpp
+  exthost/request_router_test.cpp
   exthost/rpc_message_test.cpp
   exthost/session_test.cpp
 )
+find_package(nlohmann_json REQUIRED)
+target_link_libraries(anvil_exthost_tests PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(anvil_exthost_tests PRIVATE anvil::exthost GTest::gtest_main anvil_compile_options)
 target_compile_definitions(anvil_exthost_tests PRIVATE ANVIL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/exthost/data")
 gtest_discover_tests(anvil_exthost_tests)
 
 find_package(nlohmann_json REQUIRED)
 find_program(ANVIL_NODE node)
-add_executable(anvil_exthost_integration_tests exthost/host_process_test.cpp)
+add_executable(anvil_exthost_integration_tests exthost/host_process_test.cpp exthost/extension_host_test.cpp)
 target_link_libraries(anvil_exthost_integration_tests
   PRIVATE anvil::exthost nlohmann_json::nlohmann_json GTest::gtest_main anvil_compile_options)
 target_compile_definitions(anvil_exthost_integration_tests PRIVATE

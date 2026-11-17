@@ -1,0 +1,102 @@
+#pragma once
+
+#include "anvil/core/error.hpp"
+#include "anvil/exthost/commands_service.hpp"
+#include "anvil/exthost/host_process.hpp"
+#include "anvil/exthost/request_router.hpp"
+
+#include <chrono>
+#include <expected>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace anvil::exthost {
+
+struct ExtensionHostOptions {
+    std::filesystem::path node_executable{};
+    // A transpiled VS Code checkout containing out/bootstrap-fork.js (see scripts/fetch-vscode.sh).
+    std::filesystem::path vscode_dir{};
+    // Directories of unpacked extensions to load.
+    std::vector<std::filesystem::path> extension_dirs{};
+    // Base directory for extension storage and logs.
+    std::filesystem::path storage_dir{};
+    std::chrono::milliseconds connect_timeout{15000};
+};
+
+enum class HostState {
+    // Connected; the startup sequence has not completed.
+    starting,
+    // Eager extensions are activated and commands can run.
+    ready,
+    // The startup sequence failed; failure() says why.
+    failed,
+    // The connection closed.
+    closed,
+};
+
+// An extension host process together with the editor-side services it talks to. start() launches
+// the process; the startup sequence then runs as the caller pumps the connection.
+class ExtensionHost {
+public:
+    static std::expected<std::unique_ptr<ExtensionHost>, Error>
+    start(const ExtensionHostOptions& options);
+
+    ExtensionHost(const ExtensionHost&) = delete;
+    ExtensionHost& operator=(const ExtensionHost&) = delete;
+
+    HostState state() const {
+        return state_;
+    }
+    const std::string& failure() const {
+        return failure_;
+    }
+
+    // Runs once when the host becomes ready.
+    void set_ready_handler(std::function<void()> handler) {
+        ready_handler_ = std::move(handler);
+    }
+
+    CommandsService& commands() {
+        return commands_;
+    }
+
+    // Registers handlers for further services before pumping starts.
+    RequestRouter& router() {
+        return router_;
+    }
+
+    // "Service.method" names of requests from the extension host that nothing handled.
+    const std::set<std::string>& unhandled_requests() const {
+        return router_.unhandled();
+    }
+
+    // Services the connection for up to `timeout`; see HostProcess::pump. Returns false once the
+    // connection has closed.
+    std::expected<bool, Error> pump(std::chrono::milliseconds timeout);
+
+private:
+    explicit ExtensionHost(std::unique_ptr<HostProcess> host);
+
+    struct Step {
+        ProxyId target;
+        std::string method;
+        std::string args_json;
+    };
+    void run_step(std::size_t index);
+    void fail(std::string message);
+
+    // Declaration order matters: the commands service uses the session inside host_ and the
+    // router, so it is destroyed first.
+    RequestRouter router_;
+    std::unique_ptr<HostProcess> host_;
+    CommandsService commands_;
+    std::vector<Step> startup_steps_;
+    HostState state_ = HostState::starting;
+    std::string failure_;
+    std::function<void()> ready_handler_;
+};
+
+} // namespace anvil::exthost

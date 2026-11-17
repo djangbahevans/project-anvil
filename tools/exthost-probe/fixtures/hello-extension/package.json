@@ -6,6 +6,10 @@
   "main": "./extension.js",
   "activationEvents": ["*"],
   "contributes": {
-    "commands": [{ "command": "anvil.hello", "title": "Anvil: Hello" }]
+    "commands": [
+      { "command": "anvil.hello", "title": "Anvil: Hello" },
+      { "command": "anvil.callBuiltin", "title": "Anvil: Call Built-in" },
+      { "command": "anvil.callMissing", "title": "Anvil: Call Missing" }
+    ]
   }
 }

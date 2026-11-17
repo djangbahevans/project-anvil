@@ -1,0 +1,105 @@
+#include "anvil/exthost/extension_host.hpp"
+
+#include "anvil/exthost/init_data.hpp"
+
+namespace anvil::exthost {
+namespace {
+
+using nlohmann::json;
+
+// Configuration with no settings; a workbench with a settings store replaces it.
+std::string initial_configuration_json() {
+    const json model = {
+        {"contents", json::object()}, {"keys", json::array()}, {"overrides", json::array()}};
+    return json::array({{{"defaults", model},
+                         {"policy", model},
+                         {"application", model},
+                         {"userLocal", model},
+                         {"userRemote", model},
+                         {"workspace", model},
+                         {"folders", json::array()},
+                         {"configurationScopes", json::array()}}})
+        .dump();
+}
+
+// Answers for the calls the extension host makes while starting; it dereferences these results.
+void register_startup_services(RequestRouter& router) {
+    router.on(ProxyId::MainThreadWindow, "$getInitialState",
+              [](const Request&, const json&) -> std::optional<HandlerResult> {
+                  return OkJson{R"({"isFocused":true,"isActive":true})"};
+              });
+    // Language model tools; none are offered.
+    router.on(
+        ProxyId::MainThreadChatSkills, "$getTools",
+        [](const Request&, const json&) -> std::optional<HandlerResult> { return OkJson{"[]"}; });
+}
+
+} // namespace
+
+ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host)
+    : host_(std::move(host)), commands_(host_->session(), router_) {
+    register_startup_services(router_);
+    host_->session().set_request_handler(
+        [this](const Request& request) { return router_.dispatch(request); });
+    host_->session().set_ready_handler([this] {
+        startup_steps_ = {
+            {ProxyId::ExtHostConfiguration, "$initializeConfiguration",
+             initial_configuration_json()},
+            {ProxyId::ExtHostWorkspace, "$initializeWorkspace", "[null,true]"},
+            {ProxyId::ExtHostExtensionService, "$activateByEvent", R"(["*",0])"},
+        };
+        run_step(0);
+    });
+}
+
+std::expected<std::unique_ptr<ExtensionHost>, Error>
+ExtensionHost::start(const ExtensionHostOptions& options) {
+    auto init_data = build_init_data(InitDataOptions{
+        .app_root = options.vscode_dir,
+        .extension_dirs = options.extension_dirs,
+        .storage_dir = options.storage_dir,
+    });
+    if (!init_data) {
+        return std::unexpected(init_data.error());
+    }
+    auto host = HostProcess::start(HostOptions{options.node_executable, options.vscode_dir,
+                                               std::move(*init_data), options.connect_timeout});
+    if (!host) {
+        return std::unexpected(host.error());
+    }
+    return std::unique_ptr<ExtensionHost>(new ExtensionHost(std::move(*host)));
+}
+
+void ExtensionHost::run_step(std::size_t index) {
+    const Step& step = startup_steps_[index];
+    host_->session().call(
+        step.target, step.method, step.args_json, [this, index](CallResult result) {
+            if (!result) {
+                fail("startup step " + startup_steps_[index].method + " failed: " + result.error());
+                return;
+            }
+            if (index + 1 < startup_steps_.size()) {
+                run_step(index + 1);
+                return;
+            }
+            state_ = HostState::ready;
+            if (ready_handler_) {
+                ready_handler_();
+            }
+        });
+}
+
+void ExtensionHost::fail(std::string message) {
+    state_ = HostState::failed;
+    failure_ = std::move(message);
+}
+
+std::expected<bool, Error> ExtensionHost::pump(std::chrono::milliseconds timeout) {
+    const auto pumped = host_->pump(timeout);
+    if (pumped && !*pumped && state_ != HostState::failed) {
+        state_ = HostState::closed;
+    }
+    return pumped;
+}
+
+} // namespace anvil::exthost

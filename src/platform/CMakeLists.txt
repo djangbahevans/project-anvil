@@ -8,7 +8,7 @@ else()
   message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-add_library(anvil_platform STATIC ${ANVIL_PLATFORM_SOURCES})
+add_library(anvil_platform STATIC ${ANVIL_PLATFORM_SOURCES} target.cpp)
 add_library(anvil::platform ALIAS anvil_platform)
 
 target_include_directories(anvil_platform PUBLIC include)

@@ -106,6 +106,10 @@ void Process::kill() {
     }
 }
 
+std::int64_t current_process_id() {
+    return ::getpid();
+}
+
 std::vector<std::string> current_environment() {
     std::vector<std::string> result;
     for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {

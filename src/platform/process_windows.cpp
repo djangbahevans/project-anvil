@@ -26,6 +26,10 @@ std::optional<int> Process::wait(std::chrono::milliseconds) {
 void Process::terminate() {}
 void Process::kill() {}
 
+std::int64_t current_process_id() {
+    return 0;
+}
+
 std::vector<std::string> current_environment() {
     return {};
 }
