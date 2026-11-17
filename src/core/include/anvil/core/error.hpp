@@ -7,6 +7,7 @@ namespace anvil {
 enum class ErrorCode {
     invalid_encoding,
     environment_unavailable,
+    protocol_error,
 };
 
 struct Error {

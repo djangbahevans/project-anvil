@@ -2,6 +2,7 @@
 // It listens on a Unix socket, completes the handshake, and logs every RPC request the
 // extension host sends. Usage:
 //   node probe.mjs --vscode <vscode checkout> [--extension <extension dir>]... [--seconds <n>]
+//                  [--dump <file>]   writes the raw bytes received from the extension host
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -13,6 +14,8 @@ const argValues = (name) => args.flatMap((a, i) => (a === name ? [args[i + 1]] :
 const vscodeDir = path.resolve(argValues('--vscode')[0] ?? '');
 const extensionDirs = argValues('--extension').map((p) => path.resolve(p));
 const runSeconds = Number(argValues('--seconds')[0] ?? 8);
+const dumpPath = argValues('--dump')[0];
+if (dumpPath) fs.writeFileSync(dumpPath, '');
 if (!fs.existsSync(path.join(vscodeDir, 'out', 'bootstrap-fork.js'))) {
     console.error('--vscode must point to a transpiled VS Code checkout (run build/next/index.ts transpile)');
     process.exit(2);
@@ -250,6 +253,7 @@ const server = net.createServer((socket) => {
     }
 
     socket.on('data', (chunk) => {
+        if (dumpPath) fs.appendFileSync(dumpPath, chunk);
         rpcBuffer = Buffer.concat([rpcBuffer, chunk]);
         let sawRegular = false;
         while (rpcBuffer.length >= 13) {

@@ -1,5 +1,6 @@
 add_subdirectory(core)
 add_subdirectory(platform)
+add_subdirectory(exthost)
 
 if(ANVIL_BUILD_UI STREQUAL "OFF")
   set(ANVIL_UI_ENABLED OFF)

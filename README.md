@@ -26,6 +26,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | Path | Contents |
 | --- | --- |
 | `src/core` | Text and encoding primitives with no UI or OS dependencies |
+| `src/exthost` | Extension host wire protocol: frame and RPC message codecs |
 | `src/platform` | Per-OS code behind portable interfaces |
 | `src/ui` | Qt Widgets user interface |
 | `src/app` | The `anvil` executable |

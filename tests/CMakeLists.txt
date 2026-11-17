@@ -11,3 +11,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     PRIVATE anvil::platform GTest::gtest_main anvil_compile_options)
   gtest_discover_tests(anvil_platform_tests)
 endif()
+
+add_executable(anvil_exthost_tests exthost/frame_test.cpp exthost/rpc_message_test.cpp)
+target_link_libraries(anvil_exthost_tests PRIVATE anvil::exthost GTest::gtest_main anvil_compile_options)
+gtest_discover_tests(anvil_exthost_tests)
