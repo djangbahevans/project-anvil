@@ -1,5 +1,7 @@
 #include "anvil/core/editing.hpp"
 
+#include "anvil/core/char_class.hpp"
+
 #include <algorithm>
 
 namespace anvil::core {
@@ -23,34 +25,7 @@ std::size_t next_boundary(const Text& text, std::size_t offset) {
 
 // The code point that starts at `offset`, which must be a character boundary before the end.
 char32_t codepoint_at(const Text& text, std::size_t offset) {
-    const std::string bytes = text.slice(offset, 4);
-    const auto lead = static_cast<unsigned char>(bytes[0]);
-    if (lead < 0x80) {
-        return lead;
-    }
-    const std::size_t length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
-    char32_t code_point = lead & (0xFFu >> (length + 1));
-    for (std::size_t i = 1; i < length && i < bytes.size(); ++i) {
-        code_point = (code_point << 6) | (static_cast<unsigned char>(bytes[i]) & 0x3Fu);
-    }
-    return code_point;
-}
-
-enum class CharClass {
-    space,
-    word,
-    punctuation,
-};
-
-CharClass classify(char32_t c) {
-    if (c == ' ' || c == '\t' || c == '\n') {
-        return CharClass::space;
-    }
-    if (c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
-        (c >= 'A' && c <= 'Z')) {
-        return CharClass::word;
-    }
-    return CharClass::punctuation;
+    return decode_code_point(text.slice(offset, 4), 0);
 }
 
 std::size_t word_right(const Text& text, std::size_t offset) {
@@ -186,6 +161,25 @@ EditOutcome EditController::paste(std::string_view text) {
         return {};
     }
     return replace_selections(text, EditKind::none, false);
+}
+
+EditOutcome EditController::replace_ranges(std::vector<Edit> edits,
+                                           std::optional<Selection> selection_after) {
+    if (edits.empty()) {
+        return {};
+    }
+    const SelectionSet before = document_.selections();
+    EditOptions options;
+    if (selection_after) {
+        options.selections_after = SelectionSet::from({*selection_after});
+    }
+    auto change = document_.apply_edits(edits, std::move(options));
+    if (!change) {
+        return {};
+    }
+    last_kind_ = EditKind::none;
+    goal_column_.reset();
+    return {std::move(*change), !(document_.selections() == before)};
 }
 
 EditOutcome EditController::insert_newline() {
@@ -358,6 +352,18 @@ EditOutcome EditController::move(Motion motion, bool extend) {
 
 EditOutcome EditController::select_all() {
     return adopt(SelectionSet::from({Selection{0, document_.text().size()}}));
+}
+
+EditOutcome EditController::select(Selection range) {
+    const Text& text = document_.text();
+    const auto boundary = [&text](std::size_t offset) {
+        offset = std::min(offset, text.size());
+        while (!text.is_char_boundary(offset)) {
+            --offset;
+        }
+        return offset;
+    };
+    return adopt(SelectionSet::from({Selection{boundary(range.anchor), boundary(range.active)}}));
 }
 
 EditOutcome EditController::set_caret(std::size_t offset, bool extend) {

@@ -15,7 +15,7 @@ What is done and what comes next is tracked on GitHub, not in this repository: s
 
 ```sh
 sudo apt install build-essential clang cmake ninja-build libgtest-dev nlohmann-json3-dev \
-    libbenchmark-dev qt6-base-dev clang-format python3 make
+    libpcre2-dev libbenchmark-dev qt6-base-dev clang-format python3 make
 scripts/fetch-vscode.sh          # pinned VS Code checkout in .deps/vscode, needs Node.js 24 and pnpm
 ```
 
@@ -41,10 +41,10 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 | Directory | Contents |
 | --- | --- |
-| `src/core` | rope text, documents, undo, selections, editing commands, UTF-8/UTF-16, URIs, logging interface |
+| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, UTF-8/UTF-16, URIs, logging interface |
 | `src/platform` | processes, local sockets, files, paths |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services |
-| `src/ui` | editor view, main window, extension host bridge |
+| `src/ui` | editor view, find bar, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `scripts` | fetching VS Code, generating proxy ids, formatting |
 

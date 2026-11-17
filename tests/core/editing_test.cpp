@@ -480,3 +480,72 @@ TEST(EditControllerHistory, TypingAfterUndoDoesNotJoinTheUndoneStep) {
     EXPECT_EQ(editor.text(), "");
     EXPECT_FALSE(editor.document.can_undo());
 }
+
+TEST(EditControllerSelect, SelectMakesTheRangeTheOnlySelection) {
+    Editor editor("abcdef", {Selection::caret(1), Selection{3, 5}});
+    const EditOutcome outcome = editor.controller.select({2, 4});
+    EXPECT_TRUE(outcome.selections_changed);
+    EXPECT_FALSE(outcome.change.has_value());
+    EXPECT_EQ(editor.selections(), (Carets{Selection{2, 4}}));
+    EXPECT_FALSE(editor.controller.select({2, 4}).changed_anything());
+
+    editor.controller.select({5, 1});
+    EXPECT_EQ(editor.primary(), (Selection{5, 1}));
+}
+
+TEST(EditControllerSelect, SelectClampsToTheTextAndToCharacterBoundaries) {
+    const std::string text = std::string("a") + eacute + "b";
+    Editor editor(text);
+    editor.controller.select({2, 100});
+    EXPECT_EQ(editor.primary(), (Selection{1, 4}));
+}
+
+TEST(EditControllerSelect, SelectForgetsTheColumnVerticalMovementReturnsTo) {
+    Editor editor("abcdef\nab\nabcdef", {Selection::caret(5)});
+    editor.controller.move(Motion::down);
+    editor.controller.select({0, 0});
+    editor.controller.move(Motion::down);
+    editor.controller.move(Motion::down);
+    EXPECT_EQ(editor.primary(), Selection::caret(10));
+}
+
+TEST(EditControllerReplaceRanges, AppliesAllEditsAsOneUndoStep) {
+    Editor editor("one two one", {Selection::caret(11)});
+    const EditOutcome outcome = editor.controller.replace_ranges({{0, 3, "1"}, {8, 11, "111"}});
+    EXPECT_EQ(editor.text(), "1 two 111");
+    ASSERT_TRUE(outcome.change.has_value());
+    EXPECT_EQ(editor.primary(), Selection::caret(9));
+
+    editor.controller.undo();
+    EXPECT_EQ(editor.text(), "one two one");
+    EXPECT_FALSE(editor.document.can_undo());
+}
+
+TEST(EditControllerReplaceRanges, TheGivenSelectionReplacesTheOthers) {
+    Editor editor("ab", {Selection::caret(0)});
+    editor.controller.replace_ranges({{0, 1, "xyz"}}, Selection{1, 3});
+    EXPECT_EQ(editor.text(), "xyzb");
+    EXPECT_EQ(editor.selections(), (Carets{Selection{1, 3}}));
+}
+
+TEST(EditControllerReplaceRanges, DoesNotJoinTypingBeforeOrAfter) {
+    Editor editor("");
+    editor.controller.type("a");
+    editor.controller.replace_ranges({{0, 1, "b"}});
+    editor.controller.type("c");
+    editor.controller.undo();
+    EXPECT_EQ(editor.text(), "b");
+    editor.controller.undo();
+    EXPECT_EQ(editor.text(), "a");
+}
+
+TEST(EditControllerReplaceRanges, NothingToReplaceChangesNothing) {
+    Editor editor("abc");
+    EXPECT_FALSE(editor.controller.replace_ranges({}).changed_anything());
+}
+
+TEST(EditControllerReplaceRanges, InvalidEditsChangeNothing) {
+    Editor editor("abc");
+    EXPECT_FALSE(editor.controller.replace_ranges({{2, 9, "x"}}).changed_anything());
+    EXPECT_EQ(editor.text(), "abc");
+}

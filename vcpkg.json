@@ -5,6 +5,7 @@
   "dependencies": [
     "gtest",
     "nlohmann-json",
-    "benchmark"
+    "benchmark",
+    "pcre2"
   ]
 }

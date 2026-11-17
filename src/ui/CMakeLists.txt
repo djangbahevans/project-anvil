@@ -1,7 +1,9 @@
 add_library(anvil_ui STATIC
   editor_view.cpp
   extension_host_bridge.cpp
+  find_bar.cpp
   include/anvil/ui/editor_view.hpp
+  include/anvil/ui/find_bar.hpp
   include/anvil/ui/main_window.hpp
   main_window.cpp
 )

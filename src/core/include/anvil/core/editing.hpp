@@ -55,6 +55,12 @@ public:
     EditOutcome type(std::string_view text);
     // Like type(), but never joins an undo step.
     EditOutcome paste(std::string_view text);
+    // Replaces the ranges with their texts as one undo step that never joins typing. The edits are
+    // in coordinates of the current text, and must be valid as for Document::apply_edits. The
+    // selections move with the edits unless `selection_after` is given, which then becomes the only
+    // selection.
+    EditOutcome replace_ranges(std::vector<Edit> edits,
+                               std::optional<Selection> selection_after = std::nullopt);
     // Replaces every selection with a line break followed by the indentation of its line.
     EditOutcome insert_newline();
     // Deletes the selections, or the character before each caret.
@@ -73,6 +79,9 @@ public:
     // and right collapse a selection to its start or end instead of moving.
     EditOutcome move(Motion motion, bool extend = false);
     EditOutcome select_all();
+    // Makes `range` the only selection, with its active end at `range.active`. Offsets move back
+    // to a character boundary.
+    EditOutcome select(Selection range);
     // Places a single caret, or with `extend` moves the active end of the primary selection.
     EditOutcome set_caret(std::size_t offset, bool extend = false);
     // Drops every selection but the primary one, which keeps its extent.

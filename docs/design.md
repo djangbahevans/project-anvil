@@ -34,7 +34,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 | `ui` | Qt Widgets: the main window with a tab per open document, the editor view that paints a document and turns input into editing commands, and the bridge that runs the extension host from the event loop. |
 | `workbench` | Commands, keybindings, configuration, workspace model, language-feature routing, terminal sessions. |
 | `exthost` | Node process supervision and the C++ implementation of the `MainThread*` RPC services, including commands and the documents and editors that extensions see ([0005](adr/0005-reuse-upstream-extension-host.md)). |
-| `core` | Text buffer, undo, cursors and selections, line layout, highlighting, UTF-16 boundary conversion ([0006](adr/0006-editor-core-and-text-encoding.md), [0010](adr/0010-syntax-highlighting.md)). |
+| `core` | Text buffer, undo, cursors and selections, search and replace, line layout, highlighting, UTF-16 boundary conversion ([0006](adr/0006-editor-core-and-text-encoding.md), [0010](adr/0010-syntax-highlighting.md), [0013](adr/0013-pcre2-for-search.md)). |
 | `platform` | Pseudo-terminals, file watching, process spawning, OS paths. The only layer with per-OS code ([0008](adr/0008-cross-platform-from-the-start.md)). |
 
 ## Editor core
@@ -44,6 +44,8 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 `core::EditController` implements the editing commands (typing, deleting, motion, selection, undo) on a document, for all cursors at once; the Qt editor view only paints and forwards input ([0012](adr/0012-editing-commands-in-core.md)).
 
 `core::Document` adds selections, an undo history and the file format (line ending, byte order mark) to a buffer. Edits are applied as validated batches and reported as ordered change lists; undo steps hold forward and inverse replacements that share storage with the text, and edits can be joined into undo groups ([0011](adr/0011-document-model.md)).
+
+`core::Search` is a compiled query (literal, case, whole word, regular expression) with `find_next`, `find_previous`, `find_all` and replacement expansion. It reads a `Text` snapshot in bounded windows, so it never copies a whole document and can run on a worker thread; a stop token cancels it ([0013](adr/0013-pcre2-for-search.md)). `ui::FindBar` drives it: documents up to 1 MiB are searched at once, larger ones on a worker thread whose result is discarded when the document changes, and at most 20 000 matches are collected. Replace All is one `Document::apply_edits` call, so it is one undo step.
 
 ## Extension compatibility
 

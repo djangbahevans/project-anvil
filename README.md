@@ -6,10 +6,10 @@ A native C++ code editor for the VS Code workflow, with a Qt 6 UI and a Node.js 
 
 - CMake 3.25 or later and Ninja
 - GCC 13 or later, or Clang 18 or later
-- GoogleTest, nlohmann-json and, for benchmarks, Google Benchmark (system packages, or vcpkg when `VCPKG_ROOT` is set)
+- GoogleTest, nlohmann-json, PCRE2 and, for benchmarks, Google Benchmark (system packages, or vcpkg when `VCPKG_ROOT` is set)
 - Qt 6.4 or later with the Widgets module, needed only for the UI and the `anvil` executable. When Qt is not found, only the libraries and tests are built; `-DANVIL_BUILD_UI=ON` makes a missing Qt an error.
 
-On Debian and Ubuntu: `sudo apt install build-essential clang cmake ninja-build libgtest-dev nlohmann-json3-dev qt6-base-dev`.
+On Debian and Ubuntu: `sudo apt install build-essential clang cmake ninja-build libgtest-dev nlohmann-json3-dev libpcre2-dev qt6-base-dev`.
 
 ## Build and test
 
@@ -27,7 +27,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 build/linux-clang-debug/bin/anvil [file...]
 ```
 
-The editor opens the given files in one window with menus for files, editing and extension commands (Ctrl+Shift+P runs a command). It uses the extension host when a Node.js binary and the checkout from `scripts/fetch-vscode.sh` are found, and reads these environment variables:
+The editor opens the given files in one window with menus for files, editing and extension commands (Ctrl+Shift+P runs a command). Ctrl+F opens a find bar above the editor: matches are highlighted and counted as the pattern is typed, Enter and Shift+Enter (or F3 and Shift+F3) step through them and wrap around, and the options match case, whole word and regular expression are toggles. Ctrl+H adds a replace field with Replace and Replace All, where regular expressions can use `$1`-style groups. It uses the extension host when a Node.js binary and the checkout from `scripts/fetch-vscode.sh` are found, and reads these environment variables:
 
 | Variable | Meaning |
 | --- | --- |
