@@ -10,6 +10,7 @@ enum class ErrorCode {
     protocol_error,
     io_error,
     unsupported,
+    invalid_argument,
 };
 
 struct Error {

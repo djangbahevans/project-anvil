@@ -39,7 +39,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 ## Editor core
 
-The buffer is UTF-8 in a balanced tree with per-node line-break and UTF-16-length metadata. Positions exchanged with extensions and language servers are zero-based line and UTF-16 column; a single boundary module converts them.
+`core::Text` is an immutable, persistent rope of UTF-8 chunks whose nodes cache byte, UTF-16 and newline counts; copying it is a snapshot. `core::TextBuffer` holds the current text and reports each edit as a `TextChange`. The text uses `\n` line breaks only. Positions exchanged with extensions and language servers are zero-based line and UTF-16 column, converted by `Text::position_at` and `Text::offset_at` ([0006](adr/0006-editor-core-and-text-encoding.md)).
 
 ## Extension compatibility
 

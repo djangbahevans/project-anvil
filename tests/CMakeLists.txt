@@ -1,8 +1,14 @@
 find_package(GTest REQUIRED)
 include(GoogleTest)
 
-add_executable(anvil_core_tests core/utf_test.cpp)
+add_executable(anvil_core_tests
+  core/text_buffer_test.cpp
+  core/text_model_test.cpp
+  core/text_test.cpp
+  core/utf_test.cpp
+)
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)
+target_include_directories(anvil_core_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
 gtest_discover_tests(anvil_core_tests)
 
 if(UNIX)
