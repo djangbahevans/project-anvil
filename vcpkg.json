@@ -1,6 +1,7 @@
 {
   "name": "anvil",
   "version-string": "0.1.0",
+  "license": "MIT",
   "dependencies": [
     "gtest",
     "nlohmann-json",

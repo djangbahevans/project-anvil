@@ -56,3 +56,7 @@ Extension host messages are printed to standard error. Under WSLg the window app
 | `src/ui` | Qt Widgets user interface: main window, editor view, extension host bridge |
 | `src/app` | The `anvil` executable |
 | `tests` | Unit tests, mirroring `src` |
+
+## License
+
+Anvil is released under the [MIT License](LICENSE). The extension host it runs comes from the VS Code repository (also MIT) and is fetched at build time by `scripts/fetch-vscode.sh`; it is not part of this repository.
