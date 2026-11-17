@@ -16,7 +16,8 @@ C++23 adds `std::expected`, `std::unreachable`, `std::to_underlying`, `std::byte
 - Fallible operations return `std::expected<T, E>` instead of throwing; exceptions are reserved for programmer errors and allocation failure. Qt callbacks and the extension-host RPC layer translate at the boundary.
 - A C++23 library facility is used only if it is available on every supported compiler and standard library. Facilities that fall outside the minimums, such as `<print>`, `std::generator` and `std::flat_map`, are not used until the minimums advance.
 - The build system is CMake with Ninja as the generator and CMake presets for each supported platform.
-- Third-party dependencies other than Qt are managed with vcpkg in manifest mode. Qt 6 is provided by the platform installer or package manager.
+- Third-party dependencies other than Qt are declared in a vcpkg manifest (`vcpkg.json`). The top-level CMake file enables the vcpkg toolchain when `VCPKG_ROOT` points to a vcpkg checkout; otherwise the same dependencies resolve from system packages. Qt 6 (minimum 6.4) is provided by the platform installer or package manager.
+- Source is organized as one CMake library per architectural layer under `src/<layer>/`, with public headers in `include/anvil/<layer>/`. A layer links only against layers below it, which enforces the dependency rule in [design.md](../design.md).
 - The CI matrix covers Linux, Windows and macOS.
 
 ## Consequences
@@ -25,5 +26,6 @@ C++23 adds `std::expected`, `std::unreachable`, `std::to_underlying`, `std::byte
 - Error handling is explicit in function signatures and composes with `and_then` and `transform`.
 - Raising the language standard does not raise the library floor: each C++23 facility is checked against the minimum compilers before use.
 - Qt 6 and the vcpkg ports used compile under C++23.
+- Clang with libstdc++ reports `__cpp_concepts` as 201907L, which makes libstdc++ 13 hide `<expected>`. The build overrides the macro to 202002L for Clang on Linux (`cmake/AnvilCompileOptions.cmake`). The override is removed once the minimum Clang version reports the correct value.
 - Mixing vcpkg and a system-provided Qt requires the preset files to set both prefix paths explicitly.
 - A different package manager such as Conan would offer comparable features; vcpkg is chosen for its first-party Qt and tree-sitter ports and its manifest workflow.
