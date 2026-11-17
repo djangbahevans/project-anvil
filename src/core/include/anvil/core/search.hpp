@@ -88,14 +88,21 @@ public:
     std::expected<std::optional<Hit>, Error> find_previous(const Text& text, std::size_t before,
                                                            bool wrap = false) const;
 
-    // The matches that lie inside [begin, end), the text outside it being invisible to the
-    // pattern, in order. At most `limit` are returned. A stopped search returns the matches
-    // found so far.
+    // The matches that lie inside [begin, end), in order. At most `limit` are returned. A stopped
+    // search returns the matches found so far. The text after `end` is invisible to the pattern,
+    // so `$` and look-ahead stop there; the text before `begin` stays visible (to the start of
+    // its line for a regular expression, one character for a plain query), so that a range does
+    // not change what counts as a word boundary. An offset inside a character moves to the next
+    // character start for `begin` and to the previous one for `end`.
     std::expected<MatchList, Error> find_all(const Text& text, std::size_t begin, std::size_t end,
                                              std::size_t limit, std::stop_token stop = {}) const;
 
-    // The text that replaces `match`, or std::nullopt when `match` is not a match of this search
-    // in `text`. A plain query uses `replacement` as it is. For a regular expression, `$0` or
+    // The text that replaces `match`, or std::nullopt when this search has no match that begins
+    // at `match.begin` and ends at `match.end`. The search starts at `match.begin`, so a range
+    // that scanning from the start of the text would skip because an earlier match overlaps it,
+    // such as the second "aa" of "aaa", is accepted.
+    //
+    // A plain query uses `replacement` as it is. For a regular expression, `$0` or
     // `$&` insert the match, `$1` to `$99` insert a group (nothing for a group that did not
     // take part, and the text as written for a group the pattern does not have), `$$` inserts a
     // dollar sign, and `\n`, `\t` and `\\` insert a line break, a tab and a backslash.

@@ -563,3 +563,27 @@ TEST(SearchReplaceTest, EmptyMatchesBecomeInsertions) {
     ASSERT_TRUE(document.apply_edits(*edits).has_value());
     EXPECT_EQ(document.text().to_string(), "> a\n> b");
 }
+
+TEST(SearchTest, RangeOffsetsInsideACharacterMoveToCharacterBoundaries) {
+    // é is bytes 0-1, € is 2-4, é is 5-6.
+    const Text text = make_text("é€é");
+    for (const bool regex : {false, true}) {
+        const Search any =
+            make_search({.pattern = regex ? "." : "€", .match_case = true, .regex = regex});
+        // An end inside the first character leaves no room for a match.
+        EXPECT_TRUE(any.find_all(text, 0, 1, 10)->matches.empty()) << regex;
+        // A begin inside the first character starts at the next one, an end inside the last
+        // character stops before it.
+        EXPECT_EQ(any.find_all(text, 1, 6, 10)->matches, (std::vector<Match>{{2, 5}})) << regex;
+    }
+    const Search first = make_search({.pattern = "é", .match_case = true});
+    EXPECT_EQ(first.find_all(text, 0, 6, 10)->matches, (std::vector<Match>{{0, 2}}));
+    EXPECT_EQ(first.find_all(text, 0, 7, 10)->matches, (std::vector<Match>{{0, 2}, {5, 7}}));
+}
+
+TEST(SearchReplaceTest, ReplacementForAcceptsAnOverlappedRangeThatScanningWouldSkip) {
+    const Text text = make_text("aaa");
+    const Search search = make_search({.pattern = "aa", .match_case = true});
+    EXPECT_EQ(all_matches(search, text), (std::vector<Match>{{0, 2}}));
+    EXPECT_TRUE(search.replacement_for(text, {1, 3}, "x")->has_value());
+}
