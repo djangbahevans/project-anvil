@@ -1,0 +1,16 @@
+{
+  "name": "logging",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "commands": [
+      { "command": "anvil.log.console", "title": "Anvil: Console" },
+      { "command": "anvil.log.channel", "title": "Anvil: Log Channel" },
+      { "command": "anvil.log.plainChannel", "title": "Anvil: Plain Channel" },
+      { "command": "anvil.log.unhandled", "title": "Anvil: Unhandled" }
+    ]
+  }
+}

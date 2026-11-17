@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/error.hpp"
+#include "anvil/core/log.hpp"
 
 #include <expected>
 #include <filesystem>
@@ -15,6 +16,8 @@ struct InitDataOptions {
     std::string app_name = "Anvil";
     std::string uri_scheme = "anvil";
     std::string language = "en";
+    // What extensions see as the log level: the numeric value of core::LogLevel.
+    int log_level = static_cast<int>(core::LogLevel::info);
     // The transpiled VS Code checkout the extension host runs from.
     std::filesystem::path app_root{};
     // Directories of unpacked extensions, each containing a package.json.

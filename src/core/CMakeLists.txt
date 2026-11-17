@@ -1,5 +1,6 @@
 add_library(anvil_core STATIC
   document.cpp
+  log.cpp
   rope.cpp
   selection.cpp
   text.cpp

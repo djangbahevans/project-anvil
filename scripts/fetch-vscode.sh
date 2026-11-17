@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Fetches the pinned VS Code release into .deps/vscode and transpiles it so the upstream
-# extension host can run from out/. Native modules are skipped (--ignore-scripts); the
-# extension host tolerates their absence.
+# extension host can run from out/. Dependency install scripts are skipped (--ignore-scripts);
+# the two native modules the extension host loads are then built, which needs make, a C++
+# compiler and Python. Without them the extension host still runs but writes no log files and
+# does not watch its parent process.
 set -euo pipefail
 
 VSCODE_TAG="1.146.0"
@@ -22,4 +24,7 @@ fi
 cd "$dest"
 pnpm install --ignore-scripts --frozen-lockfile
 (cd build && pnpm install --ignore-scripts --frozen-lockfile)
+if ! pnpm rebuild @vscode/spdlog @vscode/native-watchdog; then
+    echo "warning: the native modules did not build; extension logging is limited" >&2
+fi
 node build/next/index.ts transpile

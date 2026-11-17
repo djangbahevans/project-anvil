@@ -4,6 +4,7 @@
 #include "anvil/exthost/commands_service.hpp"
 #include "anvil/exthost/documents_service.hpp"
 #include "anvil/exthost/host_process.hpp"
+#include "anvil/exthost/logging_service.hpp"
 #include "anvil/exthost/request_router.hpp"
 
 #include <chrono>
@@ -24,6 +25,9 @@ struct ExtensionHostOptions {
     std::vector<std::filesystem::path> extension_dirs{};
     // Base directory for extension storage and logs.
     std::filesystem::path storage_dir{};
+    // Receives the extension host's own messages and everything extensions log. Messages are
+    // discarded when unset.
+    std::shared_ptr<core::Logger> logger{};
     std::chrono::milliseconds connect_timeout{15000};
 };
 
@@ -84,7 +88,7 @@ public:
     std::expected<bool, Error> pump(std::chrono::milliseconds timeout);
 
 private:
-    explicit ExtensionHost(std::unique_ptr<HostProcess> host);
+    ExtensionHost(std::unique_ptr<HostProcess> host, std::shared_ptr<core::Logger> logger);
 
     struct Step {
         ProxyId target;
@@ -97,9 +101,11 @@ private:
     // Declaration order matters: the commands service uses the session inside host_ and the
     // router, so it is destroyed first.
     RequestRouter router_;
+    std::shared_ptr<core::Logger> logger_;
     std::unique_ptr<HostProcess> host_;
     CommandsService commands_;
     DocumentsService documents_;
+    LoggingService logging_;
     std::vector<Step> startup_steps_;
     HostState state_ = HostState::starting;
     std::string failure_;

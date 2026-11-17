@@ -30,6 +30,22 @@ std::expected<std::string, Error> read_file(const std::filesystem::path& path) {
     return contents;
 }
 
+std::expected<std::string, Error> read_file_range(const std::filesystem::path& path,
+                                                  std::uint64_t offset, std::size_t length) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return std::unexpected(io_error("cannot open", path, "the file cannot be opened"));
+    }
+    file.seekg(static_cast<std::streamoff>(offset));
+    std::string contents(length, '\0');
+    file.read(contents.data(), static_cast<std::streamsize>(length));
+    if (file.bad()) {
+        return std::unexpected(io_error("cannot read", path, "a read error occurred"));
+    }
+    contents.resize(static_cast<std::size_t>(file.gcount()));
+    return contents;
+}
+
 std::expected<void, Error> write_file(const std::filesystem::path& path, std::string_view data) {
     std::filesystem::path temporary = path;
     temporary += ".anvil-tmp";

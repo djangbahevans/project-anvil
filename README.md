@@ -23,7 +23,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 ## Extension host tests
 
-`scripts/fetch-vscode.sh` fetches and transpiles the pinned VS Code release into `.deps/vscode`. With it and Node.js on `PATH`, the integration test starts the real extension host and runs an extension command; without them that test is skipped.
+`scripts/fetch-vscode.sh` fetches and transpiles the pinned VS Code release into `.deps/vscode` and builds the two native modules the extension host uses (this needs make, a C++ compiler and Python). With it and Node.js on `PATH`, the integration test starts the real extension host and runs an extension command; without them that test is skipped.
 
 ## Benchmarks
 

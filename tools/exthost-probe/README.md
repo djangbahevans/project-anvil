@@ -10,6 +10,8 @@ node tools/exthost-probe/probe.mjs \
   --seconds 8
 ```
 
+`--command <id> [--args '<json array>']` runs another command, for example one of the commands of the other fixture extensions.
+
 A successful run shows `anvil.hello` registered through `MainThreadCommands.$registerCommand`, the reply `"hello, anvil"` to `$executeContributedCommand`, and the extension host's resident memory.
 
 The probe reads the proxy identifier table from `extHost.protocol.ts` in the checkout, so it works only against a checkout whose source order matches the table, which is true for any single release.

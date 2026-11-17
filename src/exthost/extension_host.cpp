@@ -36,9 +36,11 @@ void register_startup_services(RequestRouter& router) {
 
 } // namespace
 
-ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host)
-    : host_(std::move(host)), commands_(host_->session(), router_),
-      documents_(host_->session(), router_) {
+ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
+                             std::shared_ptr<core::Logger> logger)
+    : logger_(logger ? std::move(logger) : std::make_shared<core::NullLogger>()),
+      host_(std::move(host)), commands_(host_->session(), router_),
+      documents_(host_->session(), router_), logging_(logger_, router_) {
     register_startup_services(router_);
     host_->session().set_request_handler(
         [this](const Request& request) { return router_.dispatch(request); });
@@ -71,7 +73,7 @@ ExtensionHost::start(const ExtensionHostOptions& options) {
     if (!host) {
         return std::unexpected(host.error());
     }
-    return std::unique_ptr<ExtensionHost>(new ExtensionHost(std::move(*host)));
+    return std::unique_ptr<ExtensionHost>(new ExtensionHost(std::move(*host), options.logger));
 }
 
 void ExtensionHost::run_step(std::size_t index) {
@@ -94,12 +96,14 @@ void ExtensionHost::run_step(std::size_t index) {
 }
 
 void ExtensionHost::fail(std::string message) {
+    logger_->log(core::LogLevel::error, "extension host", message);
     state_ = HostState::failed;
     failure_ = std::move(message);
 }
 
 std::expected<bool, Error> ExtensionHost::pump(std::chrono::milliseconds timeout) {
     const auto pumped = host_->pump(timeout);
+    logging_.poll();
     if (pumped && !*pumped && state_ != HostState::failed) {
         state_ = HostState::closed;
     }

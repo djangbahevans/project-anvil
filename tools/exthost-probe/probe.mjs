@@ -3,6 +3,7 @@
 // extension host sends. Usage:
 //   node probe.mjs --vscode <vscode checkout> [--extension <extension dir>]... [--seconds <n>]
 //                  [--dump <file>]   writes the raw bytes received from the extension host
+//                  [--command <id> [--args <json array>]]   runs this command instead of anvil.hello
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -15,6 +16,8 @@ const vscodeDir = path.resolve(argValues('--vscode')[0] ?? '');
 const extensionDirs = argValues('--extension').map((p) => path.resolve(p));
 const runSeconds = Number(argValues('--seconds')[0] ?? 8);
 const dumpPath = argValues('--dump')[0];
+const commandId = argValues('--command')[0] ?? 'anvil.hello';
+const commandArgs = JSON.parse(argValues('--args')[0] ?? '["anvil"]');
 if (dumpPath) fs.writeFileSync(dumpPath, '');
 if (!fs.existsSync(path.join(vscodeDir, 'out', 'bootstrap-fork.js'))) {
     console.error('--vscode must point to a transpiled VS Code checkout (run build/next/index.ts transpile)');
@@ -202,7 +205,8 @@ const server = net.createServer((socket) => {
         });
         await call('ExtHostWorkspace', '$initializeWorkspace', null, true);
         await call('ExtHostExtensionService', '$activateByEvent', '*', 0);
-        await call('ExtHostCommands', '$executeContributedCommand', 'anvil.hello', 'anvil');
+        await call('ExtHostCommands', '$executeContributedCommand', commandId, ...commandArgs);
+        await new Promise((resolve) => setTimeout(resolve, 1500));
         reportResidentMemory();
     }
 

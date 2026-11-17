@@ -7,6 +7,7 @@ add_library(anvil_exthost STATIC
   frame.cpp
   host_process.cpp
   init_data.cpp
+  logging_service.cpp
   request_router.cpp
   rpc_message.cpp
   session.cpp

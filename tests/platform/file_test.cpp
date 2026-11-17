@@ -50,3 +50,12 @@ TEST_F(FileTest, ReadingFailsForMissingFilesAndDirectories) {
 TEST_F(FileTest, WritingFailsWhenTheDirectoryIsMissing) {
     EXPECT_FALSE(write_file(directory_ / "no" / "such" / "dir.txt", "x").has_value());
 }
+
+TEST_F(FileTest, ReadsARangeOfAFile) {
+    ASSERT_TRUE(write_file(directory_ / "r.txt", "0123456789").has_value());
+    EXPECT_EQ(*read_file_range(directory_ / "r.txt", 2, 4), "2345");
+    EXPECT_EQ(*read_file_range(directory_ / "r.txt", 8, 100), "89");
+    EXPECT_EQ(*read_file_range(directory_ / "r.txt", 10, 5), "");
+    EXPECT_EQ(*read_file_range(directory_ / "r.txt", 50, 5), "");
+    EXPECT_FALSE(read_file_range(directory_ / "missing", 0, 5).has_value());
+}

@@ -100,7 +100,7 @@ std::expected<std::string, Error> build_init_data(const InitDataOptions& options
           {"sqmId", ""},
           {"devDeviceId", ""},
           {"firstSessionDate", "2026-01-01T00:00:00.000Z"}}},
-        {"logLevel", 2},
+        {"logLevel", options.log_level},
         {"loggers", json::array()},
         {"logsLocation", file_uri(options.storage_dir / "logs")},
         {"autoStart", true},
