@@ -13,6 +13,7 @@
 
 class QLabel;
 class QMenu;
+class QTabBar;
 
 namespace anvil::ui {
 
@@ -25,9 +26,9 @@ struct MainWindowOptions {
     bool confirm_unsaved_changes = true;
 };
 
-// The application window: one editor showing one of the open documents, menus for files, editing
-// and extension commands, and a status bar. With an extension host configured, extensions see the
-// open documents and can edit and show them.
+// The application window: a tab bar of the open documents above one editor showing the selected
+// one, menus for files, editing and extension commands, and a status bar. With an extension host
+// configured, extensions see the open documents and can edit and show them.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -42,9 +43,15 @@ public:
     // Writes the shown document to its file, asking for one when it has none.
     bool save();
     bool save_as(const QString& path);
+    // Closes the document at tab position `index`. With unsaved changes it asks whether to save
+    // them first; false means the user cancelled. Closing the last document opens an untitled one.
+    bool close_document(std::size_t index);
 
     EditorView* view() {
         return view_;
+    }
+    QTabBar* tab_bar() {
+        return tabs_;
     }
     ExtensionHostBridge& bridge() {
         return bridge_;
@@ -72,7 +79,10 @@ private:
     void add_untitled_document();
     // Makes the document the shown one, adding it to the open documents when it is new.
     void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
+    void activate(std::size_t index);
+    void move_document(int from, int to);
     std::optional<std::size_t> index_of(const core::Uri& uri) const;
+    void update_tab(std::size_t index);
     void update_title();
     void update_status();
     void on_text_changed(const core::DocumentChange& change);
@@ -84,8 +94,10 @@ private:
     bool resolve_unsaved_changes();
 
     Options options_;
+    QTabBar* tabs_ = nullptr;
     EditorView* view_ = nullptr;
     ExtensionHostBridge bridge_;
+    // Parallel to the tabs: documents_[i] is shown by tab i.
     std::vector<OpenDocument> documents_;
     std::size_t current_ = 0;
     std::size_t next_untitled_ = 1;

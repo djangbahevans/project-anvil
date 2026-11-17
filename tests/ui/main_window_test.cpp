@@ -4,8 +4,12 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QScrollBar>
+#include <QTabBar>
 #include <QTest>
+#include <QTimer>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
@@ -28,9 +32,9 @@ protected:
         std::filesystem::remove_all(scratch_);
     }
 
-    void create_window(bool with_extension_host = false) {
+    void create_window(bool with_extension_host = false, bool confirm_unsaved_changes = false) {
         ui::MainWindowOptions options;
-        options.confirm_unsaved_changes = false;
+        options.confirm_unsaved_changes = confirm_unsaved_changes;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
             const std::filesystem::path node = ANVIL_NODE_EXECUTABLE;
@@ -98,12 +102,37 @@ protected:
         return {};
     }
 
+    // Presses `button` in the next modal message box the window opens; `prompt_shown_` tells
+    // whether one opened.
+    void answer_next_prompt(QMessageBox::StandardButton button) {
+        prompt_shown_ = false;
+        auto* timer = new QTimer(window_.get());
+        timer->setInterval(5);
+        QObject::connect(timer, &QTimer::timeout, timer, [this, timer, button] {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                prompt_shown_ = true;
+                timer->deleteLater();
+                box->button(button)->click();
+            }
+        });
+        timer->start();
+    }
+
+    std::vector<QString> tab_titles() const {
+        std::vector<QString> titles;
+        for (int i = 0; i < window_->tab_bar()->count(); ++i) {
+            titles.push_back(window_->tab_bar()->tabText(i));
+        }
+        return titles;
+    }
+
     std::string current_text() const {
         return window_->current_document()->text().to_string();
     }
 
     std::filesystem::path scratch_;
     std::unique_ptr<MainWindow> window_;
+    bool prompt_shown_ = false;
 };
 
 } // namespace
@@ -211,6 +240,239 @@ TEST_F(MainWindowTest, RendersTheWindow) {
     if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
         image.save(QString::fromUtf8(directory) + "/main_window.png");
     }
+}
+
+// --- tabs ---
+
+TEST_F(MainWindowTest, ShowsATabPerOpenDocument) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "a.txt", "b.txt"}));
+    EXPECT_EQ(window_->tab_bar()->currentIndex(), 2);
+}
+
+TEST_F(MainWindowTest, SelectingATabShowsItsDocument) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    window_->tab_bar()->setCurrentIndex(1);
+    EXPECT_EQ(current_text(), "A");
+    EXPECT_EQ(window_->view()->document(), window_->current_document());
+    EXPECT_TRUE(window_->windowTitle().contains("a.txt"));
+}
+
+TEST_F(MainWindowTest, TheTabOfAnEditedDocumentIsMarkedModified) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+    type("x");
+    EXPECT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● a.txt"));
+    window_->view()->undo();
+    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+    type("x");
+    ASSERT_TRUE(window_->save());
+    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+}
+
+TEST_F(MainWindowTest, SaveAsRenamesTheTab) {
+    create_window();
+    type("hello");
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "new.txt").string())));
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"new.txt"}));
+}
+
+TEST_F(MainWindowTest, AmpersandsInFileNamesAreShownLiterally) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a&b.txt", "").string())));
+    EXPECT_EQ(window_->tab_bar()->tabText(1), "a&&b.txt");
+}
+
+TEST_F(MainWindowTest, ReorderingTabsKeepsTheShownDocument) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    window_->tab_bar()->moveTab(2, 0); // b.txt moves to the front
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"b.txt", "Untitled-1", "a.txt"}));
+    EXPECT_EQ(current_text(), "B");
+    window_->tab_bar()->setCurrentIndex(2);
+    EXPECT_EQ(current_text(), "A");
+    window_->tab_bar()->setCurrentIndex(1);
+    EXPECT_EQ(window_->current_document()->text().to_string(), "");
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+
+    window_->tab_bar()->moveTab(0, 2); // and back again, the other direction
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "a.txt", "b.txt"}));
+    window_->tab_bar()->setCurrentIndex(2);
+    EXPECT_EQ(current_text(), "B");
+    window_->tab_bar()->setCurrentIndex(1);
+    EXPECT_EQ(current_text(), "A");
+}
+
+TEST_F(MainWindowTest, ClosingTheShownTabShowsItsNeighbour) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    window_->tab_bar()->setCurrentIndex(1);
+    ASSERT_TRUE(window_->close_document(1));
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "b.txt"}));
+    EXPECT_EQ(current_text(), "B");
+    ASSERT_TRUE(window_->close_document(1));
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1"}));
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+}
+
+TEST_F(MainWindowTest, ClosingAnotherTabKeepsTheShownDocument) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->close_document(0));
+    EXPECT_EQ(current_text(), "B");
+    EXPECT_EQ(window_->tab_bar()->currentIndex(), 1);
+    ASSERT_TRUE(window_->close_document(0));
+    EXPECT_EQ(current_text(), "B");
+    EXPECT_EQ(window_->tab_bar()->currentIndex(), 0);
+    EXPECT_EQ(window_->open_document_count(), 1u);
+}
+
+TEST_F(MainWindowTest, TheCloseButtonClosesTheTab) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    emit window_->tab_bar()->tabCloseRequested(1);
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1"}));
+}
+
+TEST_F(MainWindowTest, ClosingTheLastDocumentLeavesANewUntitledOne) {
+    create_window();
+    type("scratch");
+    ASSERT_TRUE(window_->close_document(0));
+    EXPECT_EQ(window_->open_document_count(), 1u);
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-2"}));
+    EXPECT_EQ(current_text(), "");
+    EXPECT_FALSE(window_->isWindowModified());
+    EXPECT_EQ(window_->view()->document(), window_->current_document());
+}
+
+TEST_F(MainWindowTest, ClosedFilesReopenFromDisk) {
+    create_window();
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!"); // discarded: confirmation is off
+    ASSERT_TRUE(window_->close_document(1));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    EXPECT_EQ(current_text(), "A");
+    EXPECT_FALSE(window_->isWindowModified());
+    EXPECT_EQ(window_->open_document_count(), 2u);
+}
+
+TEST_F(MainWindowTest, ClosingAModifiedTabAsksAndDiscardClosesIt) {
+    create_window(false, true);
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!");
+    answer_next_prompt(QMessageBox::Discard);
+    EXPECT_TRUE(window_->close_document(1));
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(window_->open_document_count(), 1u);
+    EXPECT_EQ(*platform::read_file(path), "A");
+}
+
+TEST_F(MainWindowTest, ClosingAModifiedTabAsksAndSaveWritesTheFile) {
+    create_window(false, true);
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!");
+    answer_next_prompt(QMessageBox::Save);
+    EXPECT_TRUE(window_->close_document(1));
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(window_->open_document_count(), 1u);
+    EXPECT_EQ(*platform::read_file(path), "!A");
+}
+
+TEST_F(MainWindowTest, CancellingTheCloseKeepsTheTab) {
+    create_window(false, true);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    type("!");
+    window_->tab_bar()->setCurrentIndex(0);
+    answer_next_prompt(QMessageBox::Cancel);
+    EXPECT_FALSE(window_->close_document(1));
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(window_->open_document_count(), 2u);
+    EXPECT_EQ(current_text(), "!A"); // the tab being closed is shown while the question is asked
+}
+
+TEST_F(MainWindowTest, ClosingACleanTabDoesNotAsk) {
+    create_window(false, true);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    answer_next_prompt(QMessageBox::Cancel);
+    EXPECT_TRUE(window_->close_document(1));
+    EXPECT_FALSE(prompt_shown_);
+}
+
+TEST_F(MainWindowTest, ExtensionsSeeDocumentsClose) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(b.string())));
+    ASSERT_EQ(run("anvil.docs.openDocuments").size(), 3u);
+
+    ASSERT_TRUE(window_->close_document(1));
+    EXPECT_EQ(run("anvil.docs.closes"),
+              json::parse("[\"" + core::Uri::file(a).to_string() + "\"]"));
+    const json open = run("anvil.docs.openDocuments");
+    EXPECT_EQ(open.size(), 2u);
+    EXPECT_TRUE(std::find(open.begin(), open.end(), core::Uri::file(a).to_string()) == open.end());
+}
+
+TEST_F(MainWindowTest, ClosingTheShownDocumentMakesTheNeighbourActiveInExtensions) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(b.string())));
+    ASSERT_TRUE(window_->close_document(2));
+    EXPECT_EQ(run("anvil.docs.active")["uri"], core::Uri::file(a).to_string());
+}
+
+TEST_F(MainWindowTest, AReopenedFileIsAFreshDocumentForExtensions) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = write("a.txt", "A");
+    const std::string uri = core::Uri::file(path).to_string();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!");
+    ASSERT_TRUE(window_->close_document(1));
+    ASSERT_EQ(run("anvil.docs.closes").size(), 1u);
+
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    const json active = run("anvil.docs.active");
+    EXPECT_EQ(active["uri"], uri);
+    EXPECT_EQ(active["text"], "A");
+    EXPECT_FALSE(active["isDirty"].get<bool>());
+    type("?");
+    EXPECT_EQ(run("anvil.docs.active")["text"], "?A");
+}
+
+TEST_F(MainWindowTest, ExtensionsEditingAnotherDocumentUpdateItsTab) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(run("anvil.docs.workspaceEdit", json::array({a.string()})).get<bool>());
+    ASSERT_TRUE(wait_until([&] { return window_->tab_bar()->tabText(1).startsWith(u'●'); }));
+    EXPECT_EQ(window_->tab_bar()->currentIndex(), 2);
 }
 
 // --- with the extension host ---

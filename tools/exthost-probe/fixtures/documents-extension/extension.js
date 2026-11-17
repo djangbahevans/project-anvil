@@ -2,6 +2,7 @@ const vscode = require('vscode');
 
 const changes = [];
 const saves = [];
+const closes = [];
 
 const pair = (position) => [position.line, position.character];
 
@@ -37,6 +38,7 @@ exports.activate = (context) => {
             }),
         ),
         vscode.workspace.onDidSaveTextDocument((document) => saves.push(document.uri.toString())),
+        vscode.workspace.onDidCloseTextDocument((document) => closes.push(document.uri.toString())),
 
         vscode.commands.registerCommand('anvil.docs.active', () => {
             const editor = active();
@@ -62,6 +64,10 @@ exports.activate = (context) => {
         }),
         vscode.commands.registerCommand('anvil.docs.changes', () => changes.splice(0)),
         vscode.commands.registerCommand('anvil.docs.saves', () => saves.splice(0)),
+        vscode.commands.registerCommand('anvil.docs.closes', () => closes.splice(0)),
+        vscode.commands.registerCommand('anvil.docs.openDocuments', () =>
+            vscode.workspace.textDocuments.map((document) => document.uri.toString()),
+        ),
         vscode.commands.registerCommand('anvil.docs.select', (a, b, c, d) => {
             active().selection = new vscode.Selection(a, b, c, d);
             return true;

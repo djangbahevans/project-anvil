@@ -14,6 +14,8 @@
       { "command": "anvil.docs.show", "title": "Anvil: Show" },
       { "command": "anvil.docs.changes", "title": "Anvil: Changes" },
       { "command": "anvil.docs.saves", "title": "Anvil: Saves" },
+      { "command": "anvil.docs.closes", "title": "Anvil: Closes" },
+      { "command": "anvil.docs.openDocuments", "title": "Anvil: Open Documents" },
       { "command": "anvil.docs.select", "title": "Anvil: Select" },
       { "command": "anvil.docs.save", "title": "Anvil: Save" },
       { "command": "anvil.docs.workspaceEdit", "title": "Anvil: Workspace Edit" }

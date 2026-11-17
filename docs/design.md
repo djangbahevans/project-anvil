@@ -31,7 +31,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 | Layer | Responsibility |
 | --- | --- |
-| `ui` | Qt Widgets: the main window, the editor view that paints a document and turns input into editing commands, and the bridge that runs the extension host from the event loop. |
+| `ui` | Qt Widgets: the main window with a tab per open document, the editor view that paints a document and turns input into editing commands, and the bridge that runs the extension host from the event loop. |
 | `workbench` | Commands, keybindings, configuration, workspace model, language-feature routing, terminal sessions. |
 | `exthost` | Node process supervision and the C++ implementation of the `MainThread*` RPC services, including commands and the documents and editors that extensions see ([0005](adr/0005-reuse-upstream-extension-host.md)). |
 | `core` | Text buffer, undo, cursors and selections, line layout, highlighting, UTF-16 boundary conversion ([0006](adr/0006-editor-core-and-text-encoding.md), [0010](adr/0010-syntax-highlighting.md)). |
