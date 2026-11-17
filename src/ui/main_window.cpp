@@ -12,7 +12,11 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QStatusBar>
+#include <QTabBar>
+#include <QVBoxLayout>
+#include <algorithm>
 
 namespace anvil::ui {
 namespace {
@@ -24,13 +28,31 @@ QString display_name(const core::Uri& uri) {
     return QString::fromStdString(uri.path);
 }
 
+QString tab_title(const core::Uri& uri, const core::Document& document) {
+    // A single ampersand would be taken as a keyboard mnemonic marker.
+    QString name = display_name(uri).replace('&', "&&");
+    return document.is_dirty() ? QString::fromUtf8("● ") + name : name;
+}
+
 } // namespace
 
 MainWindow::MainWindow(Options options, QWidget* parent)
     : QMainWindow(parent), options_(std::move(options)), bridge_(this) {
     resize(1000, 700);
-    view_ = new EditorView(this);
-    setCentralWidget(view_);
+    auto* central = new QWidget(this);
+    auto* layout = new QVBoxLayout(central);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    tabs_ = new QTabBar(central);
+    tabs_->setTabsClosable(true);
+    tabs_->setMovable(true);
+    tabs_->setExpanding(false);
+    tabs_->setDocumentMode(true);
+    tabs_->setFocusPolicy(Qt::NoFocus);
+    view_ = new EditorView(central);
+    layout->addWidget(tabs_);
+    layout->addWidget(view_, 1);
+    setCentralWidget(central);
 
     position_label_ = new QLabel(this);
     host_label_ = new QLabel(this);
@@ -38,13 +60,26 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     statusBar()->addPermanentWidget(position_label_);
     build_menus();
 
+    connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
+        if (index >= 0 && static_cast<std::size_t>(index) != current_) {
+            activate(static_cast<std::size_t>(index));
+        }
+    });
+    connect(tabs_, &QTabBar::tabMoved, this, &MainWindow::move_document);
+    connect(tabs_, &QTabBar::tabCloseRequested, this,
+            [this](int index) { close_document(static_cast<std::size_t>(index)); });
     connect(view_, &EditorView::text_changed, this, &MainWindow::on_text_changed);
     connect(view_, &EditorView::selections_changed, this, &MainWindow::on_selections_changed);
 
     if (options_.extension_host) {
         ExtensionHostBridge::Callbacks callbacks;
         callbacks.edited = [this](const core::Uri& uri, const core::DocumentChange&) {
-            if (index_of(uri) == current_) {
+            const auto index = index_of(uri);
+            if (!index) {
+                return;
+            }
+            update_tab(*index);
+            if (index == current_) {
                 view_->document_changed_elsewhere();
                 update_title();
                 update_status();
@@ -80,6 +115,8 @@ void MainWindow::build_menus() {
     file->addAction(tr("&Open…"), QKeySequence::Open, this, &MainWindow::open_dialog);
     file->addAction(tr("&Save"), QKeySequence::Save, this, [this] { save(); });
     file->addAction(tr("Save &As…"), QKeySequence::SaveAs, this, &MainWindow::save_as_dialog);
+    file->addAction(tr("&Close Tab"), QKeySequence::Close, this,
+                    [this] { close_document(current_); });
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -129,17 +166,81 @@ void MainWindow::add_untitled_document() {
 }
 
 void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Document> document) {
-    if (const auto index = index_of(uri)) {
-        current_ = *index;
-    } else {
+    auto index = index_of(uri);
+    if (!index) {
         documents_.push_back({uri, std::move(document)});
-        current_ = documents_.size() - 1;
+        {
+            const QSignalBlocker blocker(tabs_);
+            tabs_->addTab(QString());
+        }
+        index = documents_.size() - 1;
+        update_tab(*index);
     }
-    view_->set_document(documents_[current_].document);
-    bridge_.show(uri);
+    activate(*index);
+}
+
+void MainWindow::activate(std::size_t index) {
+    current_ = index;
+    {
+        const QSignalBlocker blocker(tabs_);
+        tabs_->setCurrentIndex(static_cast<int>(index));
+    }
+    view_->set_document(documents_[index].document);
+    bridge_.show(documents_[index].uri);
     update_title();
     update_status();
     view_->setFocus();
+}
+
+void MainWindow::move_document(int from, int to) {
+    const auto first = documents_.begin();
+    if (from < to) {
+        std::rotate(first + from, first + from + 1, first + to + 1);
+    } else {
+        std::rotate(first + to, first + from, first + from + 1);
+    }
+    current_ = static_cast<std::size_t>(tabs_->currentIndex());
+}
+
+bool MainWindow::close_document(std::size_t index) {
+    if (index >= documents_.size()) {
+        return false;
+    }
+    if (documents_[index].document->is_dirty() && options_.confirm_unsaved_changes) {
+        activate(index);
+        const auto answer = QMessageBox::question(
+            this, tr("Unsaved changes"),
+            tr("Save changes to %1?").arg(display_name(documents_[index].uri)),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !save())) {
+            return false;
+        }
+    }
+    // The replacement goes in first so the window never has nothing to show.
+    if (documents_.size() == 1) {
+        add_untitled_document();
+    }
+    bridge_.remove_document(documents_[index].uri);
+    documents_.erase(documents_.begin() + static_cast<std::ptrdiff_t>(index));
+    {
+        const QSignalBlocker blocker(tabs_);
+        tabs_->removeTab(static_cast<int>(index));
+    }
+    if (index < current_) {
+        --current_;
+    } else if (index == current_) {
+        activate(std::min(index, documents_.size() - 1));
+    }
+    return true;
+}
+
+void MainWindow::update_tab(std::size_t index) {
+    const auto& open = documents_[index];
+    const int tab = static_cast<int>(index);
+    tabs_->setTabText(tab, tab_title(open.uri, *open.document));
+    tabs_->setTabToolTip(tab, QString::fromStdString(open.uri.file_path()
+                                                         ? open.uri.file_path()->string()
+                                                         : open.uri.to_string()));
 }
 
 bool MainWindow::open_file(const QString& path) {
@@ -271,6 +372,7 @@ void MainWindow::update_title() {
     const auto& open = documents_[current_];
     setWindowTitle(tr("%1 — Anvil[*]").arg(display_name(open.uri)));
     setWindowModified(open.document->is_dirty());
+    update_tab(current_);
 }
 
 void MainWindow::update_status() {
