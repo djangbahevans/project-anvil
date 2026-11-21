@@ -35,6 +35,14 @@ struct EditOutcome {
     }
 };
 
+// What copy puts on the clipboard.
+struct CopiedText {
+    std::string text;
+    // True when `text` stands for the line of a lone caret: it is that line followed by a line
+    // break, and pasting it into a lone caret inserts it above that caret's line.
+    bool whole_line = false;
+};
+
 // The editing commands a user triggers with the keyboard and mouse, applied to a document: typing,
 // deleting, moving and selecting, and undo. They work on every selection at once, so multiple
 // cursors need no special handling.
@@ -53,8 +61,11 @@ public:
     // Replaces every selection with `text`, leaving a caret after it. Typing that follows typing
     // without other changes in between undoes as one step; text with a line break never joins.
     EditOutcome type(std::string_view text);
-    // Like type(), but never joins an undo step.
-    EditOutcome paste(std::string_view text);
+    // Like type(), but never joins an undo step. With `whole_line`, text that is exactly one line
+    // ending in a line break (copied_text() with whole_line set) is inserted at the start of the
+    // line of each caret, which moves down with the text, provided every selection is an empty
+    // caret. Anything else is pasted like ordinary text.
+    EditOutcome paste(std::string_view text, bool whole_line = false);
     // Replaces the ranges with their texts as one undo step that never joins typing. The edits are
     // in coordinates of the current text, and must be valid as for Document::apply_edits. The
     // selections move with the edits unless `selection_after` is given, which then becomes the only
@@ -69,6 +80,10 @@ public:
     EditOutcome delete_forward();
     // Deletes the selections, for cut.
     EditOutcome delete_selection();
+    // Deletes the line of a lone caret with its line break, for cutting a line: the break before
+    // it for the last line of several, so that no empty line is left behind. The caret goes to
+    // where the line was. Does nothing for a selection or several carets.
+    EditOutcome delete_caret_line();
 
     EditOutcome undo();
     EditOutcome redo();
@@ -96,6 +111,9 @@ public:
     // The text of the selections, joined by line breaks when there are several; empty when only
     // carets are present.
     std::string selected_text() const;
+    // The text for the clipboard: the selected text, or, for a lone caret, its line and a line
+    // break (also on a last line that has none). Empty for several carets.
+    CopiedText copied_text() const;
 
 private:
     enum class EditKind {

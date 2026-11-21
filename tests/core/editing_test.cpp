@@ -549,3 +549,197 @@ TEST(EditControllerReplaceRanges, InvalidEditsChangeNothing) {
     EXPECT_FALSE(editor.controller.replace_ranges({{2, 9, "x"}}).changed_anything());
     EXPECT_EQ(editor.text(), "abc");
 }
+
+// --- copy, cut and paste of whole lines ---
+
+TEST(EditControllerClipboard, CopiedTextOfASelectionIsTheSelection) {
+    Editor editor("hello world", {Selection{6, 11}});
+    const CopiedText copied = editor.controller.copied_text();
+    EXPECT_EQ(copied.text, "world");
+    EXPECT_FALSE(copied.whole_line);
+}
+
+TEST(EditControllerClipboard, CopiedTextOfALoneCaretIsItsLineWithABreak) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(5)});
+    const CopiedText copied = editor.controller.copied_text();
+    EXPECT_EQ(copied.text, "two\n");
+    EXPECT_TRUE(copied.whole_line);
+}
+
+TEST(EditControllerClipboard, TheLastLineWithoutABreakStillGetsOne) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(10)});
+    EXPECT_EQ(editor.controller.copied_text().text, "three\n");
+}
+
+TEST(EditControllerClipboard, AnEmptyLineAndAnEmptyDocumentCopyALineBreak) {
+    Editor empty_line("a\n\nb", {Selection::caret(2)});
+    EXPECT_EQ(empty_line.controller.copied_text().text, "\n");
+    EXPECT_TRUE(empty_line.controller.copied_text().whole_line);
+    Editor empty("", {Selection::caret(0)});
+    EXPECT_EQ(empty.controller.copied_text().text, "\n");
+}
+
+TEST(EditControllerClipboard, ASingleLineDocumentCopiesItsLine) {
+    Editor editor("abc", {Selection::caret(1)});
+    EXPECT_EQ(editor.controller.copied_text().text, "abc\n");
+}
+
+TEST(EditControllerClipboard, LinesAreCopiedByByteNotByCharacterCount) {
+    const std::string text = std::string("a\n") + eacute + astral + "\nb";
+    Editor editor(text, {Selection::caret(4)});
+    EXPECT_EQ(editor.controller.copied_text().text, std::string(eacute) + astral + "\n");
+}
+
+TEST(EditControllerClipboard, SeveralCaretsCopyNothing) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(1), Selection::caret(5)});
+    const CopiedText copied = editor.controller.copied_text();
+    EXPECT_EQ(copied.text, "");
+    EXPECT_FALSE(copied.whole_line);
+}
+
+TEST(EditControllerClipboard, CaretsBesideASelectionAreNotCopied) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(1), Selection{5, 7}});
+    const CopiedText copied = editor.controller.copied_text();
+    EXPECT_EQ(copied.text, "wo");
+    EXPECT_FALSE(copied.whole_line);
+}
+
+TEST(EditControllerClipboard, DeletingTheCaretLineRemovesItAndItsBreak) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(5)});
+    const EditOutcome outcome = editor.controller.delete_caret_line();
+    EXPECT_EQ(editor.text(), "one\nthree");
+    EXPECT_EQ(editor.primary(), Selection::caret(4));
+    ASSERT_TRUE(outcome.change.has_value());
+    EXPECT_TRUE(outcome.selections_changed);
+}
+
+TEST(EditControllerClipboard, DeletingTheFirstLine) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(1)});
+    editor.controller.delete_caret_line();
+    EXPECT_EQ(editor.text(), "two\nthree");
+    EXPECT_EQ(editor.primary(), Selection::caret(0));
+}
+
+TEST(EditControllerClipboard, DeletingTheLastLineRemovesTheBreakBeforeIt) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(10)});
+    editor.controller.delete_caret_line();
+    EXPECT_EQ(editor.text(), "one\ntwo");
+    EXPECT_EQ(editor.primary(), Selection::caret(7));
+}
+
+TEST(EditControllerClipboard, DeletingTheEmptyLineAfterATrailingBreak) {
+    Editor editor("a\n", {Selection::caret(2)});
+    editor.controller.delete_caret_line();
+    EXPECT_EQ(editor.text(), "a");
+    EXPECT_EQ(editor.primary(), Selection::caret(1));
+}
+
+TEST(EditControllerClipboard, DeletingTheOnlyLineEmptiesTheDocument) {
+    Editor editor("abc", {Selection::caret(1)});
+    editor.controller.delete_caret_line();
+    EXPECT_EQ(editor.text(), "");
+    EXPECT_EQ(editor.primary(), Selection::caret(0));
+    EXPECT_FALSE(editor.controller.delete_caret_line().changed_anything());
+}
+
+TEST(EditControllerClipboard, DeletingALineOfMultiByteText) {
+    const std::string text = std::string(eacute) + "\n" + astral + "\nb";
+    Editor editor(text, {Selection::caret(3)});
+    editor.controller.delete_caret_line();
+    EXPECT_EQ(editor.text(), std::string(eacute) + "\nb");
+}
+
+TEST(EditControllerClipboard, DeletingALineNeedsOneEmptyCaret) {
+    Editor selection("one\ntwo", {Selection{1, 2}});
+    EXPECT_FALSE(selection.controller.delete_caret_line().changed_anything());
+    Editor carets("one\ntwo", {Selection::caret(1), Selection::caret(5)});
+    EXPECT_FALSE(carets.controller.delete_caret_line().changed_anything());
+    EXPECT_EQ(carets.text(), "one\ntwo");
+}
+
+TEST(EditControllerClipboard, DeletingALineIsOneUndoStep) {
+    Editor editor("one\ntwo\nthree", {Selection::caret(5)});
+    editor.controller.delete_caret_line();
+    editor.controller.undo();
+    EXPECT_EQ(editor.text(), "one\ntwo\nthree");
+    EXPECT_FALSE(editor.document.can_undo());
+}
+
+TEST(EditControllerClipboard, ALinePastesAboveTheCaretLineAndTheCaretKeepsItsColumn) {
+    Editor editor("one\ntwo", {Selection::caret(5)});
+    const EditOutcome outcome = editor.controller.paste("new\n", true);
+    EXPECT_EQ(editor.text(), "one\nnew\ntwo");
+    EXPECT_EQ(editor.primary(), Selection::caret(9));
+    ASSERT_TRUE(outcome.change.has_value());
+}
+
+TEST(EditControllerClipboard, ALinePastesAboveAtColumnZeroAndOnTheLastLine) {
+    Editor start("one\ntwo", {Selection::caret(4)});
+    start.controller.paste("new\n", true);
+    EXPECT_EQ(start.text(), "one\nnew\ntwo");
+    EXPECT_EQ(start.primary(), Selection::caret(8));
+
+    Editor last("one\ntwo", {Selection::caret(7)});
+    last.controller.paste("new\n", true);
+    EXPECT_EQ(last.text(), "one\nnew\ntwo");
+    EXPECT_EQ(last.primary(), Selection::caret(11));
+}
+
+TEST(EditControllerClipboard, ALinePastesIntoAnEmptyDocument) {
+    Editor editor("", {Selection::caret(0)});
+    editor.controller.paste("x\n", true);
+    EXPECT_EQ(editor.text(), "x\n");
+    EXPECT_EQ(editor.primary(), Selection::caret(2));
+}
+
+TEST(EditControllerClipboard, ALinePastesAboveEachCaretLine) {
+    Editor editor("a\nb\nc", {Selection::caret(0), Selection::caret(4)});
+    editor.controller.paste("x\n", true);
+    EXPECT_EQ(editor.text(), "x\na\nb\nx\nc");
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(2), Selection::caret(8)}));
+}
+
+TEST(EditControllerClipboard, WindowsLineBreaksAreNormalizedBeforeTheCheck) {
+    Editor editor("one\ntwo", {Selection::caret(5)});
+    editor.controller.paste("new\r\n", true);
+    EXPECT_EQ(editor.text(), "one\nnew\ntwo");
+}
+
+TEST(EditControllerClipboard, TextThatIsNotExactlyOneLinePastesAtTheCaret) {
+    for (const char* text : {"new", "a\nb\n", "a\nb", "\n\n"}) {
+        Editor editor("one\ntwo", {Selection::caret(5)});
+        editor.controller.paste(text, true);
+        std::string expected = "one\nt";
+        expected += normalize_line_endings(text);
+        expected += "wo";
+        EXPECT_EQ(editor.text(), expected) << text;
+    }
+}
+
+TEST(EditControllerClipboard, ALinePastesAtTheCaretWhenNotMarkedAsALine) {
+    Editor editor("one\ntwo", {Selection::caret(5)});
+    editor.controller.paste("new\n");
+    EXPECT_EQ(editor.text(), "one\nt"
+                             "new\n"
+                             "wo");
+}
+
+TEST(EditControllerClipboard, ALineReplacesASelectionLikeOrdinaryText) {
+    Editor selection("one\ntwo", {Selection{4, 7}});
+    selection.controller.paste("new\n", true);
+    EXPECT_EQ(selection.text(), "one\nnew\n");
+
+    Editor mixed("one\ntwo", {Selection::caret(1), Selection{4, 7}});
+    mixed.controller.paste("new\n", true);
+    EXPECT_EQ(mixed.text(), "onew\nne\nnew\n");
+}
+
+TEST(EditControllerClipboard, APastedLineIsOneUndoStepThatDoesNotJoinTyping) {
+    Editor editor("one\ntwo", {Selection::caret(7)});
+    editor.controller.type("!");
+    editor.controller.paste("new\n", true);
+    editor.controller.undo();
+    EXPECT_EQ(editor.text(), "one\ntwo!");
+    editor.controller.undo();
+    EXPECT_EQ(editor.text(), "one\ntwo");
+}

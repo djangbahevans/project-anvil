@@ -156,11 +156,29 @@ EditOutcome EditController::type(std::string_view text) {
     return replace_selections(text, EditKind::typing, !has_line_break);
 }
 
-EditOutcome EditController::paste(std::string_view text) {
+EditOutcome EditController::paste(std::string_view text, bool whole_line) {
     if (text.empty()) {
         return {};
     }
-    return replace_selections(text, EditKind::none, false);
+    const std::string normalized = normalize_line_endings(text);
+    const auto& selections = document_.selections().all();
+    const bool all_carets = std::ranges::all_of(
+        selections, [](const Selection& selection) { return selection.empty(); });
+    if (!whole_line || !all_carets || normalized.find('\n') != normalized.size() - 1) {
+        return replace_selections(text, EditKind::none, false);
+    }
+
+    const Text& current = document_.text();
+    std::vector<Edit> edits;
+    std::vector<Selection> after;
+    std::size_t shift = 0;
+    for (const Selection& caret : selections) {
+        const std::size_t line_start = current.line_start(current.position_at(caret.active).line);
+        edits.push_back({line_start, line_start, normalized});
+        shift += normalized.size();
+        after.push_back(Selection::caret(caret.active + shift));
+    }
+    return apply(std::move(edits), std::move(after), EditKind::none, false);
 }
 
 EditOutcome EditController::replace_ranges(std::vector<Edit> edits,
@@ -248,6 +266,26 @@ EditOutcome EditController::delete_forward() {
 
 EditOutcome EditController::delete_selection() {
     return delete_with(DeleteMode::selections_only);
+}
+
+EditOutcome EditController::delete_caret_line() {
+    const auto& selections = document_.selections().all();
+    if (selections.size() != 1 || !selections[0].empty()) {
+        return {};
+    }
+    const Text& text = document_.text();
+    const std::size_t line = text.position_at(selections[0].active).line;
+    std::size_t start = text.line_start(line);
+    std::size_t end = text.line_end(line);
+    if (line + 1 < text.line_count()) {
+        ++end;
+    } else if (line > 0) {
+        --start;
+    }
+    if (start == end) {
+        return {};
+    }
+    return apply({{start, end, {}}}, {Selection::caret(start)}, EditKind::none, false);
 }
 
 EditOutcome
@@ -456,6 +494,18 @@ std::string EditController::selected_text() const {
         result += document_.text().slice(selection.start(), selection.end() - selection.start());
     }
     return result;
+}
+
+CopiedText EditController::copied_text() const {
+    if (std::string selected = selected_text(); !selected.empty()) {
+        return {std::move(selected), false};
+    }
+    const auto& selections = document_.selections().all();
+    if (selections.size() != 1) {
+        return {};
+    }
+    const Text& text = document_.text();
+    return {text.line(text.position_at(selections[0].active).line) + '\n', true};
 }
 
 } // namespace anvil::core
