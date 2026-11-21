@@ -122,7 +122,23 @@ std::string Document::to_file_bytes() const {
 }
 
 std::uint64_t Document::current_step_id() const {
-    return undo_.empty() ? 0 : undo_.back().id;
+    return undo_.empty() ? dropped_step_id_ : undo_.back().id;
+}
+
+void Document::set_undo_limit(std::size_t groups) {
+    undo_limit_ = groups;
+    drop_groups_over_the_limit();
+}
+
+void Document::drop_groups_over_the_limit() {
+    while (undo_groups_ > undo_limit_) {
+        const std::uint64_t group = undo_.front().group;
+        while (!undo_.empty() && undo_.front().group == group) {
+            dropped_step_id_ = undo_.front().id;
+            undo_.pop_front();
+        }
+        --undo_groups_;
+    }
 }
 
 bool Document::is_dirty() const {
@@ -249,7 +265,9 @@ std::expected<DocumentChange, Error> Document::apply_edits(std::span<const Edit>
     step.inverse = std::move(inverse);
     step.selections_before = selections_before;
     step.selections_after = selections_;
+    undo_groups_ += join ? 0 : 1;
     undo_.push_back(std::move(step));
+    drop_groups_over_the_limit();
     redo_.clear();
     sealed_ = false;
 
@@ -266,8 +284,8 @@ std::expected<std::optional<DocumentChange>, Error> Document::redo() {
 }
 
 std::expected<std::optional<DocumentChange>, Error> Document::replay(bool undoing) {
-    std::vector<Step>& source = undoing ? undo_ : redo_;
-    std::vector<Step>& destination = undoing ? redo_ : undo_;
+    std::deque<Step>& source = undoing ? undo_ : redo_;
+    std::deque<Step>& destination = undoing ? redo_ : undo_;
     if (source.empty()) {
         return std::nullopt;
     }
@@ -292,6 +310,12 @@ std::expected<std::optional<DocumentChange>, Error> Document::replay(bool undoin
         destination.push_back(std::move(step));
     }
     selections_ = *final_selections;
+    if (undoing) {
+        --undo_groups_;
+    } else {
+        ++undo_groups_;
+        drop_groups_over_the_limit();
+    }
     ++version_;
     result.version = version_;
     return result;
