@@ -1,6 +1,6 @@
 # 0014. Workbench window built from fixed parts in a purpose-built layout
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-21
 
 ## Context
