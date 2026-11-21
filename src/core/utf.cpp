@@ -73,4 +73,16 @@ std::expected<std::size_t, Error> utf16_length(std::string_view utf8) {
     return units;
 }
 
+std::optional<std::size_t> find_invalid_utf8(std::string_view utf8) {
+    std::size_t i = 0;
+    while (i < utf8.size()) {
+        const auto decoded = decode(utf8, i);
+        if (!decoded) {
+            return i;
+        }
+        i += decoded->length;
+    }
+    return std::nullopt;
+}
+
 } // namespace anvil::core

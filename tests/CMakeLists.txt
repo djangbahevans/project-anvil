@@ -6,8 +6,11 @@ add_executable(anvil_core_tests
   core/document_model_test.cpp
   core/document_test.cpp
   core/editing_test.cpp
+  core/editor_settings_test.cpp
+  core/jsonc_test.cpp
   core/search_test.cpp
   core/selection_test.cpp
+  core/settings_test.cpp
   core/text_buffer_test.cpp
   core/text_file_test.cpp
   core/text_model_test.cpp

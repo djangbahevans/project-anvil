@@ -47,3 +47,14 @@ TEST(Utf16Length, ErrorReportsOffsetOfFirstInvalidSequence) {
     ASSERT_FALSE(result.has_value());
     EXPECT_NE(result.error().message.find("byte 2"), std::string::npos);
 }
+
+TEST(FindInvalidUtf8, ValidTextHasNone) {
+    EXPECT_EQ(anvil::core::find_invalid_utf8(""), std::nullopt);
+    EXPECT_EQ(anvil::core::find_invalid_utf8("a\xC3\xA9\xF0\x9F\x98\x80z"), std::nullopt);
+}
+
+TEST(FindInvalidUtf8, ReportsTheOffsetOfTheFirstMalformedSequence) {
+    EXPECT_EQ(anvil::core::find_invalid_utf8("ab\x80"), 2u);
+    EXPECT_EQ(anvil::core::find_invalid_utf8("\xC3\xA9\xE2\x82"), 2u);
+    EXPECT_EQ(anvil::core::find_invalid_utf8("\xED\xA0\x80"), 0u);
+}
