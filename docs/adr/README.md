@@ -4,7 +4,7 @@ Each ADR records one architectural decision: the context, the choice, and its co
 
 ## Statuses
 
-- **Proposed**: the direction is chosen but depends on an unvalidated assumption stated in the ADR.
+- **Proposed**: the direction is chosen but depends on an unvalidated assumption stated in the ADR, or the maintainer has not yet decided.
 - **Accepted**: in force.
 - **Superseded by NNNN**: replaced by a later ADR.
 

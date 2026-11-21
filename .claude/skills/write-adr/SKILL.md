@@ -16,9 +16,9 @@ Record a decision when it is hard to reverse, constrains other modules, or when 
    - **Decision**: the choice, in the present tense.
    - **Consequences**: what gets easier, what gets harder, what must stay true. Rejected alternatives appear here as hypotheticals ("a global registry would couple ...").
 4. Add a row to the index in `docs/adr/README.md`.
-5. Set the status. **Proposed** means the direction is chosen but rests on an assumption the ADR states, or the maintainer has not yet accepted it. **Accepted** is set only when the maintainer has decided; an agent drafting an ADR for an open decision uses Proposed.
+5. Set the status. **Proposed** means the direction is chosen but rests on an assumption the ADR states, or the maintainer has not yet accepted it. **Accepted** is set only when the maintainer has decided; an agent drafting an ADR for an open decision uses Proposed. Merging a Proposed ADR records the proposal and does not accept it. When the maintainer decides, a follow-up pull request sets the status to Accepted in the ADR and in the index row, removes `needs-decision` from the issue, and files the implementation issues.
 6. Back claims with evidence when it is cheap to get: a measurement, a prototype, the upstream source file. Cite the commands or paths.
-7. Open a pull request (`open-pull-request`) that contains the ADR alone, or the ADR with the work it enables when the decision is already settled. For a `needs-decision` issue, link the pull request from the issue and leave the label until it is merged.
+7. Open a pull request (`open-pull-request`) that contains the ADR alone, or the ADR with the work it enables when the decision is already settled. For a `needs-decision` issue, link the pull request from the issue and leave the label until the ADR is Accepted.
 
 ## Style
 
