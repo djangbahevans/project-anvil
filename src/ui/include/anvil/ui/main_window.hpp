@@ -3,6 +3,7 @@
 #include "anvil/core/document.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/uri.hpp"
+#include "anvil/ui/command_registry.hpp"
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
@@ -66,6 +67,10 @@ public:
     SettingsStore& settings() {
         return *settings_;
     }
+    // The editor's commands: menus run them, and extensions can execute them by id.
+    CommandRegistry& commands() {
+        return commands_;
+    }
     ExtensionHostBridge& bridge() {
         return bridge_;
     }
@@ -88,6 +93,9 @@ private:
         std::shared_ptr<core::Document> document;
     };
 
+    void register_commands();
+    // Lets extensions execute the registered commands, once the extension host is running.
+    void share_commands_with_extensions();
     void build_menus();
     void apply_settings();
     void add_untitled_document();
@@ -121,6 +129,7 @@ private:
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
     SettingsStore* settings_ = nullptr;
+    CommandRegistry commands_;
     ExtensionHostBridge bridge_;
     // Parallel to the tabs: documents_[i] is shown by tab i.
     std::vector<OpenDocument> documents_;
