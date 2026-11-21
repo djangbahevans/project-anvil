@@ -1,8 +1,11 @@
 #include "anvil/ui/editor_view.hpp"
 
 #include <QApplication>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QImage>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QSignalSpy>
@@ -377,4 +380,136 @@ TEST_F(EditorViewTest, TheGutterWidensForLongDocuments) {
     }
     open(lines);
     EXPECT_GT(view_.cursor_rect(0).x(), narrow);
+}
+
+// --- copying, cutting and pasting lines ---
+
+namespace {
+
+constexpr const char* line_marker_format = "application/x-anvil-editor-data";
+
+QString clipboard_text() {
+    return QGuiApplication::clipboard()->text();
+}
+
+bool clipboard_marks_a_line() {
+    return QGuiApplication::clipboard()->mimeData()->hasFormat(line_marker_format);
+}
+
+} // namespace
+
+TEST_F(EditorViewTest, CopyWithACaretPutsItsLineOnTheClipboardMarkedAsALine) {
+    open("one\ntwo\nthree");
+    view_.select_range({5, 5});
+    view_.copy();
+    EXPECT_EQ(clipboard_text(), "two\n");
+    EXPECT_TRUE(clipboard_marks_a_line());
+    EXPECT_EQ(text(), "one\ntwo\nthree");
+}
+
+TEST_F(EditorViewTest, CopyOfASelectionIsPlainTextWithoutTheMarker) {
+    open("one\ntwo\nthree");
+    view_.select_range({4, 7});
+    view_.copy();
+    EXPECT_EQ(clipboard_text(), "two");
+    EXPECT_FALSE(clipboard_marks_a_line());
+}
+
+TEST_F(EditorViewTest, CopyWithSeveralCaretsLeavesTheClipboardAlone) {
+    open("one\ntwo\nthree");
+    QGuiApplication::clipboard()->setText("keep");
+    click(1);
+    click(5, Qt::AltModifier);
+    ASSERT_EQ(document_->selections().all().size(), 2u);
+    view_.copy();
+    view_.cut();
+    EXPECT_EQ(clipboard_text(), "keep");
+    EXPECT_EQ(text(), "one\ntwo\nthree");
+}
+
+TEST_F(EditorViewTest, CutWithACaretRemovesTheLineAndCopiesIt) {
+    open("one\ntwo\nthree");
+    view_.select_range({5, 5});
+    QSignalSpy changes(&view_, &EditorView::text_changed);
+    view_.cut();
+    EXPECT_EQ(text(), "one\nthree");
+    EXPECT_EQ(clipboard_text(), "two\n");
+    EXPECT_TRUE(clipboard_marks_a_line());
+    EXPECT_EQ(changes.count(), 1);
+    view_.undo();
+    EXPECT_EQ(text(), "one\ntwo\nthree");
+}
+
+TEST_F(EditorViewTest, CutOfTheLastLineLeavesNoEmptyLineBehind) {
+    open("one\ntwo");
+    view_.select_range({6, 6});
+    view_.cut();
+    EXPECT_EQ(text(), "one");
+    EXPECT_EQ(clipboard_text(), "two\n");
+}
+
+TEST_F(EditorViewTest, CutOfASelectionStillCutsTheSelection) {
+    open("one\ntwo");
+    view_.select_range({4, 7});
+    view_.cut();
+    EXPECT_EQ(text(), "one\n");
+    EXPECT_EQ(clipboard_text(), "two");
+    EXPECT_FALSE(clipboard_marks_a_line());
+}
+
+TEST_F(EditorViewTest, ALineCopiedFromACaretPastesAboveTheLineOfTheCaret) {
+    open("one\ntwo\nthree");
+    view_.select_range({9, 9});
+    view_.copy();
+    view_.select_range({5, 5});
+    view_.paste();
+    EXPECT_EQ(text(), "one\nthree\ntwo\nthree");
+    EXPECT_EQ(primary(), core::Selection::caret(11));
+}
+
+TEST_F(EditorViewTest, CutAndPasteMoveALineInTwoUndoSteps) {
+    open("one\ntwo\nthree");
+    view_.select_range({1, 1});
+    view_.cut();
+    ASSERT_EQ(text(), "two\nthree");
+    view_.select_range({5, 5});
+    view_.paste();
+    EXPECT_EQ(text(), "two\none\nthree");
+    view_.undo();
+    EXPECT_EQ(text(), "two\nthree");
+    view_.undo();
+    EXPECT_EQ(text(), "one\ntwo\nthree");
+}
+
+TEST_F(EditorViewTest, TheSameTextWithoutTheMarkerPastesAtTheCaret) {
+    open("one\ntwo");
+    QGuiApplication::clipboard()->setText("new\n");
+    view_.select_range({5, 5});
+    view_.paste();
+    EXPECT_EQ(text(), "one\nt"
+                      "new\n"
+                      "wo");
+}
+
+TEST_F(EditorViewTest, CopyingSomethingElseDropsTheLineMarker) {
+    open("one\ntwo");
+    view_.select_range({1, 1});
+    view_.copy();
+    ASSERT_TRUE(clipboard_marks_a_line());
+    view_.select_range({4, 7});
+    view_.copy();
+    view_.select_range({1, 1});
+    view_.paste();
+    EXPECT_EQ(text(), "otwone\ntwo");
+}
+
+TEST_F(EditorViewTest, ALineCopiedFromACaretPastesIntoAnEmptyDocument) {
+    open("only");
+    view_.select_range({2, 2});
+    view_.copy();
+    view_.select_all();
+    key(Qt::Key_Backspace);
+    ASSERT_EQ(text(), "");
+    view_.paste();
+    EXPECT_EQ(text(), "only\n");
 }
