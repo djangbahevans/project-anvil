@@ -78,6 +78,7 @@ gtest_discover_tests(anvil_exthost_integration_tests)
 if(TARGET anvil_ui)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   add_executable(anvil_ui_tests
+    ui/command_registry_test.cpp
     ui/editor_view_test.cpp
     ui/find_bar_test.cpp
     ui/main_window_test.cpp
