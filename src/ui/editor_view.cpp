@@ -334,6 +334,18 @@ void EditorView::move(core::Motion motion, bool extend) {
     }
 }
 
+void EditorView::delete_backward() {
+    if (controller_) {
+        apply(controller_->delete_backward());
+    }
+}
+
+void EditorView::delete_forward() {
+    if (controller_) {
+        apply(controller_->delete_forward());
+    }
+}
+
 void EditorView::move_by_page(bool down, bool extend) {
     if (!controller_) {
         return;
@@ -471,9 +483,9 @@ void EditorView::keyPressEvent(QKeyEvent* event) {
     } else if (event->matches(QKeySequence::SelectAll)) {
         select_all();
     } else if (event->matches(QKeySequence::Delete)) {
-        apply(controller_->delete_forward());
+        delete_forward();
     } else if (event->key() == Qt::Key_Backspace) {
-        apply(controller_->delete_backward());
+        delete_backward();
     } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
         apply(controller_->insert_newline());
     } else if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier) {
