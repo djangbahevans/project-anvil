@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
@@ -735,4 +736,71 @@ TEST_F(MainWindowTest, CtrlFSeedsTheFindFieldFromTheEditor) {
     QTest::keyClick(window_->view(), Qt::Key_F, Qt::ControlModifier);
     EXPECT_EQ(window_->find_bar()->find_field()->text(), "world");
     EXPECT_EQ(window_->find_bar()->status(), "? of 1");
+}
+
+namespace {
+
+Qt::KeyboardModifiers option_modifiers() {
+#ifdef Q_OS_MACOS
+    return Qt::ControlModifier | Qt::AltModifier;
+#else
+    return Qt::AltModifier;
+#endif
+}
+
+} // namespace
+
+TEST_F(MainWindowTest, TheOptionShortcutsWorkFromTheEditorWhileTheBarIsOpen) {
+    create_window();
+    window_->activateWindow();
+    window_->find_bar()->open();
+    window_->view()->setFocus();
+    QApplication::processEvents();
+    auto* bar = window_->find_bar();
+
+    QTest::keyClick(window_->view(), Qt::Key_C, option_modifiers());
+    EXPECT_TRUE(bar->match_case_button()->isChecked());
+    QTest::keyClick(window_->view(), Qt::Key_W, option_modifiers());
+    EXPECT_TRUE(bar->whole_word_button()->isChecked());
+    QTest::keyClick(window_->view(), Qt::Key_R, option_modifiers());
+    EXPECT_TRUE(bar->regex_button()->isChecked());
+    EXPECT_EQ(QApplication::activePopupWidget(), nullptr);
+
+    QTest::keyClick(window_->view(), Qt::Key_C, option_modifiers());
+    EXPECT_FALSE(bar->match_case_button()->isChecked());
+}
+
+TEST_F(MainWindowTest, TheOptionShortcutsWorkFromTheFindFieldToo) {
+    create_window();
+    window_->activateWindow();
+    window_->find_bar()->open();
+    QApplication::processEvents();
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_C, option_modifiers());
+    EXPECT_TRUE(window_->find_bar()->match_case_button()->isChecked());
+}
+
+TEST_F(MainWindowTest, TheOptionShortcutsDoNothingWhileTheBarIsClosed) {
+    create_window();
+    window_->activateWindow();
+    window_->view()->setFocus();
+    QApplication::processEvents();
+    ASSERT_TRUE(window_->find_bar()->isHidden());
+    for (const Qt::Key key : {Qt::Key_C, Qt::Key_W, Qt::Key_R}) {
+        QTest::keyClick(window_->view(), key, option_modifiers());
+    }
+    EXPECT_FALSE(window_->find_bar()->match_case_button()->isChecked());
+    EXPECT_FALSE(window_->find_bar()->whole_word_button()->isChecked());
+    EXPECT_FALSE(window_->find_bar()->regex_button()->isChecked());
+    EXPECT_EQ(QApplication::activePopupWidget(), nullptr);
+}
+
+// A shortcut that is also a menu mnemonic is ambiguous, and Qt then triggers neither.
+TEST_F(MainWindowTest, NoMenuUsesAnOptionShortcutAsItsMnemonic) {
+    create_window();
+    for (const QAction* menu : window_->menuBar()->actions()) {
+        const QKeySequence mnemonic = QKeySequence::mnemonic(menu->text());
+        for (const Qt::Key key : {Qt::Key_C, Qt::Key_W, Qt::Key_R}) {
+            EXPECT_NE(mnemonic, QKeySequence(Qt::ALT | key)) << menu->text().toStdString();
+        }
+    }
 }

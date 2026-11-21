@@ -143,11 +143,11 @@ void MainWindow::build_menus() {
     edit->addAction(tr("&Replace…"), QKeySequence::Replace, this,
                     [this] { find_bar_->open(true); });
 
-    QMenu* commands = menuBar()->addMenu(tr("&Commands"));
+    QMenu* commands = menuBar()->addMenu(tr("Comm&ands"));
     commands->addAction(tr("&Run Command…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this,
                         &MainWindow::run_command);
 
-    window_menu_ = menuBar()->addMenu(tr("&Window"));
+    window_menu_ = menuBar()->addMenu(tr("Wi&ndow"));
     connect(window_menu_, &QMenu::aboutToShow, this, [this] {
         window_menu_->clear();
         auto* group = new QActionGroup(window_menu_);
