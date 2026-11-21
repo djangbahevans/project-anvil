@@ -55,6 +55,10 @@ struct MatchList {
     bool truncated = false;
 };
 
+// `text` with each character that is special in a regular expression preceded by a backslash, so
+// that a regular expression made of the result matches `text` itself.
+std::string escape_regex(std::string_view text);
+
 // A compiled query. Copying is cheap and the copies share the compiled pattern, which is safe to
 // use from several threads at once. The text is read through `Text` snapshots in bounded windows,
 // so searching never copies the whole text.

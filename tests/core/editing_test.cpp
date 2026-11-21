@@ -1,3 +1,4 @@
+#include "anvil/core/char_class.hpp"
 #include "anvil/core/editing.hpp"
 
 #include <gtest/gtest.h>
@@ -742,4 +743,72 @@ TEST(EditControllerClipboard, APastedLineIsOneUndoStepThatDoesNotJoinTyping) {
     EXPECT_EQ(editor.text(), "one\ntwo!");
     editor.controller.undo();
     EXPECT_EQ(editor.text(), "one\ntwo");
+}
+
+// --- the word at a caret ---
+
+namespace {
+
+std::optional<Selection> word_in(std::string_view text, std::size_t offset) {
+    return word_at(*Text::from_utf8(text), offset);
+}
+
+} // namespace
+
+TEST(WordAt, ACaretInsideAWordGivesTheWholeWord) {
+    EXPECT_EQ(word_in("foo bar_1 baz", 6), (Selection{4, 9}));
+    EXPECT_EQ(word_in("foo bar_1 baz", 4), (Selection{4, 9}));
+    EXPECT_EQ(word_in("foo bar_1 baz", 9), (Selection{4, 9}));
+}
+
+TEST(WordAt, ACaretBesideAWordOnEitherSideGivesThatWord) {
+    EXPECT_EQ(word_in("foo.bar", 3), (Selection{0, 3}));
+    EXPECT_EQ(word_in("foo.bar", 4), (Selection{4, 7}));
+    EXPECT_EQ(word_in("(foo)", 1), (Selection{1, 4}));
+    EXPECT_EQ(word_in("(foo)", 4), (Selection{1, 4}));
+}
+
+TEST(WordAt, ACaretNotInOrBesideAWordGivesNothing) {
+    EXPECT_EQ(word_in("foo  bar", 4), std::nullopt);
+    EXPECT_EQ(word_in("a . b", 3), std::nullopt);
+    EXPECT_EQ(word_in("", 0), std::nullopt);
+    EXPECT_EQ(word_in("   ", 1), std::nullopt);
+    EXPECT_EQ(word_in("\n\n", 1), std::nullopt);
+}
+
+TEST(WordAt, TheWordNeverCrossesALineBreak) {
+    EXPECT_EQ(word_in("ab\ncd", 2), (Selection{0, 2}));
+    EXPECT_EQ(word_in("ab\ncd", 3), (Selection{3, 5}));
+    EXPECT_EQ(word_in("ab\n\ncd", 3), std::nullopt);
+}
+
+TEST(WordAt, NonAsciiCharactersAreWordCharacters) {
+    const std::string text = std::string("x ") + eacute + "t\xE2\x82\xAC y";
+    EXPECT_EQ(word_in(text, 4), (Selection{2, 8}));
+    // An offset inside a character moves back to its start.
+    EXPECT_EQ(word_in(text, 3), (Selection{2, 8}));
+}
+
+TEST(WordAt, AnOffsetPastTheEndIsTheEnd) {
+    EXPECT_EQ(word_in("foo", 99), (Selection{0, 3}));
+}
+
+// Both find a run of one class around a character; they differ only in which character a caret
+// at the edge of a word is taken to be on, so they agree wherever the character at the offset is
+// a word character.
+TEST(WordAt, AgreesWithSelectingAWordByDoubleClickOnAWordCharacter) {
+    const std::string text = "foo bar_baz  +-  qux \xC3\xA9\xE2\x82\xAC end\nlast";
+    Editor editor(text);
+    for (std::size_t offset = 0; offset < text.size(); ++offset) {
+        if (!editor.document.text().is_char_boundary(offset) ||
+            !is_word_character(static_cast<unsigned char>(text[offset]) < 0x80
+                                   ? static_cast<char32_t>(text[offset])
+                                   : U'\u00e9')) {
+            continue;
+        }
+        const auto word = word_at(editor.document.text(), offset);
+        ASSERT_TRUE(word.has_value()) << offset;
+        editor.controller.select_word_at(offset);
+        EXPECT_EQ(editor.primary(), *word) << offset;
+    }
 }

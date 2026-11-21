@@ -1,5 +1,6 @@
 #include "anvil/ui/find_bar.hpp"
 
+#include <QApplication>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QHBoxLayout>
@@ -8,6 +9,7 @@
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QPointer>
+#include <QSignalBlocker>
 #include <QThreadPool>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -18,6 +20,8 @@ namespace anvil::ui {
 namespace {
 
 constexpr const char* error_style = "QLineEdit { border: 1px solid #d13438; }";
+// VS Code's limit on a selection that seeds the search (SEARCH_STRING_MAX_LENGTH), in UTF-16 units.
+constexpr std::size_t max_seed_length = 524288;
 
 QToolButton* make_toggle(const QString& text, const QString& tooltip, QWidget* parent) {
     auto* button = new QToolButton(parent);
@@ -53,6 +57,8 @@ FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(vie
     replace_toggle_ = make_toggle(QString::fromUtf8("▸"), tr("Toggle Replace"), this);
     find_edit_ = new QLineEdit(this);
     find_edit_->setPlaceholderText(tr("Find"));
+    // A longer selection can seed the field, and the default limit would cut it silently.
+    find_edit_->setMaxLength(static_cast<int>(max_seed_length));
     find_edit_->setClearButtonEnabled(true);
     find_edit_->installEventFilter(this);
     view_->installEventFilter(this);
@@ -133,13 +139,56 @@ QAbstractButton* FindBar::regex_button() {
 }
 
 void FindBar::open(bool with_replace) {
+    // With the focus already in the bar, what the user typed there is not replaced.
+    const bool focus_in_bar = isAncestorOf(QApplication::focusWidget());
     show();
     if (with_replace) {
         replace_toggle_->setChecked(true);
     }
+    bool seeded = false;
+    if (!focus_in_bar) {
+        if (const auto seed = seed_from_editor()) {
+            {
+                const QSignalBlocker blocker(find_edit_);
+                find_edit_->setText(*seed);
+            }
+            // The selection stays where it is, so that Enter goes to the next occurrence.
+            apply_query(false);
+            seeded = true;
+        }
+    }
     find_edit_->setFocus();
     find_edit_->selectAll();
-    refresh(false);
+    if (!seeded) {
+        refresh(false);
+    }
+}
+
+std::optional<QString> FindBar::seed_from_editor() const {
+    const auto& document = view_->document();
+    if (!document) {
+        return std::nullopt;
+    }
+    const core::Text text = document->text();
+    const core::Selection selection = document->selections().primary();
+    std::size_t begin = selection.start();
+    std::size_t end = selection.end();
+    if (selection.empty()) {
+        const auto word = core::word_at(text, selection.active);
+        if (!word) {
+            return std::nullopt;
+        }
+        begin = word->start();
+        end = word->end();
+    } else if (text.position_at(begin).line != text.position_at(end).line ||
+               text.utf16_offset(end) - text.utf16_offset(begin) >= max_seed_length) {
+        return std::nullopt;
+    }
+    std::string seed = text.slice(begin, end - begin);
+    if (regex_button_->isChecked()) {
+        seed = core::escape_regex(seed);
+    }
+    return QString::fromStdString(seed);
 }
 
 void FindBar::close_bar() {
@@ -166,6 +215,10 @@ core::Query FindBar::query() const {
 }
 
 void FindBar::query_changed() {
+    apply_query(true);
+}
+
+void FindBar::apply_query(bool navigate) {
     search_.reset();
     query_error_.clear();
     if (!find_edit_->text().isEmpty()) {
@@ -178,7 +231,7 @@ void FindBar::query_changed() {
     }
     set_error_state(!query_error_.isEmpty());
     wrapped_ = false;
-    refresh(true);
+    refresh(navigate);
 }
 
 void FindBar::set_error_state(bool error) {

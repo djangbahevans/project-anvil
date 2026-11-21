@@ -31,6 +31,22 @@ protected:
         view_.show();
         view_.select_range({caret, caret});
         bar_.open();
+        // Opening seeds the field from the word at the caret; the tests that use this helper start
+        // from an empty field, as when nothing at the caret can seed it.
+        bar_.find_field()->clear();
+        QApplication::processEvents();
+    }
+
+    // Shows `text` with the primary selection at `selection`, leaving the bar as it is.
+    void show_text(std::string_view text, core::Selection selection) {
+        document_ = make_document(text);
+        view_.resize(640, 320);
+        view_.set_document(document_);
+        view_.show();
+        view_.select_range(selection);
+        // The editor has the focus, as when the user presses Ctrl+F in it.
+        view_.activateWindow();
+        view_.setFocus();
         QApplication::processEvents();
     }
 
@@ -567,4 +583,145 @@ TEST_F(FindBarTest, ABarDestroyedWhileSearchingDoesNotReceiveTheResult) {
     QThreadPool::globalInstance()->waitForDone();
     QApplication::processEvents();
     SUCCEED();
+}
+
+// --- seeding the field from the editor ---
+
+TEST_F(FindBarTest, ASelectionOnOneLineSeedsTheFieldAndStaysSelected) {
+    show_text("foo bar foo", {4, 7});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "bar");
+    EXPECT_EQ(bar_.find_field()->selectedText(), "bar");
+    EXPECT_EQ(primary(), (core::Selection{4, 7}));
+    EXPECT_EQ(bar_.status(), "1 of 1");
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        bar_.grab().save(QString::fromUtf8(directory) + "/find_bar_seeded.png");
+    }
+}
+
+TEST_F(FindBarTest, WithOnlyACaretTheWordAtTheCaretSeedsTheField) {
+    show_text("foo bar foo", {5, 5});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "bar");
+    EXPECT_EQ(primary(), core::Selection::caret(5));
+    EXPECT_EQ(bar_.status(), "? of 1");
+}
+
+TEST_F(FindBarTest, ACaretAtEitherEdgeOfAWordSeedsIt) {
+    show_text("foo.bar", {3, 3});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "foo");
+    show_text("foo.bar", {4, 4});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "bar");
+}
+
+TEST_F(FindBarTest, SeedingDoesNotMoveTheSelectionSoFindNextGoesToTheNextOccurrence) {
+    show_text("foo bar foo baz foo", {1, 1});
+    bar_.open();
+    ASSERT_EQ(bar_.find_field()->text(), "foo");
+    EXPECT_EQ(primary(), core::Selection::caret(1));
+    EXPECT_EQ(bar_.match_count(), 3u);
+    press(bar_.find_field(), Qt::Key_Return);
+    EXPECT_EQ(primary(), (core::Selection{8, 11}));
+}
+
+TEST_F(FindBarTest, ACaretNotInOrBesideAWordLeavesTheFieldAsItWas) {
+    show_text("foo  bar", {4, 4});
+    bar_.open();
+    find("kept");
+    bar_.close_bar();
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "kept");
+}
+
+TEST_F(FindBarTest, ASelectionOverSeveralLinesLeavesTheFieldAsItWas) {
+    show_text("one\ntwo", {1, 6});
+    bar_.open();
+    find("kept");
+    bar_.close_bar();
+    show_text("one\ntwo", {1, 6});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "kept");
+}
+
+TEST_F(FindBarTest, ALongSeedIsNotCutByTheLineEdit) {
+    const std::string line(100000, 'a');
+    show_text(line, {0, line.size()});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text().size(), 100000);
+}
+
+TEST_F(FindBarTest, ASelectionLongerThanTheSearchStringLimitLeavesTheFieldAsItWas) {
+    const std::string line(524288 + 10, 'a');
+    show_text(line, {0, line.size()});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "");
+
+    show_text(line, {0, 524288 - 1});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text().size(), 524288 - 1);
+}
+
+TEST_F(FindBarTest, TheRegularExpressionSpecialCharactersOfTheSeedAreEscaped) {
+    show_text("a.b axb a.b", {0, 3});
+    toggle(bar_.regex_button());
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "a\\.b");
+    EXPECT_FALSE(bar_.has_error());
+    EXPECT_EQ(bar_.match_count(), 2u);
+}
+
+TEST_F(FindBarTest, WithoutTheRegularExpressionToggleTheSeedIsTakenAsWritten) {
+    show_text("a.b axb a.b", {0, 3});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "a.b");
+    EXPECT_EQ(bar_.match_count(), 2u);
+}
+
+TEST_F(FindBarTest, SeedingLeavesTheOptionTogglesAlone) {
+    show_text("Foo foo", {0, 3});
+    toggle(bar_.match_case_button());
+    toggle(bar_.whole_word_button());
+    bar_.open();
+    EXPECT_TRUE(bar_.match_case_button()->isChecked());
+    EXPECT_TRUE(bar_.whole_word_button()->isChecked());
+    EXPECT_FALSE(bar_.regex_button()->isChecked());
+    EXPECT_EQ(bar_.match_count(), 1u);
+}
+
+TEST_F(FindBarTest, MultiByteSelectionsAreSeededExactly) {
+    show_text("é€ é€x", {0, 5});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), QString::fromUtf8("é€"));
+    EXPECT_EQ(bar_.match_count(), 2u);
+}
+
+TEST_F(FindBarTest, OpeningWithReplaceSeedsToo) {
+    show_text("foo bar", {4, 7});
+    bar_.open(true);
+    EXPECT_EQ(bar_.find_field()->text(), "bar");
+    EXPECT_TRUE(bar_.replace_field()->isVisibleTo(&bar_));
+}
+
+TEST_F(FindBarTest, OpeningAgainFromTheEditorSeedsAgain) {
+    show_text("foo bar", {0, 3});
+    bar_.open();
+    ASSERT_EQ(bar_.find_field()->text(), "foo");
+    view_.select_range({4, 7});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "bar");
+}
+
+TEST_F(FindBarTest, OpeningWhileTheFocusIsInTheBarKeepsWhatWasTyped) {
+    show_text("foo bar", {0, 3});
+    bar_.open();
+    bar_.activateWindow();
+    QApplication::processEvents();
+    ASSERT_TRUE(bar_.find_field()->hasFocus());
+    find("typed");
+    view_.select_range({4, 7});
+    bar_.open();
+    EXPECT_EQ(bar_.find_field()->text(), "typed");
 }
