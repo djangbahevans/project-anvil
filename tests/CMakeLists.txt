@@ -24,7 +24,7 @@ if(UNIX)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/paths_linux_test.cpp)
   endif()
-  list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/file_test.cpp)
+  list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/file_test.cpp platform/working_directory_test.cpp)
   add_executable(anvil_platform_tests ${ANVIL_PLATFORM_TEST_SOURCES})
   target_link_libraries(anvil_platform_tests
     PRIVATE anvil::platform GTest::gtest_main anvil_compile_options)
@@ -40,6 +40,7 @@ add_executable(anvil_exthost_tests
   exthost/replay_test.cpp
   exthost/request_router_test.cpp
   exthost/rpc_message_test.cpp
+  exthost/session_logs_test.cpp
   exthost/session_test.cpp
   exthost/vscode_types_test.cpp
 )
@@ -55,6 +56,7 @@ add_executable(anvil_exthost_integration_tests
   exthost/documents_integration_test.cpp
   exthost/extension_host_test.cpp
   exthost/host_process_test.cpp
+  exthost/launch_integration_test.cpp
   exthost/logging_integration_test.cpp
 )
 target_link_libraries(anvil_exthost_integration_tests

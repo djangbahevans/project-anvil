@@ -114,6 +114,8 @@ The editor starts `out/bootstrap-fork.js --type=extensionHost` from a transpiled
 
 The inherited environment must not contain `ELECTRON_RUN_AS_NODE` or any `VSCODE_*` variable other than those above. `ELECTRON_RUN_AS_NODE` switches the module loader to Electron-only behavior (`node:original-fs`) and the process fails at startup under plain Node.
 
+The editor starts the extension host in its storage directory, whatever directory the editor itself was started from. `bootstrap-node.js` reads `process.cwd()` while it starts (`setupCurrentWorkingDirectory`); when the inherited directory no longer exists it catches the `ENOENT ... uv_cwd` error and prints it, and the host keeps running with a working directory on which `process.cwd()` throws for every extension. The editor therefore gives the host a directory that exists instead of inheriting one.
+
 ## Startup sequence
 
 After the handshake the extension host does not run any extension until the editor has made these calls, in this order. Each is a request to an `ExtHost*` service; the extension host acknowledges and replies after it has processed the call.
@@ -164,6 +166,7 @@ Extensions see a document only after the editor has announced it with `ExtHostDo
 - `MainThreadErrors.$onUnexpectedError` and `MainThreadExtensionService.$onExtensionRuntimeError` and `$onExtensionActivationError` carry serialized errors with a name, message and stack; the stack already begins with the name and message.
 - Output channels are files. The extension host registers a logger with `MainThreadLogger.$registerLogger` and writes the channel's text to the logger's file with the native spdlog module. A plain output channel's logger is `hidden` and is followed by `MainThreadOutputService.$register(label, file, ...)`, which names the file; a log output channel's logger is visible and carries its own name. The extension host does not announce appends, so the editor reads the files itself. Lines of a log file are `YYYY-MM-DD HH:MM:SS.mmm [level] message`; lines of a plain channel are raw text.
 - `MainThreadOutputService.$update` is sent for clearing and replacing a channel, with the file position up to which the content is obsolete.
+- The extension host writes its own log (`exthost.log`) and the logs of extensions into the directory of the init data's `logsLocation`. The editor gives each host start a directory of its own, `<storage>/logs/<UTC start time>Z-<pid>`, with a `-<n>` appended when the same process starts another host within the same second, and keeps the newest ten. Because the editor reads every registered log file from its start, a directory that was shared by all starts would make each start print the lines of all earlier ones.
 - The log level that extensions see is part of the init data. At info level the extension host's own log file stays short.
 
 ## Init data details

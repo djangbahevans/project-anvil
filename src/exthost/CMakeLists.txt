@@ -11,6 +11,7 @@ add_library(anvil_exthost STATIC
   request_router.cpp
   rpc_message.cpp
   session.cpp
+  session_logs.cpp
   vscode_types.cpp
 )
 add_library(anvil::exthost ALIAS anvil_exthost)

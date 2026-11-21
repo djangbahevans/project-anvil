@@ -1,5 +1,6 @@
 #include "anvil/core/log.hpp"
 #include "anvil/platform/paths.hpp"
+#include "anvil/platform/working_directory.hpp"
 #include "anvil/ui/main_window.hpp"
 
 #include <QApplication>
@@ -55,6 +56,17 @@ std::optional<ExtensionHostBridge::Config> extension_host_config() {
 } // namespace
 
 int main(int argc, char* argv[]) {
+    // Before Qt starts: Fontconfig reads the working directory while it loads its configuration,
+    // and the extension host and relative file arguments need one that exists.
+    if (const auto directory = anvil::platform::ensure_working_directory()) {
+        if (directory->changed) {
+            std::cerr << "anvil: the working directory no longer exists; using "
+                      << directory->directory.string() << '\n';
+        }
+    } else {
+        std::cerr << "anvil: " << directory.error().message << '\n';
+    }
+
     QApplication app(argc, argv);
     QApplication::setApplicationName("Anvil");
 

@@ -19,6 +19,9 @@ struct ProcessSpec {
     std::vector<std::string> arguments;
     // Complete child environment as "NAME=value" entries; nothing is inherited implicitly.
     std::vector<std::string> environment;
+    // The directory the child starts in. Without one it starts in ours, which may not exist any
+    // more. A relative `executable` is looked up from this directory, not from ours.
+    std::optional<std::filesystem::path> working_directory{};
 };
 
 // A child process that is terminated and reaped when the object is destroyed while still running.

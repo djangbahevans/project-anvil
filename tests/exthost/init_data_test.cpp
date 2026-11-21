@@ -83,3 +83,12 @@ TEST_F(InitData, FailsForMissingOrIncompleteManifests) {
     const auto broken = write_extension("c", "{ not json");
     EXPECT_FALSE(build_init_data({.extension_dirs = {broken}}).has_value());
 }
+
+TEST_F(InitData, TheLogsLocationIsTheGivenSessionDirectoryWhenThereIsOne) {
+    InitDataOptions options;
+    options.storage_dir = "/storage";
+    options.logs_dir = "/storage/logs/20261121T143358Z-1234";
+    const auto text = build_init_data(options);
+    ASSERT_TRUE(text.has_value()) << text.error().message;
+    EXPECT_EQ(json::parse(*text)["logsLocation"]["path"], "/storage/logs/20261121T143358Z-1234");
+}
