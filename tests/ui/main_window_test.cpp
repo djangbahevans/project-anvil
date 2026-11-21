@@ -688,6 +688,7 @@ TEST_F(MainWindowTest, FindNextAndPreviousWorkFromTheMenuShortcuts) {
     window_->view()->setFocus();
     type("a b a b");
     window_->find_bar()->open();
+    window_->find_bar()->find_field()->clear();
     window_->find_bar()->find_field()->setText("b");
     ASSERT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
 
@@ -722,4 +723,16 @@ TEST_F(MainWindowTest, ReplacingMarksTheDocumentModifiedAndReachesTheTab) {
     EXPECT_EQ(window_->current_document()->text().to_string(), "1 two 1");
     EXPECT_TRUE(window_->isWindowModified());
     EXPECT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● c.txt"));
+}
+
+TEST_F(MainWindowTest, CtrlFSeedsTheFindFieldFromTheEditor) {
+    create_window();
+    window_->activateWindow();
+    window_->view()->setFocus();
+    type("hello world");
+    window_->view()->select_range({6, 6});
+
+    QTest::keyClick(window_->view(), Qt::Key_F, Qt::ControlModifier);
+    EXPECT_EQ(window_->find_bar()->find_field()->text(), "world");
+    EXPECT_EQ(window_->find_bar()->status(), "? of 1");
 }

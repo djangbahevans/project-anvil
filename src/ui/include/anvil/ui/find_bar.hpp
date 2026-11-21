@@ -95,6 +95,12 @@ private:
 
     core::Query query() const;
     void query_changed();
+    // Builds the search from the field and the options and searches again; with `navigate`, also
+    // selects the first match at or after the start of the selection.
+    void apply_query(bool navigate);
+    // The text that opening the bar puts in the field: the selection when it is on one line and
+    // not too long, otherwise the word at the caret; nothing when there is neither.
+    std::optional<QString> seed_from_editor() const;
     // Searches the whole document again. With `navigate`, also selects the first match at or after
     // the start of the selection.
     void refresh(bool navigate);
