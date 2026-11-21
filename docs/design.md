@@ -47,6 +47,12 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 `core::Search` is a compiled query (literal, case, whole word, regular expression) with `find_next`, `find_previous`, `find_all` and replacement expansion. It reads a `Text` snapshot in bounded windows, so it never copies a whole document and can run on a worker thread; a stop token cancels it ([0013](adr/0013-pcre2-for-search.md)). `ui::FindBar` drives it: documents up to 1 MiB are searched at once, larger ones on a worker thread whose result is discarded when the document changes, and at most 20 000 matches are collected. Replace All is one `Document::apply_edits` call, so it is one undo step.
 
+## Window structure
+
+The window is arranged from fixed parts, in VS Code's positions and with its part ids: the title bar above; the activity bar at the left edge; the primary sidebar; the editor area; the bottom panel; and the status bar below ([0014](adr/0014-workbench-layout.md)). Splitters resize the sidebar and the panel, and each part can be hidden. The window uses the native frame and menu bar.
+
+The sidebar and the panel host view containers: each is registered with an id, a title, an icon and a factory, and its widget is created the first time it is shown. The explorer, search, the terminal and extension tree views plug in the same way. The editor area is a tree of editor groups and splitters; the model of groups, their tabs and the split orientations is plain data with no widget types. The status bar keeps a left and a right group of items ordered by priority. Every part reads its colors by workbench color key through one lookup that a color theme fills.
+
 ## Extension compatibility
 
 The upstream extension host runs unmodified from a pinned VS Code release. The editor answers its RPC calls for the in-scope API surface and reports unsupported API use explicitly. Extensions are installed from Open VSX or from local `.vsix` files ([0007](adr/0007-extension-registry-open-vsx.md)).
