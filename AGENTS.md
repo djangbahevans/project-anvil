@@ -68,8 +68,8 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 | Directory | Contents |
 | --- | --- |
-| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, UTF-8/UTF-16, URIs, logging interface |
-| `src/platform` | processes, local sockets, files, paths |
+| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, UTF-8/UTF-16, URIs, JSON with comments, settings, logging interface |
+| `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services |
 | `src/ui` | editor view, find bar, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
@@ -91,7 +91,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 ## Testing practice
 
 - Every behavior has a test. Prefer model-based tests that compare against an obviously correct reference (see `tests/core/text_model_test.cpp` and `document_model_test.cpp`), and tests that replay real recorded traffic (`tests/exthost/replay_test.cpp`).
-- Prove a new test can fail: break the behavior on purpose (copy the file aside, change it, run the tests, restore it), and confirm the tests catch it. A mutation that does not compile proves nothing, so check that the build succeeded.
+- Prove a new test can fail: break the behavior on purpose (copy the file aside, change it, run the tests, restore it and `touch` it so that the build does not keep the mutated object), and confirm the tests catch it. A mutation that does not compile proves nothing, so check that the build succeeded.
 - Extension host services are tested twice: against `FakeHost` (the extension host's side of the connection, in `tests/exthost/fake_host.hpp`) for exact wire behavior, and against the real extension host with a fixture extension from `tools/exthost-probe/fixtures/`.
 - UI tests run under Qt's offscreen platform. Set `ANVIL_SCREENSHOT_DIR` to a directory to have them save PNGs, and look at the images to check rendering.
 - `ctest` reports a `GTEST_SKIP` as passed. Run the test binary directly to see whether the real-host tests actually ran.

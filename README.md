@@ -38,6 +38,28 @@ The editor opens the given files in one window with menus for files, editing and
 
 Extension host messages are printed to standard error. Under WSLg the window appears through Wayland or X11; `QT_QPA_PLATFORM=xcb` forces X11.
 
+## Settings
+
+The editor reads a user settings file at startup and again whenever it changes, so edits apply without a restart. The file is JSON with comments and trailing commas, with VS Code's key names and defaults:
+
+| Platform | File |
+| --- | --- |
+| Linux | `$XDG_CONFIG_HOME/anvil/settings.json`, or `~/.config/anvil/settings.json` |
+| macOS | `~/Library/Application Support/anvil/settings.json` |
+| Windows | `%APPDATA%\anvil\settings.json` |
+
+A missing file means the defaults; the editor never creates it. Keys can be written flat (`"editor.fontSize": 16`) or nested (`"editor": {"fontSize": 16}`), and keys that nothing reads are kept as written.
+
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `editor.fontFamily` | Comma-separated font families; the first installed one is used, `monospace` and an unknown list stand for the system's fixed-width font | `'Droid Sans Mono', monospace` on Linux, `Menlo, Monaco, 'Courier New', monospace` on macOS, `Consolas, 'Courier New', monospace` on Windows |
+| `editor.fontSize` | Font size in pixels, clamped to 6-100 | 14 (12 on macOS) |
+| `editor.tabSize` | Columns per tab stop, an integer of at least 1 (values above 1024 are treated as 1024) | 4 |
+| `editor.insertSpaces` | Tab inserts spaces up to the next tab stop when `true`, a tab character when `false` | `true` |
+| `files.eol` | Line ending of new documents: `"\n"`, `"\r\n"` or `"auto"` (CRLF on Windows, LF elsewhere). Opened files keep their own | `"auto"` |
+
+The tab size and `insertSpaces` are also what extensions see in `TextEditor.options`. A file with a syntax error, or a value of the wrong type, leaves the previous settings in force; the problem is shown once in the status bar with its line and column or key name, and is written to standard error.
+
 ## Extension host tests
 
 `scripts/fetch-vscode.sh` fetches and transpiles the pinned VS Code release into `.deps/vscode` and builds the two native modules the extension host uses (this needs make, a C++ compiler and Python). With it and Node.js on `PATH`, the integration test starts the real extension host and runs an extension command; without them that test is skipped.
@@ -50,7 +72,7 @@ Extension host messages are printed to standard error. Under WSLg the window app
 
 | Path | Contents |
 | --- | --- |
-| `src/core` | Text buffer, documents, editing commands and encoding, with no UI or OS dependencies |
+| `src/core` | Text buffer, documents, editing commands, encoding, JSON with comments and settings, with no UI or OS dependencies |
 | `src/exthost` | Extension host protocol: codecs, session, and host process launcher |
 | `src/platform` | Per-OS code behind portable interfaces |
 | `src/ui` | Qt Widgets user interface: main window, editor view, extension host bridge |
