@@ -1,5 +1,6 @@
 #include "anvil/ui/find_bar.hpp"
 
+#include <QAction>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QEvent>
@@ -28,6 +29,46 @@ QToolButton* make_toggle(const QString& text, const QString& tooltip, QWidget* p
     button->setText(text);
     button->setToolTip(tooltip);
     button->setCheckable(true);
+    button->setAutoRaise(true);
+    button->setFocusPolicy(Qt::TabFocus);
+    return button;
+}
+
+// VS Code's shortcut for a find option: Alt and a letter, and Cmd+Alt and the letter on macOS.
+QKeySequence option_shortcut(Qt::Key key) {
+#ifdef Q_OS_MACOS
+    return QKeySequence(Qt::CTRL | Qt::ALT | key);
+#else
+    return QKeySequence(Qt::ALT | key);
+#endif
+}
+
+// A checkable action for a find option. Its tooltip names its shortcut, and follows it when the
+// shortcut changes. The action is active in the whole window while the button it is shown by is
+// visible, so the shortcut works from the editor while the bar is open and not while it is closed.
+QAction* make_option_action(QObject* parent, const QString& text, const QString& description,
+                            Qt::Key key) {
+    auto* action = new QAction(text, parent);
+    action->setCheckable(true);
+    action->setShortcut(option_shortcut(key));
+    action->setShortcutContext(Qt::WindowShortcut);
+    const auto update_tooltip = [action, description] {
+        const QString shortcut = action->shortcut().toString(QKeySequence::NativeText);
+        const QString tooltip =
+            shortcut.isEmpty() ? description : QStringLiteral("%1 (%2)").arg(description, shortcut);
+        if (action->toolTip() != tooltip) {
+            action->setToolTip(tooltip);
+        }
+    };
+    QObject::connect(action, &QAction::changed, action, update_tooltip);
+    update_tooltip();
+    return action;
+}
+
+QToolButton* make_option_button(QAction* action, QWidget* parent) {
+    auto* button = new QToolButton(parent);
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button->setDefaultAction(action);
     button->setAutoRaise(true);
     button->setFocusPolicy(Qt::TabFocus);
     return button;
@@ -62,9 +103,12 @@ FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(vie
     find_edit_->setClearButtonEnabled(true);
     find_edit_->installEventFilter(this);
     view_->installEventFilter(this);
-    case_button_ = make_toggle(tr("Aa"), tr("Match Case"), this);
-    word_button_ = make_toggle(tr("ab"), tr("Match Whole Word"), this);
-    regex_button_ = make_toggle(tr(".*"), tr("Use Regular Expression"), this);
+    case_button_ =
+        make_option_button(make_option_action(this, tr("Aa"), tr("Match Case"), Qt::Key_C), this);
+    word_button_ = make_option_button(
+        make_option_action(this, tr("ab"), tr("Match Whole Word"), Qt::Key_W), this);
+    regex_button_ = make_option_button(
+        make_option_action(this, tr(".*"), tr("Use Regular Expression"), Qt::Key_R), this);
     status_label_ = new QLabel(this);
     status_label_->setMinimumWidth(status_label_->fontMetrics().horizontalAdvance(
         QStringLiteral("20000+ of 20000+ (wrapped)")));

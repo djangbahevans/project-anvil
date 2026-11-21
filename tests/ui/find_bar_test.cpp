@@ -1,5 +1,6 @@
 #include "anvil/ui/find_bar.hpp"
 
+#include <QAction>
 #include <QApplication>
 #include <QImage>
 #include <QInputMethodEvent>
@@ -724,4 +725,113 @@ TEST_F(FindBarTest, OpeningWhileTheFocusIsInTheBarKeepsWhatWasTyped) {
     view_.select_range({4, 7});
     bar_.open();
     EXPECT_EQ(bar_.find_field()->text(), "typed");
+}
+
+// --- keyboard shortcuts for the options ---
+
+namespace {
+
+// The modifiers of VS Code's option shortcuts: Alt, and Cmd+Alt on macOS.
+Qt::KeyboardModifiers option_modifiers() {
+#ifdef Q_OS_MACOS
+    return Qt::ControlModifier | Qt::AltModifier;
+#else
+    return Qt::AltModifier;
+#endif
+}
+
+QKeySequence option_shortcut(Qt::Key key) {
+#ifdef Q_OS_MACOS
+    return QKeySequence(Qt::CTRL | Qt::ALT | key);
+#else
+    return QKeySequence(Qt::ALT | key);
+#endif
+}
+
+} // namespace
+
+TEST_F(FindBarTest, AltCTogglesMatchCaseFromTheFindField) {
+    open("Cat cat");
+    bar_.activateWindow();
+    QApplication::processEvents();
+    find("cat");
+    ASSERT_EQ(bar_.match_count(), 2u);
+
+    QTest::keyClick(bar_.find_field(), Qt::Key_C, option_modifiers());
+    EXPECT_TRUE(bar_.match_case_button()->isChecked());
+    EXPECT_EQ(bar_.match_count(), 1u);
+    QTest::keyClick(bar_.find_field(), Qt::Key_C, option_modifiers());
+    EXPECT_FALSE(bar_.match_case_button()->isChecked());
+    EXPECT_EQ(bar_.match_count(), 2u);
+}
+
+TEST_F(FindBarTest, AltWTogglesWholeWordFromTheFindField) {
+    open("cat concat");
+    bar_.activateWindow();
+    QApplication::processEvents();
+    find("cat");
+    ASSERT_EQ(bar_.match_count(), 2u);
+    QTest::keyClick(bar_.find_field(), Qt::Key_W, option_modifiers());
+    EXPECT_TRUE(bar_.whole_word_button()->isChecked());
+    EXPECT_EQ(bar_.match_count(), 1u);
+}
+
+TEST_F(FindBarTest, AltRTogglesTheRegularExpressionFromTheFindField) {
+    open("cat c.t");
+    bar_.activateWindow();
+    QApplication::processEvents();
+    find("c.t");
+    ASSERT_EQ(bar_.match_count(), 1u);
+    QTest::keyClick(bar_.find_field(), Qt::Key_R, option_modifiers());
+    EXPECT_TRUE(bar_.regex_button()->isChecked());
+    EXPECT_EQ(bar_.match_count(), 2u);
+}
+
+namespace {
+
+QAction* action_of(QAbstractButton* button) {
+    auto* tool_button = qobject_cast<QToolButton*>(button);
+    return tool_button != nullptr ? tool_button->defaultAction() : nullptr;
+}
+
+} // namespace
+
+TEST_F(FindBarTest, TheShortcutsAreTheOnesOfVSCode) {
+    open("x");
+    ASSERT_NE(action_of(bar_.match_case_button()), nullptr);
+    EXPECT_EQ(action_of(bar_.match_case_button())->shortcut(), option_shortcut(Qt::Key_C));
+    EXPECT_EQ(action_of(bar_.whole_word_button())->shortcut(), option_shortcut(Qt::Key_W));
+    EXPECT_EQ(action_of(bar_.regex_button())->shortcut(), option_shortcut(Qt::Key_R));
+}
+
+TEST_F(FindBarTest, TheTooltipsNameTheShortcuts) {
+    open("x");
+    for (QAbstractButton* button :
+         {bar_.match_case_button(), bar_.whole_word_button(), bar_.regex_button()}) {
+        ASSERT_NE(action_of(button), nullptr);
+        const QString shortcut = action_of(button)->shortcut().toString(QKeySequence::NativeText);
+        ASSERT_FALSE(shortcut.isEmpty());
+        EXPECT_TRUE(button->toolTip().contains(shortcut)) << button->toolTip().toStdString();
+    }
+    EXPECT_TRUE(bar_.match_case_button()->toolTip().startsWith("Match Case"));
+    EXPECT_TRUE(bar_.whole_word_button()->toolTip().startsWith("Match Whole Word"));
+    EXPECT_TRUE(bar_.regex_button()->toolTip().startsWith("Use Regular Expression"));
+}
+
+TEST_F(FindBarTest, ARebindingIsReflectedInTheTooltip) {
+    open("x");
+    ASSERT_NE(action_of(bar_.match_case_button()), nullptr);
+    const QKeySequence rebound(Qt::ALT | Qt::SHIFT | Qt::Key_X);
+    action_of(bar_.match_case_button())->setShortcut(rebound);
+    EXPECT_TRUE(
+        bar_.match_case_button()->toolTip().contains(rebound.toString(QKeySequence::NativeText)))
+        << bar_.match_case_button()->toolTip().toStdString();
+}
+
+TEST_F(FindBarTest, ClickingStillTogglesTheOptions) {
+    open("Cat cat");
+    find("cat");
+    bar_.match_case_button()->click();
+    EXPECT_TRUE(bar_.match_case_button()->isChecked());
+    EXPECT_EQ(bar_.match_count(), 1u);
 }
