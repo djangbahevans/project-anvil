@@ -28,9 +28,9 @@ gh issue list --label in-progress
 ## 3. Choose the work
 
 1. A task named by the user wins. Find its issue (`gh issue view <n>`); if it has none, use `file-issue` first.
-2. Otherwise take the lowest-numbered open milestone that has candidates:
+2. Otherwise take the first open milestone in title order (`M5`, `M5b`, `M6`, ..., `M10`) that has candidates. GitHub's own milestone numbers follow creation order and do not reflect the title:
    ```sh
-   gh api repos/djangbahevans/project-anvil/milestones --jq '.[] | select(.state=="open") | "\(.number) \(.title) (\(.open_issues) open)"'
+   gh api repos/djangbahevans/project-anvil/milestones --jq '[.[] | select(.state=="open")] | sort_by(.title | capture("^M(?<n>[0-9]+)(?<s>[a-z]*)") | [(.n | tonumber), .s]) | .[] | "\(.number) \(.title) (\(.open_issues) open)"'
    gh issue list --milestone "<title>" --label agent-ready --search "-label:in-progress -label:blocked"
    ```
 3. Take the lowest-numbered `agent-ready` issue in it that no open pull request covers.

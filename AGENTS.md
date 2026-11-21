@@ -9,7 +9,7 @@ Read these first, in this order:
 3. [docs/adr/](docs/adr/README.md): why each major decision was made. Follow an accepted ADR; change one by writing a new ADR that supersedes it.
 4. [docs/extension-host-protocol.md](docs/extension-host-protocol.md): the wire protocol and every behavior of the extension host that was discovered by experiment.
 
-What is done and what comes next is tracked on GitHub, not in this repository: see the milestones and open issues of `djangbahevans/project-anvil` (`gh issue list --milestone "<title>"`). Pick work from the lowest-numbered open milestone unless told otherwise.
+What is done and what comes next is tracked on GitHub, not in this repository: see the milestones and open issues of `djangbahevans/project-anvil` (`gh issue list --milestone "<title>"`). Pick work from the first open milestone in title order (`M5`, `M5b`, `M6`, ...) unless told otherwise.
 
 **Start with the `start-session` playbook** below; it leads to the right next step whether or not a task was given.
 
