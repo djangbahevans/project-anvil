@@ -6,7 +6,10 @@
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
@@ -22,8 +25,22 @@ constexpr int gutter_padding = 8;
 constexpr int tab_columns = 4;
 const QColor match_highlight(255, 190, 0, 90);
 
+// Marks clipboard text that was copied from a lone caret and stands for its line, so that a paste
+// inserts it above the line of the caret. It travels with the text and is gone as soon as anything
+// else is copied.
+constexpr const char* line_marker_format = "application/x-anvil-editor-data";
+constexpr const char* line_marker_key = "isFromEmptySelection";
+
 QString to_qstring(const std::string& utf8) {
     return QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
+}
+
+bool is_marked_as_line(const QMimeData* data) {
+    return data != nullptr && data->hasFormat(line_marker_format) &&
+           QJsonDocument::fromJson(data->data(line_marker_format))
+               .object()
+               .value(line_marker_key)
+               .toBool();
 }
 
 } // namespace
@@ -267,24 +284,40 @@ void EditorView::redo() {
 }
 
 void EditorView::copy() {
-    if (controller_) {
-        const std::string selected = controller_->selected_text();
-        if (!selected.empty()) {
-            QGuiApplication::clipboard()->setText(to_qstring(selected));
-        }
+    if (!controller_) {
+        return;
     }
+    const core::CopiedText copied = controller_->copied_text();
+    if (copied.text.empty()) {
+        return;
+    }
+    auto* data = new QMimeData;
+    data->setText(to_qstring(copied.text));
+    if (copied.whole_line) {
+        data->setData(
+            line_marker_format,
+            QJsonDocument(QJsonObject{{line_marker_key, true}}).toJson(QJsonDocument::Compact));
+    }
+    QGuiApplication::clipboard()->setMimeData(data);
 }
 
 void EditorView::cut() {
-    if (controller_ && !controller_->selected_text().empty()) {
-        copy();
-        apply(controller_->delete_selection());
+    if (!controller_) {
+        return;
     }
+    const core::CopiedText copied = controller_->copied_text();
+    if (copied.text.empty()) {
+        return;
+    }
+    copy();
+    apply(copied.whole_line ? controller_->delete_caret_line() : controller_->delete_selection());
 }
 
 void EditorView::paste() {
     if (controller_) {
-        apply(controller_->paste(QGuiApplication::clipboard()->text().toUtf8().toStdString()));
+        const QClipboard* clipboard = QGuiApplication::clipboard();
+        apply(controller_->paste(clipboard->text().toUtf8().toStdString(),
+                                 is_marked_as_line(clipboard->mimeData())));
     }
 }
 
