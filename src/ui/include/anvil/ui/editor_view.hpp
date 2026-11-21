@@ -48,6 +48,11 @@ public:
     void copy();
     void paste();
     void select_all();
+    // Moves every caret, or extends every selection when `extend` is set.
+    void move(core::Motion motion, bool extend = false);
+    // Deletes the selection, or the character before or after each caret.
+    void delete_backward();
+    void delete_forward();
 
     // Call after something other than this view changed the document or its selections.
     void document_changed_elsewhere();
@@ -110,7 +115,6 @@ private:
     int gutter_width() const;
     int text_origin_x() const;
     void apply(const core::EditOutcome& outcome);
-    void move(core::Motion motion, bool extend);
     void move_by_page(bool down, bool extend);
     void update_metrics();
     void update_scroll_bars();
