@@ -594,6 +594,10 @@ TEST_F(FindBarTest, ASelectionOnOneLineSeedsTheFieldAndStaysSelected) {
     EXPECT_EQ(bar_.find_field()->selectedText(), "bar");
     EXPECT_EQ(primary(), (core::Selection{4, 7}));
     EXPECT_EQ(bar_.status(), "1 of 1");
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        bar_.grab().save(QString::fromUtf8(directory) + "/find_bar_seeded.png");
+    }
 }
 
 TEST_F(FindBarTest, WithOnlyACaretTheWordAtTheCaretSeedsTheField) {
