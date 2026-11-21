@@ -41,7 +41,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 `core::Text` is an immutable, persistent rope of UTF-8 chunks whose nodes cache byte, UTF-16 and newline counts; copying it is a snapshot. `core::TextBuffer` holds the current text and reports each edit as a `TextChange`. The text uses `\n` line breaks only. Positions exchanged with extensions and language servers are zero-based line and UTF-16 column, converted by `Text::position_at` and `Text::offset_at` ([0006](adr/0006-editor-core-and-text-encoding.md)).
 
-`core::EditController` implements the editing commands (typing, deleting, motion, selection, undo) on a document, for all cursors at once; the Qt editor view only paints and forwards input ([0012](adr/0012-editing-commands-in-core.md)).
+`core::EditController` implements the editing commands (typing, deleting, motion, selection, undo, whole-line copy, cut and paste) on a document, for all cursors at once; the Qt editor view only paints and forwards input ([0012](adr/0012-editing-commands-in-core.md)).
 
 `core::Document` adds selections, an undo history and the file format (line ending, byte order mark) to a buffer. Edits are applied as validated batches and reported as ordered change lists; undo steps hold forward and inverse replacements that share storage with the text, and edits can be joined into undo groups ([0011](adr/0011-document-model.md)).
 
