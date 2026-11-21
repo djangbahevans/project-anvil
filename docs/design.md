@@ -43,7 +43,7 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 `core::EditController` implements the editing commands (typing, deleting, motion, selection, undo, whole-line copy, cut and paste) on a document, for all cursors at once; the Qt editor view only paints and forwards input ([0012](adr/0012-editing-commands-in-core.md)).
 
-`core::Document` adds selections, an undo history and the file format (line ending, byte order mark) to a buffer. Edits are applied as validated batches and reported as ordered change lists; undo steps hold forward and inverse replacements that share storage with the text, and edits can be joined into undo groups ([0011](adr/0011-document-model.md)).
+`core::Document` adds selections, an undo history and the file format (line ending, byte order mark) to a buffer. Edits are applied as validated batches and reported as ordered change lists; undo steps hold forward and inverse replacements that share storage with the text, and edits can be joined into undo groups. The history keeps a bounded number of groups, 1000 by default ([0011](adr/0011-document-model.md)).
 
 `core::Search` is a compiled query (literal, case, whole word, regular expression) with `find_next`, `find_previous`, `find_all` and replacement expansion. It reads a `Text` snapshot in bounded windows, so it never copies a whole document and can run on a worker thread; a stop token cancels it ([0013](adr/0013-pcre2-for-search.md)). `ui::FindBar` drives it: documents up to 1 MiB are searched at once, larger ones on a worker thread whose result is discarded when the document changes, and at most 20 000 matches are collected. Replace All is one `Document::apply_edits` call, so it is one undo step.
 

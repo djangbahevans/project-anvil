@@ -15,12 +15,13 @@ A document is more than its text: it has selections, an undo history, a saved st
 - Steps carry a group. An edit that sets `join_previous` joins the previous step's group, and undo and redo move a whole group at a time. The input handler decides which edits join, for example consecutive typing; the document applies no heuristics. A save seals the current group, so later edits never join it.
 - Selections are byte offsets on character boundaries. A selection moves with edits: an offset inside replaced text moves to the end of its replacement, a caret follows text inserted at it, and a range grows when text is inserted at either edge. An edit may set the selections that follow it instead. Undo restores the selections from before the step and redo the selections from after it. Selections that overlap, or a caret that touches a selection, are merged.
 - A document is dirty when the identity of its current undo step differs from the one at the last save, so undoing back to the saved state is clean and reverting an edit by hand is not.
+- The history keeps at most `undo_limit()` groups, 1000 unless set, and drops whole groups from the oldest end, so an undo never reverts half of a typing run. A limit of zero keeps no history. When no undo step is left, the current step identity is that of the last dropped step, so a state that undo can no longer reach is never mistaken for the saved one: a document saved at its start, edited past the limit and undone as far as it goes stays dirty until the next save. Lowering the limit drops groups at once; a group that returns from the redo history after the limit was lowered is dropped again if it exceeds it.
 - `extension_offset` converts a byte offset to the UTF-16 offset that extensions use, counting each line break at the width of the file's line ending.
 
 ## Consequences
 
 - Observers need no diffing: every mutation arrives as an ordered change list with positions in bytes and UTF-16 columns.
-- History memory grows with the size of the inserted and removed text, not the size of the document. The history is not bounded; a limit on the number of steps can be added without changing the interface.
+- History memory grows with the size of the inserted and removed text, not the size of the document, and is bounded by the number of groups kept. The limit counts groups, not bytes, so a few very large edits can still hold a lot of text.
 - Redo history is discarded by any new edit, as in most editors.
 - Only UTF-8 files are modeled. Other encodings need a decoding layer in front of `from_file_bytes` and a matching one behind `to_file_bytes`.
 - Changing a document's line ending style is not an edit and does not enter the history.
