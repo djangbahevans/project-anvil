@@ -489,6 +489,14 @@ TEST_F(FindBarTest, ASearchThatCannotFinishReportsAnErrorInsteadOfFreezing) {
     toggle(bar_.regex_button());
     find("(a+)+$");
     EXPECT_NE(bar_.status().indexOf("too complex"), -1);
+    // The pattern is fine; only this text is too much for it. The field is not marked invalid, and
+    // the message goes away when the text changes.
+    EXPECT_FALSE(bar_.has_error());
+    EXPECT_TRUE(bar_.find_field()->styleSheet().isEmpty());
+    EXPECT_TRUE(bar_.find_field()->toolTip().isEmpty());
+
+    view_.replace_ranges({{0, 60, "a"}});
+    EXPECT_EQ(bar_.status().indexOf("too complex"), -1);
 }
 
 TEST_F(FindBarTest, EmptyMatchesAreSteppedThroughInsteadOfFoundAgain) {

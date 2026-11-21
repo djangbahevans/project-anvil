@@ -416,8 +416,11 @@ TEST(SearchRegexTest, AnInvalidPatternIsReportedAtCreation) {
     ASSERT_FALSE(search.has_value());
     EXPECT_EQ(search.error().code, anvil::ErrorCode::invalid_argument);
     EXPECT_NE(search.error().message.find("offset"), std::string::npos);
-    EXPECT_FALSE(Search::create({.pattern = "[a-", .regex = true}).has_value());
-    EXPECT_FALSE(Search::create({.pattern = "a\\Cb", .regex = true}).has_value());
+    for (const char* pattern : {"[a-", "a\\Cb", "*a"}) {
+        const auto invalid = Search::create({.pattern = pattern, .regex = true});
+        ASSERT_FALSE(invalid.has_value()) << pattern;
+        EXPECT_EQ(invalid.error().code, anvil::ErrorCode::invalid_argument) << pattern;
+    }
     // The same text is fine as a literal.
     EXPECT_TRUE(Search::create({.pattern = "(ab"}).has_value());
 }
@@ -427,7 +430,36 @@ TEST(SearchRegexTest, RunawayBacktrackingFailsInsteadOfHanging) {
     const Search search = make_search({.pattern = "(a+)+$", .match_case = true, .regex = true});
     const auto result = search.find_all(text, 0, text.size(), 10);
     ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, anvil::ErrorCode::limit_exceeded);
     EXPECT_NE(result.error().message.find("too complex"), std::string::npos);
+}
+
+TEST(SearchRegexTest, OverflowingTheEngineStackIsALimitFailureToo) {
+    std::string raw;
+    for (int i = 0; i < 400000; ++i) {
+        raw += "ab";
+    }
+    const Text text = make_text(raw);
+    const Search search = make_search({.pattern = "(?:a|b)*c", .match_case = true, .regex = true});
+    const auto result = search.find_all(text, 0, text.size(), 10);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, anvil::ErrorCode::limit_exceeded);
+    EXPECT_NE(result.error().message.find("too complex"), std::string::npos);
+}
+
+TEST(SearchRegexTest, EveryOperationReportsTheEngineLimitWithTheSameCode) {
+    const Text text = make_text(std::string(40, 'a') + "!");
+    const Search search = make_search({.pattern = "(a+)+$", .match_case = true, .regex = true});
+    const auto code = [](const auto& result) {
+        return result.has_value() ? std::nullopt : std::optional(result.error().code);
+    };
+    const std::optional limit = anvil::ErrorCode::limit_exceeded;
+    EXPECT_EQ(code(search.find_next(text, 0)), limit);
+    EXPECT_EQ(code(search.find_next(text, 0, true)), limit);
+    EXPECT_EQ(code(search.find_previous(text, text.size())), limit);
+    EXPECT_EQ(code(search.find_all(text, 0, text.size(), 10)), limit);
+    EXPECT_EQ(code(search.replacement_for(text, {0, 40}, "x")), limit);
+    EXPECT_EQ(code(search.replace_all(text, "x")), limit);
 }
 
 TEST(SearchTest, ALimitTruncatesTheList) {
