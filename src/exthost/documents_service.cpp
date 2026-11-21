@@ -12,11 +12,6 @@ using nlohmann::json;
 
 constexpr const char* default_language = "plaintext";
 
-json default_editor_options() {
-    return {{"tabSize", 4},         {"indentSize", 4},  {"originalIndentSize", "tabSize"},
-            {"insertSpaces", true}, {"cursorStyle", 1}, {"lineNumbers", 1}};
-}
-
 // The extension host models documents with "\n" or "\r\n" only; a file with lone "\r" breaks is
 // presented with "\n", which has the same width.
 core::LineEnding protocol_line_ending(const core::Document& document) {
@@ -121,6 +116,32 @@ void DocumentsService::send_delta(const json& delta) {
     }
 }
 
+void DocumentsService::set_editor_options(EditorOptions options) {
+    if (options == editor_options_) {
+        return;
+    }
+    editor_options_ = options;
+    if (!synchronized_) {
+        return;
+    }
+    for (const Editor& editor : editors_) {
+        send(ProxyId::ExtHostEditors, "$acceptEditorPropertiesChanged",
+             json::array({editor.id,
+                          {{"options", editor_options_json()},
+                           {"selections", nullptr},
+                           {"visibleRanges", nullptr}}}));
+    }
+}
+
+json DocumentsService::editor_options_json() const {
+    return {{"tabSize", editor_options_.tab_size},
+            {"indentSize", editor_options_.tab_size},
+            {"originalIndentSize", "tabSize"},
+            {"insertSpaces", editor_options_.insert_spaces},
+            {"cursorStyle", 1},
+            {"lineNumbers", 1}};
+}
+
 json DocumentsService::model_added_data(const Entry& entry) const {
     const core::Document& document = *entry.document;
     return {
@@ -143,7 +164,7 @@ json DocumentsService::editor_added_data(const Editor& editor, const Entry& entr
     return {
         {"id", editor.id},
         {"documentUri", uri_to_json(entry.uri)},
-        {"options", default_editor_options()},
+        {"options", editor_options_json()},
         {"selections", std::move(selections)},
         {"visibleRanges", json::array({range_to_json(core::Range{{0, 0}, {0, 0}})})},
         {"editorPosition", 1},
