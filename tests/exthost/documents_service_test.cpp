@@ -295,6 +295,64 @@ TEST_F(DocumentsServiceTest, SelectionChangesAreReportedToTheDocumentsEditors) {
     EXPECT_EQ(calls[0].second[1]["selections"]["selections"][0]["positionColumn"], 4);
 }
 
+TEST_F(DocumentsServiceTest, EditorsReportTheConfiguredOptionsToExtensions) {
+    service_.set_editor_options({.tab_size = 2, .insert_spaces = false});
+    const core::Uri uri = open("a.txt", "x");
+    const std::string editor = *service_.add_editor(uri);
+    const json options = synchronize()["addedEditors"][0]["options"];
+    EXPECT_EQ(options["tabSize"], 2);
+    EXPECT_EQ(options["indentSize"], 2);
+    EXPECT_EQ(options["originalIndentSize"], "tabSize");
+    EXPECT_FALSE(options["insertSpaces"].get<bool>());
+    EXPECT_EQ(service_.editor_options(), (DocumentsService::EditorOptions{2, false}));
+}
+
+TEST_F(DocumentsServiceTest, EditorsKeepTheDefaultOptionsUntilConfigured) {
+    const core::Uri uri = open("a.txt", "x");
+    service_.add_editor(uri);
+    const json options = synchronize()["addedEditors"][0]["options"];
+    EXPECT_EQ(options["tabSize"], 4);
+    EXPECT_TRUE(options["insertSpaces"].get<bool>());
+}
+
+TEST_F(DocumentsServiceTest, ChangingTheOptionsTellsEveryKnownEditor) {
+    const core::Uri first = open("a.txt", "x");
+    const core::Uri second = open("b.txt", "y");
+    const std::string first_editor = *service_.add_editor(first);
+    const std::string second_editor = *service_.add_editor(second);
+    synchronize();
+
+    service_.set_editor_options({.tab_size = 8, .insert_spaces = false});
+    const auto calls = sent().calls();
+    ASSERT_EQ(calls.size(), 2u);
+    for (const auto& [method, args] : calls) {
+        EXPECT_EQ(method, "ExtHostEditors.$acceptEditorPropertiesChanged");
+        EXPECT_EQ(args[1]["options"]["tabSize"], 8);
+        EXPECT_EQ(args[1]["options"]["indentSize"], 8);
+        EXPECT_FALSE(args[1]["options"]["insertSpaces"].get<bool>());
+        EXPECT_TRUE(args[1]["selections"].is_null());
+        EXPECT_TRUE(args[1]["visibleRanges"].is_null());
+    }
+    EXPECT_EQ(calls[0].second[0], first_editor);
+    EXPECT_EQ(calls[1].second[0], second_editor);
+}
+
+TEST_F(DocumentsServiceTest, SettingTheSameOptionsAgainSendsNothing) {
+    const core::Uri uri = open("a.txt", "x");
+    service_.add_editor(uri);
+    synchronize();
+    service_.set_editor_options({});
+    EXPECT_TRUE(sent().calls().empty());
+}
+
+TEST_F(DocumentsServiceTest, OptionsSetBeforeTheInitialDeltaAreSentInIt) {
+    const core::Uri uri = open("a.txt", "x");
+    service_.add_editor(uri);
+    service_.set_editor_options({.tab_size = 3, .insert_spaces = true});
+    EXPECT_TRUE(sent().calls().empty());
+    EXPECT_EQ(synchronize()["addedEditors"][0]["options"]["tabSize"], 3);
+}
+
 // --- requests from extensions ---
 
 TEST_F(DocumentsServiceTest, ApplyEditsChangesTheDocumentAndAnnouncesItBeforeReplying) {

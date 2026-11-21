@@ -49,6 +49,20 @@ public:
         observer_ = std::move(observer);
     }
 
+    // The options that every text editor reports to extensions (`TextEditor.options`).
+    struct EditorOptions {
+        std::size_t tab_size = 4;
+        bool insert_spaces = true;
+
+        friend bool operator==(const EditorOptions&, const EditorOptions&) = default;
+    };
+    // Sets the options of all editors, existing and future. Extensions that already know of an
+    // editor are told when the options differ from before.
+    void set_editor_options(EditorOptions options);
+    const EditorOptions& editor_options() const {
+        return editor_options_;
+    }
+
     // Picks a language id for a resource; "plaintext" without a resolver.
     void set_language_resolver(LanguageResolver resolver) {
         language_resolver_ = std::move(resolver);
@@ -97,6 +111,7 @@ private:
         std::string uri_key;
     };
 
+    nlohmann::json editor_options_json() const;
     nlohmann::json model_added_data(const Entry& entry) const;
     nlohmann::json editor_added_data(const Editor& editor, const Entry& entry) const;
     void send_delta(const nlohmann::json& delta);
@@ -121,6 +136,7 @@ private:
     Session& session_;
     LanguageResolver language_resolver_;
     Observer observer_;
+    EditorOptions editor_options_;
     std::map<std::string, Entry> entries_;
     std::vector<Editor> editors_;
     std::string active_editor_;
