@@ -28,6 +28,30 @@ char32_t codepoint_at(const Text& text, std::size_t offset) {
     return decode_code_point(text.slice(offset, 4), 0);
 }
 
+// The run of characters of the class of the one at `at` on its line, which must be a character
+// boundary before the end and not a line break.
+Selection class_run_at(const Text& text, std::size_t at) {
+    const CharClass run = classify(codepoint_at(text, at));
+    std::size_t start = at;
+    while (start > 0) {
+        const std::size_t before = previous_boundary(text, start);
+        const char32_t c = codepoint_at(text, before);
+        if (c == '\n' || classify(c) != run) {
+            break;
+        }
+        start = before;
+    }
+    std::size_t end = next_boundary(text, at);
+    while (end < text.size()) {
+        const char32_t c = codepoint_at(text, end);
+        if (c == '\n' || classify(c) != run) {
+            break;
+        }
+        end = next_boundary(text, end);
+    }
+    return {start, end};
+}
+
 std::size_t word_right(const Text& text, std::size_t offset) {
     if (offset >= text.size()) {
         return text.size();
@@ -109,6 +133,23 @@ std::size_t line_indentation_length(const Text& text, std::size_t line, std::siz
 }
 
 } // namespace
+
+std::optional<Selection> word_at(const Text& text, std::size_t offset) {
+    offset = std::min(offset, text.size());
+    while (!text.is_char_boundary(offset)) {
+        --offset;
+    }
+    const auto is_word = [&text](std::size_t at) {
+        return is_word_character(codepoint_at(text, at));
+    };
+    if (offset < text.size() && is_word(offset)) {
+        return class_run_at(text, offset);
+    }
+    if (offset > 0 && is_word(previous_boundary(text, offset))) {
+        return class_run_at(text, previous_boundary(text, offset));
+    }
+    return std::nullopt;
+}
 
 EditOutcome EditController::apply(std::vector<Edit> edits, std::vector<Selection> selections_after,
                                   EditKind kind, bool may_join) {
@@ -451,25 +492,7 @@ EditOutcome EditController::select_word_at(std::size_t offset) {
         }
         at = previous_boundary(text, at);
     }
-    const CharClass run = classify(codepoint_at(text, at));
-    std::size_t start = at;
-    while (start > 0) {
-        const std::size_t before = previous_boundary(text, start);
-        const char32_t c = codepoint_at(text, before);
-        if (c == '\n' || classify(c) != run) {
-            break;
-        }
-        start = before;
-    }
-    std::size_t end = next_boundary(text, at);
-    while (end < text.size()) {
-        const char32_t c = codepoint_at(text, end);
-        if (c == '\n' || classify(c) != run) {
-            break;
-        }
-        end = next_boundary(text, end);
-    }
-    return adopt(SelectionSet::from({Selection{start, end}}));
+    return adopt(SelectionSet::from({class_run_at(text, at)}));
 }
 
 EditOutcome EditController::select_line_at(std::size_t offset) {

@@ -35,6 +35,12 @@ struct EditOutcome {
     }
 };
 
+// The word that a caret at `offset` is in or next to: the run of word characters (see classify)
+// around it on its line. A caret between two words belongs to the one after it. Nothing when the
+// characters on both sides of the caret are not word characters. An offset inside a character moves
+// back to its start, and one past the end is the end.
+std::optional<Selection> word_at(const Text& text, std::size_t offset);
+
 // What copy puts on the clipboard.
 struct CopiedText {
     std::string text;
