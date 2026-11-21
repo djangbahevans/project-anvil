@@ -53,6 +53,14 @@ The window is arranged from fixed parts, in VS Code's positions and with its par
 
 The sidebar and the panel host view containers: each is registered with an id, a title, an icon and a factory, and its widget is created the first time it is shown. The explorer, search, the terminal and extension tree views plug in the same way. The editor area is a tree of editor groups and splitters; the model of groups, their tabs and the split orientations is plain data with no widget types. The status bar keeps a left and a right group of items ordered by priority. Every part reads its colors by workbench color key through one lookup that a color theme fills.
 
+## Settings
+
+`core::parse_jsonc` reads JSON with comments and trailing commas and reports a syntax error with its line and column; the settings, keybinding and theme files share it. `core::Settings` holds the parsed object of the user settings file, finds a dotted key (`editor.fontSize`) whether the file writes it flat or nested, and keeps keys that nothing reads. `core::EditorSettings` reads the keys the editor uses with VS Code's defaults and ranges; per-platform defaults come from `platform::editor_defaults()` so that `core` has no per-OS code. A value of the wrong type is an error, not a silent default, so that a typo never changes the editor unnoticed.
+
+`ui::SettingsStore` reads `<user config dir>/settings.json` and watches it with `QFileSystemWatcher`. It watches the file and the nearest existing directory above it, and sets both watches again after every change, so a file that is created later, deleted, or replaced by an editor that writes a temporary file and renames it is followed. Changes are debounced. A file that cannot be used leaves the previous values in force and is reported once per distinct problem, through a signal that the window turns into a status bar message, and in the log. `ui::MainWindow` applies the values: `EditorView::apply_settings` takes the font, tab size and Tab key behavior and keeps the caret and the top visible line, the document service reports the tab size and `insertSpaces` to extensions, and new untitled documents take their line ending from `files.eol`. Applying settings happens when the file changes, never per keystroke.
+
+Settings are global. Per-language overrides (`"[python]": {...}`), workspace settings and a settings editor are not implemented; the parsed JSON keeps its nesting so that they can be added.
+
 ## Extension compatibility
 
 The upstream extension host runs unmodified from a pinned VS Code release. The editor answers its RPC calls for the in-scope API surface and reports unsupported API use explicitly. Extensions are installed from Open VSX or from local `.vsix` files ([0007](adr/0007-extension-registry-open-vsx.md)).

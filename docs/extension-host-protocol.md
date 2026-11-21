@@ -159,6 +159,7 @@ Extensions see a document only after the editor has announced it with `ExtHostDo
 - `MainThreadDocuments.$tryOpenDocument` loads the file, announces it in a delta, and only then replies; the extension host looks the document up as soon as the reply arrives. Documents above 50 MB are not shared.
 - `MainThreadBulkEdits.$tryApplyWorkspaceEdit` is checked as a whole before any document changes, so a workspace edit applies completely or not at all. Edits that create, rename or delete files are answered with `false`.
 - Saving reports `$acceptModelSaved`, after which the extension host treats the document as clean.
+- An editor's `options` (in `addedEditors` and in `$acceptEditorPropertiesChanged`) carry `tabSize`, `indentSize`, `originalIndentSize` (`"tabSize"` when the indent size follows the tab size), `insertSpaces`, `cursorStyle` and `lineNumbers`. A change is sent as `$acceptEditorPropertiesChanged(id, {options, selections: null, visibleRanges: null})` once per editor; a `null` member means "unchanged", and the extension host fires `onDidChangeTextEditorOptions` and updates `TextEditor.options` for the editor.
 
 ## Logging and output channels
 
