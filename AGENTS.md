@@ -68,7 +68,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 | Directory | Contents |
 | --- | --- |
-| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, UTF-8/UTF-16, URIs, JSON with comments, settings, logging interface |
+| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, UTF-8/UTF-16, URIs, JSON with comments, settings, logging interface |
 | `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services |
 | `src/ui` | editor view, find bar, main window, extension host bridge |
