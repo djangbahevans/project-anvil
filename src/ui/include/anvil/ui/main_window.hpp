@@ -6,8 +6,10 @@
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/settings_store.hpp"
 
 #include <QMainWindow>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -23,6 +25,9 @@ struct MainWindowOptions {
     std::optional<ExtensionHostBridge::Config> extension_host;
     // Receives the extension host's messages; discarded when unset.
     std::shared_ptr<core::Logger> logger;
+    // The user settings file, read at startup and whenever it changes. A missing file means the
+    // defaults; empty means no settings file at all.
+    std::filesystem::path settings_file;
     // Whether closing asks what to do with unsaved documents.
     bool confirm_unsaved_changes = true;
 };
@@ -58,6 +63,9 @@ public:
     FindBar* find_bar() {
         return find_bar_;
     }
+    SettingsStore& settings() {
+        return *settings_;
+    }
     ExtensionHostBridge& bridge() {
         return bridge_;
     }
@@ -81,6 +89,7 @@ private:
     };
 
     void build_menus();
+    void apply_settings();
     void add_untitled_document();
     // Makes the document the shown one, adding it to the open documents when it is new.
     void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
@@ -111,6 +120,7 @@ private:
     QTabBar* tabs_ = nullptr;
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
+    SettingsStore* settings_ = nullptr;
     ExtensionHostBridge bridge_;
     // Parallel to the tabs: documents_[i] is shown by tab i.
     std::vector<OpenDocument> documents_;

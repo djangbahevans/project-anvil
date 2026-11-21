@@ -80,6 +80,7 @@ if(TARGET anvil_ui)
     ui/editor_view_test.cpp
     ui/find_bar_test.cpp
     ui/main_window_test.cpp
+    ui/settings_store_test.cpp
     ui/ui_test_main.cpp
   )
   target_link_libraries(anvil_ui_tests

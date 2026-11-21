@@ -72,6 +72,9 @@ int main(int argc, char* argv[]) {
 
     anvil::ui::MainWindowOptions options;
     options.extension_host = extension_host_config();
+    if (const auto config_dir = anvil::platform::user_config_dir()) {
+        options.settings_file = *config_dir / "settings.json";
+    }
     options.logger =
         std::make_shared<anvil::core::StreamLogger>(std::cerr, anvil::core::LogLevel::info);
     anvil::ui::MainWindow window(std::move(options));

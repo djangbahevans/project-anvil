@@ -2,6 +2,7 @@
 
 #include "anvil/core/document.hpp"
 #include "anvil/core/editing.hpp"
+#include "anvil/core/editor_settings.hpp"
 #include "anvil/core/search.hpp"
 
 #include <QAbstractScrollArea>
@@ -28,6 +29,11 @@ public:
 
     explicit EditorView(QWidget* parent = nullptr);
     ~EditorView() override;
+
+    // Takes the font, tab size and tab key behavior from the settings. A font family that is not
+    // installed falls back to the system's fixed-width font. The text, caret and scroll position
+    // stay as they are, so this can run while the user edits.
+    void apply_settings(const core::EditorSettings& settings);
 
     // Shows `document`, or nothing when null. The document is shared with its other users.
     void set_document(std::shared_ptr<core::Document> document);
@@ -116,6 +122,8 @@ private:
     std::unique_ptr<core::EditController> controller_;
     int line_height_ = 16;
     int char_width_ = 8;
+    std::size_t tab_size_ = 4;
+    bool insert_spaces_ = true;
     int max_line_width_ = 0;
     bool caret_visible_ = true;
     bool selecting_with_mouse_ = false;

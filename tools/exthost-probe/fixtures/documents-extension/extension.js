@@ -15,6 +15,7 @@ function describe(document, editor) {
         version: document.version,
         isDirty: document.isDirty,
         eol: document.eol === vscode.EndOfLine.CRLF ? 'crlf' : 'lf',
+        options: editor ? { tabSize: editor.options.tabSize, insertSpaces: editor.options.insertSpaces } : null,
         selections: editor ? editor.selections.map((s) => [...pair(s.anchor), ...pair(s.active)]) : [],
     };
 }

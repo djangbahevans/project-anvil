@@ -1,5 +1,6 @@
 #include "anvil/ui/main_window.hpp"
 
+#include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 
 #include <QAction>
@@ -62,6 +63,17 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     statusBar()->addPermanentWidget(position_label_);
     build_menus();
 
+    auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
+    settings_ = new SettingsStore(
+        {.file = options_.settings_file, .defaults = platform::editor_defaults(), .logger = logger},
+        this);
+    connect(settings_, &SettingsStore::changed, this, &MainWindow::apply_settings);
+    connect(settings_, &SettingsStore::load_failed, this, [this](const QString& message) {
+        statusBar()->showMessage(
+            tr("Settings not applied, keeping the previous ones: %1").arg(message), 15000);
+    });
+    settings_->start();
+
     connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
         if (index >= 0 && static_cast<std::size_t>(index) != current_) {
             activate(static_cast<std::size_t>(index));
@@ -101,9 +113,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             statusBar()->showMessage(
                 tr("The extension host stopped: %1").arg(QString::fromStdString(reason)), 10000);
         };
-        auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
-        if (auto started =
-                bridge_.start(*options_.extension_host, std::move(logger), std::move(callbacks));
+        if (auto started = bridge_.start(*options_.extension_host, logger, std::move(callbacks));
             !started) {
             statusBar()->showMessage(tr("The extension host did not start: %1")
                                          .arg(QString::fromStdString(started.error().message)),
@@ -111,10 +121,18 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         }
     }
 
+    apply_settings();
     add_untitled_document();
 }
 
 MainWindow::~MainWindow() = default;
+
+void MainWindow::apply_settings() {
+    const core::EditorSettings& editor = settings_->editor();
+    view_->apply_settings(editor);
+    bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
+                                .insert_spaces = editor.insert_spaces});
+}
 
 void MainWindow::build_menus() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
@@ -173,7 +191,7 @@ std::optional<std::size_t> MainWindow::index_of(const core::Uri& uri) const {
 
 void MainWindow::add_untitled_document() {
     const core::Uri uri{"untitled", "", "Untitled-" + std::to_string(next_untitled_++), "", ""};
-    auto document = std::make_shared<core::Document>();
+    auto document = std::make_shared<core::Document>(core::Text{}, settings_->editor().line_ending);
     bridge_.add_document(uri, document);
     show_document(uri, std::move(document));
 }
