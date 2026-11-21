@@ -17,6 +17,7 @@ add_executable(anvil_core_tests
   core/text_test.cpp
   core/uri_test.cpp
   core/utf_test.cpp
+  core/when_expression_test.cpp
 )
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)
 target_include_directories(anvil_core_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/core)

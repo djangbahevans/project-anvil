@@ -14,6 +14,7 @@ add_library(anvil_core STATIC
   text_file.cpp
   uri.cpp
   utf.cpp
+  when_expression.cpp
 )
 add_library(anvil::core ALIAS anvil_core)
 
