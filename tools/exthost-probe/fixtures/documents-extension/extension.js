@@ -79,5 +79,8 @@ exports.activate = (context) => {
             edit.insert(vscode.Uri.file(path), new vscode.Position(0, 0), '>>');
             return vscode.workspace.applyEdit(edit);
         }),
+        vscode.commands.registerCommand('anvil.docs.execute', (id, ...args) =>
+            vscode.commands.executeCommand(id, ...args),
+        ),
     );
 };

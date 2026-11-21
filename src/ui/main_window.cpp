@@ -18,6 +18,7 @@
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <functional>
 
 namespace anvil::ui {
 namespace {
@@ -61,6 +62,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     host_label_ = new QLabel(this);
     statusBar()->addPermanentWidget(host_label_);
     statusBar()->addPermanentWidget(position_label_);
+    register_commands();
     build_menus();
 
     auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
@@ -118,6 +120,8 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             statusBar()->showMessage(tr("The extension host did not start: %1")
                                          .arg(QString::fromStdString(started.error().message)),
                                      15000);
+        } else {
+            share_commands_with_extensions();
         }
     }
 
@@ -134,32 +138,84 @@ void MainWindow::apply_settings() {
                                 .insert_spaces = editor.insert_spaces});
 }
 
+void MainWindow::register_commands() {
+    const auto add = [this](std::string id, const QString& title, std::function<void()> action) {
+        commands_.add(std::move(id), title.toStdString(),
+                      [action = std::move(action)](const nlohmann::json&) { action(); });
+    };
+    using core::Motion;
+
+    add("undo", tr("Undo"), [this] { view_->undo(); });
+    add("redo", tr("Redo"), [this] { view_->redo(); });
+    add("cursorLeft", tr("Move Cursor Left"), [this] { view_->move(Motion::left); });
+    add("cursorRight", tr("Move Cursor Right"), [this] { view_->move(Motion::right); });
+    add("cursorUp", tr("Move Cursor Up"), [this] { view_->move(Motion::up); });
+    add("cursorDown", tr("Move Cursor Down"), [this] { view_->move(Motion::down); });
+    add("cursorHome", tr("Move Cursor to Line Start"), [this] { view_->move(Motion::line_start); });
+    add("cursorEnd", tr("Move Cursor to Line End"), [this] { view_->move(Motion::line_end); });
+    add("deleteLeft", tr("Delete Left"), [this] { view_->delete_backward(); });
+    add("deleteRight", tr("Delete Right"), [this] { view_->delete_forward(); });
+    add("editor.action.selectAll", tr("Select All"), [this] { view_->select_all(); });
+    add("editor.action.clipboardCutAction", tr("Cut"), [this] { view_->cut(); });
+    add("editor.action.clipboardCopyAction", tr("Copy"), [this] { view_->copy(); });
+    add("editor.action.clipboardPasteAction", tr("Paste"), [this] { view_->paste(); });
+    add("actions.find", tr("Find"), [this] { find_bar_->open(false); });
+    add("editor.action.startFindReplace", tr("Replace"), [this] { find_bar_->open(true); });
+    add("editor.action.nextMatchFindAction", tr("Find Next"), [this] { find_bar_->find_next(); });
+    add("editor.action.previousMatchFindAction", tr("Find Previous"),
+        [this] { find_bar_->find_previous(); });
+    add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
+    add("workbench.action.files.save", tr("Save"), [this] { save(); });
+    add("workbench.action.files.saveAs", tr("Save As…"), [this] { save_as_dialog(); });
+    add("workbench.action.closeActiveEditor", tr("Close Editor"),
+        [this] { close_document(current_); });
+}
+
+void MainWindow::share_commands_with_extensions() {
+    for (const CommandRegistry::Command& command : commands_.commands()) {
+        bridge_.host()->commands().add_builtin(
+            command.id, [this, id = command.id](const nlohmann::json& args) {
+                commands_.execute(id, args);
+                return exthost::CallResult(std::optional<std::string>());
+            });
+    }
+}
+
 void MainWindow::build_menus() {
+    const auto run = [this](std::string id) {
+        return [this, id = std::move(id)] { commands_.execute(id); };
+    };
+
     QMenu* file = menuBar()->addMenu(tr("&File"));
-    file->addAction(tr("&Open…"), QKeySequence::Open, this, &MainWindow::open_dialog);
-    file->addAction(tr("&Save"), QKeySequence::Save, this, [this] { save(); });
-    file->addAction(tr("Save &As…"), QKeySequence::SaveAs, this, &MainWindow::save_as_dialog);
+    file->addAction(tr("&Open…"), QKeySequence::Open, this, run("workbench.action.files.openFile"));
+    file->addAction(tr("&Save"), QKeySequence::Save, this, run("workbench.action.files.save"));
+    file->addAction(tr("Save &As…"), QKeySequence::SaveAs, this,
+                    run("workbench.action.files.saveAs"));
     file->addAction(tr("&Close Tab"), QKeySequence::Close, this,
-                    [this] { close_document(current_); });
+                    run("workbench.action.closeActiveEditor"));
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
 
     QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-    edit->addAction(tr("&Undo"), QKeySequence::Undo, view_, &EditorView::undo);
-    edit->addAction(tr("&Redo"), QKeySequence::Redo, view_, &EditorView::redo);
+    edit->addAction(tr("&Undo"), QKeySequence::Undo, this, run("undo"));
+    edit->addAction(tr("&Redo"), QKeySequence::Redo, this, run("redo"));
     edit->addSeparator();
-    edit->addAction(tr("Cu&t"), QKeySequence::Cut, view_, &EditorView::cut);
-    edit->addAction(tr("&Copy"), QKeySequence::Copy, view_, &EditorView::copy);
-    edit->addAction(tr("&Paste"), QKeySequence::Paste, view_, &EditorView::paste);
+    edit->addAction(tr("Cu&t"), QKeySequence::Cut, this, run("editor.action.clipboardCutAction"));
+    edit->addAction(tr("&Copy"), QKeySequence::Copy, this,
+                    run("editor.action.clipboardCopyAction"));
+    edit->addAction(tr("&Paste"), QKeySequence::Paste, this,
+                    run("editor.action.clipboardPasteAction"));
     edit->addSeparator();
-    edit->addAction(tr("Select &All"), QKeySequence::SelectAll, view_, &EditorView::select_all);
+    edit->addAction(tr("Select &All"), QKeySequence::SelectAll, this,
+                    run("editor.action.selectAll"));
     edit->addSeparator();
-    edit->addAction(tr("&Find…"), QKeySequence::Find, this, [this] { find_bar_->open(false); });
-    edit->addAction(tr("Find &Next"), QKeySequence::FindNext, find_bar_, &FindBar::find_next);
-    edit->addAction(tr("Find Pre&vious"), QKeySequence::FindPrevious, find_bar_,
-                    &FindBar::find_previous);
+    edit->addAction(tr("&Find…"), QKeySequence::Find, this, run("actions.find"));
+    edit->addAction(tr("Find &Next"), QKeySequence::FindNext, this,
+                    run("editor.action.nextMatchFindAction"));
+    edit->addAction(tr("Find Pre&vious"), QKeySequence::FindPrevious, this,
+                    run("editor.action.previousMatchFindAction"));
     edit->addAction(tr("&Replace…"), QKeySequence::Replace, this,
-                    [this] { find_bar_->open(true); });
+                    run("editor.action.startFindReplace"));
 
     QMenu* commands = menuBar()->addMenu(tr("Comm&ands"));
     commands->addAction(tr("&Run Command…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this,

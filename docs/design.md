@@ -49,6 +49,10 @@ Dependencies point downward only; `core`, `workbench` and `platform` never inclu
 
 `core::WhenExpression` parses and evaluates VS Code `when` expressions, the conditions that decide whether a keybinding, menu item or command applies (`editorTextFocus && !editorReadonly`, `resourceExtname == .md`). `evaluate` reads a `core::ContextKeys`, a map from key to a boolean, number, string or list of strings, and an unset key is falsy. The syntax, the precedence and the JavaScript-style coercions of `==`, the comparisons and `=~` follow VS Code's `contextkey.ts`, so the `when` clauses of extensions behave as they do there; `=~` patterns are compiled with PCRE2 in the JavaScript-compatible mode that [0013](adr/0013-pcre2-for-search.md) uses for search. Parsing normalizes: `&&` is distributed over `||`, negation is pushed down to the keys, and terms are sorted and de-duplicated, so two spellings of the same expression have the same `canonical()` string and compare equal, which the keybinding resolver relies on. A parse error reports the byte offset of the problem. An expression is immutable and cheap to copy, so it can be evaluated from any thread.
 
+## Commands
+
+The editor's operations are commands in `ui::CommandRegistry`, keyed by VS Code's command ids (`undo`, `cursorLeft`, `editor.action.clipboardCopyAction`, `workbench.action.files.save`) and each with a palette title. Menus run a command by its id, and `MainWindow` hands every registered command to the extension host's `CommandsService` when the host starts, so `vscode.commands.executeCommand` runs the same code as the menu. A command receives the JSON array of arguments and ignores what it does not use. [Adding an editor command](howto/adding-a-command.md) describes how to register one.
+
 ## Window structure
 
 The window is arranged from fixed parts, in VS Code's positions and with its part ids: the title bar above; the activity bar at the left edge; the primary sidebar; the editor area; the bottom panel; and the status bar below ([0014](adr/0014-workbench-layout.md)). Splitters resize the sidebar and the panel, and each part can be hidden. The window uses the native frame and menu bar.

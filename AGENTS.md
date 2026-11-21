@@ -114,6 +114,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 ## How-to guides
 
 - [Adding a MainThread service](docs/howto/adding-a-main-thread-service.md)
+- [Adding an editor command](docs/howto/adding-a-command.md)
 - [Upgrading the pinned VS Code](docs/howto/upgrading-vscode.md)
 
 ## Definition of done

@@ -4,6 +4,8 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -927,4 +929,187 @@ TEST_F(MainWindowTest, ExtensionsSeeTheTabSizeAndInsertSpacesFromTheSettings) {
     write("settings.json", R"j({"editor.tabSize": 6, "editor.insertSpaces": true})j");
     ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["options"]["tabSize"] == 6; }));
     EXPECT_EQ(run("anvil.docs.active")["options"]["insertSpaces"], true);
+}
+
+TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
+    create_window();
+    const std::vector<std::string> ids = {"undo",
+                                          "redo",
+                                          "cursorLeft",
+                                          "cursorRight",
+                                          "cursorUp",
+                                          "cursorDown",
+                                          "cursorHome",
+                                          "cursorEnd",
+                                          "deleteLeft",
+                                          "deleteRight",
+                                          "editor.action.selectAll",
+                                          "editor.action.clipboardCopyAction",
+                                          "editor.action.clipboardCutAction",
+                                          "editor.action.clipboardPasteAction",
+                                          "workbench.action.files.save",
+                                          "workbench.action.files.saveAs",
+                                          "workbench.action.files.openFile",
+                                          "workbench.action.closeActiveEditor",
+                                          "actions.find",
+                                          "editor.action.nextMatchFindAction",
+                                          "editor.action.previousMatchFindAction",
+                                          "editor.action.startFindReplace"};
+    for (const std::string& id : ids) {
+        const auto* command = window_->commands().find(id);
+        ASSERT_NE(command, nullptr) << id;
+        EXPECT_FALSE(command->title.empty()) << id;
+    }
+    EXPECT_EQ(window_->commands().commands().size(), ids.size());
+}
+
+TEST_F(MainWindowTest, UndoAndRedoCommandsChangeTheText) {
+    create_window();
+    type("ab");
+    window_->commands().execute("undo");
+    EXPECT_EQ(current_text(), "");
+    window_->commands().execute("redo");
+    EXPECT_EQ(current_text(), "ab");
+}
+
+TEST_F(MainWindowTest, CursorCommandsMoveTheCaret) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "ab\ncd").string())));
+    const auto caret = [&] { return window_->current_document()->selections().primary(); };
+
+    window_->commands().execute("cursorRight");
+    EXPECT_EQ(caret(), (core::Selection{1, 1}));
+    window_->commands().execute("cursorLeft");
+    EXPECT_EQ(caret(), (core::Selection{0, 0}));
+    window_->commands().execute("cursorDown");
+    EXPECT_EQ(caret(), (core::Selection{3, 3}));
+    window_->commands().execute("cursorUp");
+    EXPECT_EQ(caret(), (core::Selection{0, 0}));
+    window_->commands().execute("cursorEnd");
+    EXPECT_EQ(caret(), (core::Selection{2, 2}));
+    window_->commands().execute("cursorHome");
+    EXPECT_EQ(caret(), (core::Selection{0, 0}));
+}
+
+TEST_F(MainWindowTest, DeleteCommandsRemoveTheCharacterBesideTheCaret) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
+    window_->commands().execute("cursorRight");
+    window_->commands().execute("deleteLeft");
+    EXPECT_EQ(current_text(), "bc");
+    window_->commands().execute("deleteRight");
+    EXPECT_EQ(current_text(), "c");
+}
+
+TEST_F(MainWindowTest, SelectAllAndTheClipboardCommandsEditTheText) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
+    window_->commands().execute("editor.action.selectAll");
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{0, 3}));
+
+    window_->commands().execute("editor.action.clipboardCopyAction");
+    EXPECT_EQ(QGuiApplication::clipboard()->text(), "abc");
+    EXPECT_EQ(current_text(), "abc");
+
+    window_->commands().execute("editor.action.clipboardCutAction");
+    EXPECT_EQ(current_text(), "");
+    window_->commands().execute("editor.action.clipboardPasteAction");
+    window_->commands().execute("editor.action.clipboardPasteAction");
+    EXPECT_EQ(current_text(), "abcabc");
+}
+
+TEST_F(MainWindowTest, FindCommandsOpenTheFindBarAndStepThroughMatches) {
+    create_window();
+    EXPECT_TRUE(window_->find_bar()->isHidden());
+    window_->commands().execute("actions.find");
+    EXPECT_FALSE(window_->find_bar()->isHidden());
+    EXPECT_FALSE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
+    window_->commands().execute("editor.action.startFindReplace");
+    EXPECT_TRUE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
+
+    type("a b a b");
+    window_->find_bar()->find_field()->clear();
+    window_->find_bar()->find_field()->setText("b");
+    ASSERT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
+    window_->commands().execute("editor.action.nextMatchFindAction");
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{6, 7}));
+    window_->commands().execute("editor.action.previousMatchFindAction");
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
+}
+
+TEST_F(MainWindowTest, SaveAndCloseCommandsActOnTheShownDocument) {
+    create_window();
+    const auto path = write("a.txt", "abc");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("X");
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(path), "Xabc");
+    EXPECT_FALSE(window_->isWindowModified());
+
+    ASSERT_EQ(window_->open_document_count(), 2U);
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    EXPECT_EQ(window_->open_document_count(), 1U);
+}
+
+TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
+    create_window();
+    const std::vector<std::pair<QString, std::string>> menu_items = {
+        {"&Open…", "workbench.action.files.openFile"},
+        {"&Save", "workbench.action.files.save"},
+        {"Save &As…", "workbench.action.files.saveAs"},
+        {"&Close Tab", "workbench.action.closeActiveEditor"},
+        {"&Undo", "undo"},
+        {"&Redo", "redo"},
+        {"Cu&t", "editor.action.clipboardCutAction"},
+        {"&Copy", "editor.action.clipboardCopyAction"},
+        {"&Paste", "editor.action.clipboardPasteAction"},
+        {"Select &All", "editor.action.selectAll"},
+        {"&Find…", "actions.find"},
+        {"Find &Next", "editor.action.nextMatchFindAction"},
+        {"Find Pre&vious", "editor.action.previousMatchFindAction"},
+        {"&Replace…", "editor.action.startFindReplace"},
+    };
+    std::vector<std::string> executed;
+    const auto commands = window_->commands().commands();
+    for (const auto& command : commands) {
+        window_->commands().add(
+            command.id, command.title,
+            [&executed, id = command.id](const json&) { executed.push_back(id); });
+    }
+
+    for (const auto& [text, id] : menu_items) {
+        QAction* found = nullptr;
+        for (QAction* top : window_->menuBar()->actions()) {
+            if (!top->menu()) {
+                continue;
+            }
+            for (QAction* action : top->menu()->actions()) {
+                if (action->text() == text) {
+                    found = action;
+                }
+            }
+        }
+        ASSERT_NE(found, nullptr) << text.toStdString();
+        executed.clear();
+        found->trigger();
+        EXPECT_EQ(executed, std::vector<std::string>{id}) << text.toStdString();
+    }
+}
+
+TEST_F(MainWindowTest, ExtensionsCanRunEditorCommandsByTheirId) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto ids = window_->bridge().host()->commands().command_ids();
+    EXPECT_NE(std::find(ids.begin(), ids.end(), "undo"), ids.end());
+
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
+    type("X");
+    ASSERT_EQ(current_text(), "Xabc");
+    EXPECT_EQ(run("anvil.docs.execute", json::array({"undo"})), nullptr);
+    EXPECT_EQ(current_text(), "abc");
+
+    run("anvil.docs.execute", json::array({"cursorRight", "ignored", 1}));
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{1, 1}));
 }
