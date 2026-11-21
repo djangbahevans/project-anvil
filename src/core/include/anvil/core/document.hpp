@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <expected>
 #include <optional>
 #include <span>
@@ -51,6 +52,9 @@ struct DocumentChange {
 // save it back the way it was loaded.
 class Document {
 public:
+    // The number of undo groups kept unless set_undo_limit() says otherwise.
+    static constexpr std::size_t default_undo_limit = 1000;
+
     explicit Document(Text text = {}, LineEnding line_ending = LineEnding::lf, bool bom = false);
 
     // Fails with ErrorCode::invalid_encoding when `bytes` is not valid UTF-8.
@@ -73,7 +77,9 @@ public:
     }
 
     // True when the text differs from the text at the last mark_saved() (or from loading).
-    // Undoing back to the saved state makes the document clean again.
+    // Undoing back to the saved state makes the document clean again. A saved state whose undo
+    // step was dropped because of the undo limit cannot be undone back to, and the document stays
+    // dirty until the next save.
     bool is_dirty() const;
     void mark_saved();
 
@@ -93,6 +99,16 @@ public:
     // changes.
     std::expected<DocumentChange, Error> apply_edits(std::span<const Edit> edits,
                                                      EditOptions options = {});
+
+    // The most undo groups the history keeps. When an edit makes it longer, whole groups are
+    // dropped from the oldest end, so an undo never reverts half of a typing run. A limit of zero
+    // keeps no history. Redo history is not affected, and a group that returns from it after the
+    // limit was lowered is dropped again when it would exceed the limit. Lowering the limit
+    // drops groups at once; raising it does not bring any back.
+    std::size_t undo_limit() const {
+        return undo_limit_;
+    }
+    void set_undo_limit(std::size_t groups);
 
     bool can_undo() const {
         return !undo_.empty();
@@ -130,14 +146,22 @@ private:
     apply_replacements(const std::vector<Replacement>& replacements);
     std::expected<std::optional<DocumentChange>, Error> replay(bool undoing);
     std::uint64_t current_step_id() const;
+    void drop_groups_over_the_limit();
 
     TextBuffer buffer_;
     SelectionSet selections_;
     LineEnding line_ending_;
     bool bom_;
     std::uint64_t version_ = 1;
-    std::vector<Step> undo_;
-    std::vector<Step> redo_;
+    // Dropping the oldest steps is constant time. Steps of one group are next to each other.
+    std::deque<Step> undo_;
+    std::deque<Step> redo_;
+    std::size_t undo_groups_ = 0;
+    std::size_t undo_limit_ = default_undo_limit;
+    // The identity of the last step dropped from the front of undo_ (0 when none was): the state
+    // the text is in when every kept step has been undone. Without it that state would be named
+    // like the initial one, and a document saved at its start would look clean again.
+    std::uint64_t dropped_step_id_ = 0;
     std::uint64_t next_step_id_ = 1;
     std::uint64_t next_group_id_ = 1;
     std::uint64_t saved_step_id_ = 0;

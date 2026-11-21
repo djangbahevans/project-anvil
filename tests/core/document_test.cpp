@@ -392,6 +392,257 @@ TEST(DocumentDirty, UndoingPastTheSavePointIsDirty) {
     EXPECT_FALSE(document.is_dirty());
 }
 
+// --- bounded undo history ---
+
+namespace {
+
+// Appends `text` as its own undo group.
+void append(Document& document, std::string_view text) {
+    apply(document, {{document.text().size(), document.text().size(), std::string(text)}});
+}
+
+std::size_t undo_depth(Document& document) {
+    std::size_t depth = 0;
+    while (document.undo().value().has_value()) {
+        ++depth;
+    }
+    return depth;
+}
+
+} // namespace
+
+TEST(DocumentUndoLimit, TheDefaultKeepsAThousandGroups) {
+    Document document = document_of("");
+    EXPECT_EQ(Document::default_undo_limit, 1000u);
+    EXPECT_EQ(document.undo_limit(), Document::default_undo_limit);
+    for (int i = 0; i < 1500; ++i) {
+        append(document, "x");
+    }
+    EXPECT_EQ(undo_depth(document), 1000u);
+    EXPECT_EQ(text_of(document), std::string(500, 'x'));
+}
+
+TEST(DocumentUndoLimit, OldestGroupsAreDroppedFirst) {
+    Document document = document_of("");
+    document.set_undo_limit(3);
+    for (const char* piece : {"a", "b", "c", "d", "e"}) {
+        append(document, piece);
+    }
+    ASSERT_EQ(text_of(document), "abcde");
+    EXPECT_EQ(undo_depth(document), 3u);
+    EXPECT_EQ(text_of(document), "ab");
+    EXPECT_FALSE(document.can_undo());
+}
+
+TEST(DocumentUndoLimit, WholeGroupsAreDroppedNeverPartOfOne) {
+    Document document = document_of("");
+    document.set_undo_limit(1);
+    apply(document, {{0, 0, "a"}});
+    apply(document, {{1, 1, "b"}}, EditOptions{.join_previous = true});
+    apply(document, {{2, 2, "c"}}, EditOptions{.join_previous = true});
+    ASSERT_EQ(text_of(document), "abc");
+    // The typing run is one group and the only one, so it is kept whole.
+    EXPECT_EQ(undo_depth(document), 1u);
+    EXPECT_EQ(text_of(document), "");
+
+    redo(document);
+    apply(document, {{3, 3, "!"}});
+    // Now the run is the older group of two and goes entirely.
+    EXPECT_EQ(undo_depth(document), 1u);
+    EXPECT_EQ(text_of(document), "abc");
+}
+
+TEST(DocumentUndoLimit, AGroupLargerThanTheLimitIsKeptWhole) {
+    Document document = document_of("");
+    document.set_undo_limit(1);
+    apply(document, {{0, 0, "a"}});
+    for (std::size_t i = 1; i < 10; ++i) {
+        apply(document, {{i, i, "a"}}, EditOptions{.join_previous = true});
+    }
+    EXPECT_EQ(undo_depth(document), 1u);
+    EXPECT_EQ(text_of(document), "");
+}
+
+TEST(DocumentUndoLimit, JoiningTheNewestGroupDoesNotCountAsANewGroup) {
+    Document document = document_of("");
+    document.set_undo_limit(2);
+    append(document, "a");
+    apply(document, {{1, 1, "b"}});
+    for (std::size_t i = 2; i < 6; ++i) {
+        apply(document, {{i, i, "c"}}, EditOptions{.join_previous = true});
+    }
+    ASSERT_EQ(text_of(document), "abcccc");
+    EXPECT_EQ(undo_depth(document), 2u);
+    EXPECT_EQ(text_of(document), "");
+}
+
+TEST(DocumentUndoLimit, ALimitOfOneKeepsTheLatestGroupOnly) {
+    Document document = document_of("");
+    document.set_undo_limit(1);
+    append(document, "a");
+    append(document, "b");
+    EXPECT_EQ(undo_depth(document), 1u);
+    EXPECT_EQ(text_of(document), "a");
+}
+
+TEST(DocumentUndoLimit, ALimitOfZeroKeepsNoHistoryButEditingWorks) {
+    Document document = document_of("");
+    document.set_undo_limit(0);
+    append(document, "a");
+    apply(document, {{1, 1, "b"}}, EditOptions{.join_previous = true});
+    EXPECT_EQ(text_of(document), "ab");
+    EXPECT_FALSE(document.can_undo());
+    EXPECT_FALSE(document.undo().value().has_value());
+    EXPECT_FALSE(document.can_redo());
+}
+
+TEST(DocumentUndoLimit, WithNoHistoryTheDocumentIsStillDirtyAfterAnEditAndCleanAfterASave) {
+    Document document = document_of("a");
+    document.set_undo_limit(0);
+    EXPECT_FALSE(document.is_dirty());
+    append(document, "b");
+    EXPECT_TRUE(document.is_dirty());
+    document.mark_saved();
+    EXPECT_FALSE(document.is_dirty());
+    append(document, "c");
+    EXPECT_TRUE(document.is_dirty());
+}
+
+TEST(DocumentUndoLimit, LoweringTheLimitDropsTheOldestGroupsAtOnce) {
+    Document document = document_of("");
+    for (const char* piece : {"a", "b", "c", "d"}) {
+        append(document, piece);
+    }
+    document.set_undo_limit(2);
+    EXPECT_EQ(undo_depth(document), 2u);
+    EXPECT_EQ(text_of(document), "ab");
+}
+
+TEST(DocumentUndoLimit, RaisingTheLimitDoesNotBringBackDroppedGroups) {
+    Document document = document_of("");
+    document.set_undo_limit(1);
+    append(document, "a");
+    append(document, "b");
+    document.set_undo_limit(10);
+    append(document, "c");
+    EXPECT_EQ(undo_depth(document), 2u);
+    EXPECT_EQ(text_of(document), "a");
+}
+
+TEST(DocumentUndoLimit, TheRedoHistoryIsNotAffected) {
+    Document document = document_of("");
+    document.set_undo_limit(2);
+    for (const char* piece : {"a", "b", "c", "d"}) {
+        append(document, piece);
+    }
+    undo(document);
+    undo(document);
+    ASSERT_EQ(text_of(document), "ab");
+    document.set_undo_limit(0);
+    EXPECT_FALSE(document.can_undo());
+    redo(document);
+    redo(document);
+    EXPECT_EQ(text_of(document), "abcd");
+    EXPECT_FALSE(document.can_redo());
+}
+
+TEST(DocumentUndoLimit, AGroupRedoneAfterTheLimitWasLoweredIsDroppedAgain) {
+    Document document = document_of("");
+    document.set_undo_limit(3);
+    for (const char* piece : {"a", "b", "c"}) {
+        append(document, piece);
+    }
+    undo(document);
+    undo(document);
+    undo(document);
+    document.set_undo_limit(1);
+    redo(document);
+    redo(document);
+    redo(document);
+    ASSERT_EQ(text_of(document), "abc");
+    EXPECT_EQ(undo_depth(document), 1u);
+    EXPECT_EQ(text_of(document), "ab");
+}
+
+// The state that the document had when it was saved stays reachable only while its undo step
+// is kept. Once it is dropped, undoing everything that is left must not look like the saved
+// state, because the text differs from the saved text.
+TEST(DocumentUndoLimit, UndoingEverythingThatIsLeftAfterDroppingTheSavePointIsDirty) {
+    Document document = document_of("start");
+    document.set_undo_limit(3);
+    document.mark_saved();
+    for (int i = 0; i < 10; ++i) {
+        append(document, "x");
+    }
+    ASSERT_TRUE(document.is_dirty());
+    EXPECT_EQ(undo_depth(document), 3u);
+    EXPECT_NE(text_of(document), "start");
+    EXPECT_TRUE(document.is_dirty());
+}
+
+TEST(DocumentUndoLimit, ASavePointThatIsStillKeptIsReachableByUndo) {
+    Document document = document_of("start");
+    document.set_undo_limit(3);
+    append(document, "1");
+    append(document, "2");
+    document.mark_saved();
+    append(document, "3");
+    append(document, "4");
+    ASSERT_TRUE(document.is_dirty());
+    undo(document);
+    undo(document);
+    EXPECT_EQ(text_of(document), "start12");
+    EXPECT_FALSE(document.is_dirty());
+}
+
+TEST(DocumentUndoLimit, TheSavePointIsTheOldestKeptStateWhenItsStepWasJustDropped) {
+    Document document = document_of("start");
+    document.set_undo_limit(2);
+    append(document, "1");
+    append(document, "2");
+    append(document, "3");
+    document.mark_saved();
+    append(document, "4");
+    append(document, "5");
+    // The two newest groups are kept, so undoing both returns to the saved text.
+    undo(document);
+    undo(document);
+    EXPECT_EQ(text_of(document), "start123");
+    EXPECT_FALSE(document.is_dirty());
+}
+
+TEST(DocumentUndoLimit, SavingAfterTheSavePointWasDroppedMakesTheDocumentCleanAgain) {
+    Document document = document_of("start");
+    document.set_undo_limit(1);
+    document.mark_saved();
+    append(document, "1");
+    append(document, "2");
+    append(document, "3");
+    EXPECT_TRUE(document.is_dirty());
+    document.mark_saved();
+    EXPECT_FALSE(document.is_dirty());
+    undo(document);
+    EXPECT_TRUE(document.is_dirty());
+    redo(document);
+    EXPECT_FALSE(document.is_dirty());
+}
+
+TEST(DocumentUndoLimit, TheDocumentStaysDirtyWhileTheDroppedSavePointIsUndoneAndRedone) {
+    Document document = document_of("");
+    document.set_undo_limit(2);
+    document.mark_saved();
+    for (int i = 0; i < 5; ++i) {
+        append(document, "x");
+    }
+    undo(document);
+    EXPECT_TRUE(document.is_dirty());
+    undo(document);
+    EXPECT_TRUE(document.is_dirty());
+    redo(document);
+    redo(document);
+    EXPECT_TRUE(document.is_dirty());
+}
+
 // --- files ---
 
 TEST(DocumentFile, LoadsAndSavesInTheOriginalFormat) {

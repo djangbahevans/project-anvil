@@ -55,13 +55,36 @@ struct Reference {
     std::string text;
     std::vector<ReferenceStep> undo;
     std::vector<ReferenceStep> redo;
+    // Every step applied on the current branch of the history, including the ones that were
+    // dropped from `undo` because of the limit. The state the text is in is named by the last of
+    // them, so a state that can no longer be reached by undo is never mistaken for another.
+    std::vector<std::uint64_t> applied;
+    std::size_t limit = Document::default_undo_limit;
     std::uint64_t next_id = 1;
     std::uint64_t next_group = 1;
     std::uint64_t saved_id = 0;
     bool sealed = false;
 
     std::uint64_t current_id() const {
-        return undo.empty() ? 0 : undo.back().id;
+        return applied.empty() ? 0 : applied.back();
+    }
+
+    std::size_t undo_groups() const {
+        std::size_t groups = 0;
+        for (std::size_t i = 0; i < undo.size(); ++i) {
+            groups += i == 0 || undo[i].group != undo[i - 1].group;
+        }
+        return groups;
+    }
+
+    // Drops the oldest groups, whole, until at most `limit` remain.
+    void enforce_limit() {
+        while (undo_groups() > limit) {
+            const std::uint64_t group = undo.front().group;
+            while (!undo.empty() && undo.front().group == group) {
+                undo.erase(undo.begin());
+            }
+        }
     }
 
     void edit(const std::vector<Edit>& edits, bool join) {
@@ -74,9 +97,11 @@ struct Reference {
         }
         const bool joined = join && !undo.empty() && !sealed;
         undo.push_back({next_id++, joined ? undo.back().group : next_group++, text, after});
+        applied.push_back(undo.back().id);
         redo.clear();
         sealed = false;
         text = after;
+        enforce_limit();
     }
 
     void undo_group() {
@@ -85,6 +110,7 @@ struct Reference {
             text = undo.back().before;
             redo.push_back(undo.back());
             undo.pop_back();
+            applied.pop_back();
         }
     }
 
@@ -93,8 +119,12 @@ struct Reference {
         while (!redo.empty() && redo.back().group == group) {
             text = redo.back().after;
             undo.push_back(redo.back());
+            applied.push_back(redo.back().id);
             redo.pop_back();
         }
+        // A limit that was lowered while groups waited in the redo history applies when they
+        // come back.
+        enforce_limit();
     }
 
     void save() {
@@ -145,6 +175,7 @@ void expect_matches(const Document& document, const Reference& reference) {
     ASSERT_EQ(document.text().to_string(), reference.text);
     ASSERT_FALSE(document.text().check_invariants().has_value())
         << *document.text().check_invariants();
+    ASSERT_EQ(document.undo_limit(), reference.limit);
     ASSERT_EQ(document.can_undo(), !reference.undo.empty());
     ASSERT_EQ(document.can_redo(), !reference.redo.empty());
     ASSERT_EQ(document.is_dirty(), reference.current_id() != reference.saved_id);
@@ -155,14 +186,24 @@ void expect_matches(const Document& document, const Reference& reference) {
 
 } // namespace
 
+namespace {
+
+// Limits that put eviction at every position: none, a single group, a few, and one that is
+// never reached.
+constexpr std::size_t limits[] = {0, 1, 2, 3, 5, 12, 40, Document::default_undo_limit};
+
+} // namespace
+
 TEST(DocumentModel, RandomOperationsMatchTheReference) {
-    for (unsigned seed = 1; seed <= 8; ++seed) {
+    for (unsigned seed = 1; seed <= 16; ++seed) {
         SCOPED_TRACE("seed " + std::to_string(seed));
         Random random(seed);
 
         Reference reference;
         reference.text = normalize_line_endings(random.text(random.below(6000)));
+        reference.limit = limits[seed % std::size(limits)];
         Document document(*Text::from_utf8(reference.text));
+        document.set_undo_limit(reference.limit);
         ASSERT_NO_FATAL_FAILURE(expect_matches(document, reference));
 
         for (int step = 0; step < 250; ++step) {
@@ -211,6 +252,13 @@ TEST(DocumentModel, RandomOperationsMatchTheReference) {
                 break;
             }
             default: {
+                if (random.below(4) == 0) {
+                    // Changing the limit drops groups at once, and keeps the state names.
+                    reference.limit = limits[random.below(std::size(limits))];
+                    document.set_undo_limit(reference.limit);
+                    reference.enforce_limit();
+                    break;
+                }
                 document.mark_saved();
                 reference.save();
                 const auto cuts = boundaries(reference.text);
