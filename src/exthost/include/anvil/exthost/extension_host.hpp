@@ -23,7 +23,8 @@ struct ExtensionHostOptions {
     std::filesystem::path vscode_dir{};
     // Directories of unpacked extensions to load.
     std::vector<std::filesystem::path> extension_dirs{};
-    // Base directory for extension storage and logs.
+    // Required. The extension host runs in this directory, keeps extension storage in it, and
+    // writes the logs of each session to logs/<session> in it, keeping the newest few sessions.
     std::filesystem::path storage_dir{};
     // Receives the extension host's own messages and everything extensions log. Messages are
     // discarded when unset.

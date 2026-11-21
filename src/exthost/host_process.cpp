@@ -86,11 +86,15 @@ std::expected<std::unique_ptr<HostProcess>, Error> HostProcess::start(const Host
         return std::unexpected(listener.error());
     }
 
-    auto process = platform::Process::spawn(platform::ProcessSpec{
+    platform::ProcessSpec spec{
         options.node_executable,
         {bootstrap.string(), "--type=extensionHost"},
         extension_host_environment(platform::current_environment(), socket_path),
-    });
+    };
+    if (!options.working_directory.empty()) {
+        spec.working_directory = options.working_directory;
+    }
+    auto process = platform::Process::spawn(spec);
     if (!process) {
         return std::unexpected(process.error());
     }

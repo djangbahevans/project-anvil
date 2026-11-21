@@ -1,6 +1,7 @@
 #include "anvil/exthost/extension_host.hpp"
 
 #include "anvil/exthost/init_data.hpp"
+#include "anvil/exthost/session_logs.hpp"
 
 namespace anvil::exthost {
 namespace {
@@ -60,16 +61,30 @@ ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
 
 std::expected<std::unique_ptr<ExtensionHost>, Error>
 ExtensionHost::start(const ExtensionHostOptions& options) {
+    if (options.storage_dir.empty()) {
+        return std::unexpected(
+            Error{ErrorCode::invalid_argument, "the extension host needs a storage directory"});
+    }
+    // Each session logs in a directory of its own, so that a session shows only its own lines and
+    // old logs do not pile up.
+    auto logs = create_session_logs(options.storage_dir / "logs");
+    if (!logs) {
+        return std::unexpected(logs.error());
+    }
     auto init_data = build_init_data(InitDataOptions{
         .app_root = options.vscode_dir,
         .extension_dirs = options.extension_dirs,
         .storage_dir = options.storage_dir,
+        .logs_dir = *logs,
     });
     if (!init_data) {
         return std::unexpected(init_data.error());
     }
+    // The host runs in its storage directory, which the editor has made sure exists, instead of in
+    // whatever directory the editor was started from.
     auto host = HostProcess::start(HostOptions{options.node_executable, options.vscode_dir,
-                                               std::move(*init_data), options.connect_timeout});
+                                               std::move(*init_data), options.connect_timeout,
+                                               options.storage_dir});
     if (!host) {
         return std::unexpected(host.error());
     }

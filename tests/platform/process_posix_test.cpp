@@ -1,6 +1,8 @@
 #include "anvil/platform/process.hpp"
 
 #include <csignal>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
@@ -71,4 +73,42 @@ TEST(CurrentEnvironment, ContainsEntriesOfTheCallingProcess) {
     const auto environment = anvil::platform::current_environment();
     EXPECT_NE(std::find(environment.begin(), environment.end(), "ANVIL_TEST_ENV_ENTRY=present"),
               environment.end());
+}
+
+TEST(Process, RunsInTheGivenWorkingDirectory) {
+    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path()) /
+                           ("anvil-process-cwd-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(directory);
+    const auto output = directory / "cwd.txt";
+    ProcessSpec spec = shell("exec pwd -P > '" + output.string() + "'");
+    spec.working_directory = directory;
+
+    auto process = Process::spawn(spec);
+    ASSERT_TRUE(process.has_value()) << process.error().message;
+    EXPECT_EQ(process->wait(milliseconds(5000)), 0);
+    std::string line;
+    std::getline(std::ifstream(output), line);
+    std::filesystem::remove_all(directory);
+    EXPECT_EQ(line, directory.string());
+}
+
+TEST(Process, WithoutAWorkingDirectoryTheChildKeepsOurs) {
+    const std::string ours = std::filesystem::current_path().string();
+    auto process = Process::spawn(shell("test \"$(pwd -P)\" = '" + ours + "'"));
+    ASSERT_TRUE(process.has_value()) << process.error().message;
+    EXPECT_EQ(process->wait(milliseconds(5000)), 0);
+}
+
+TEST(Process, AWorkingDirectoryThatCannotBeEnteredIsReportedByName) {
+    ProcessSpec spec = shell("exit 0");
+    spec.working_directory = "/nonexistent/anvil-working-directory";
+    const auto process = Process::spawn(spec);
+    ASSERT_FALSE(process.has_value());
+    EXPECT_NE(process.error().message.find("/nonexistent/anvil-working-directory"),
+              std::string::npos)
+        << process.error().message;
+}
+
+TEST(Process, TheCurrentProcessIdIsOurs) {
+    EXPECT_EQ(anvil::platform::current_process_id(), static_cast<std::int64_t>(::getpid()));
 }

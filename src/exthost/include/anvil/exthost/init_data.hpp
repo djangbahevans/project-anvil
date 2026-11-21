@@ -22,8 +22,11 @@ struct InitDataOptions {
     std::filesystem::path app_root{};
     // Directories of unpacked extensions, each containing a package.json.
     std::vector<std::filesystem::path> extension_dirs{};
-    // Base directory for extension global storage, workspace storage and logs.
+    // Base directory for extension global storage and workspace storage, and for logs unless
+    // `logs_dir` is set.
     std::filesystem::path storage_dir{};
+    // Where the extension host writes its log files; `storage_dir`/logs when empty.
+    std::filesystem::path logs_dir{};
 };
 
 // Builds the JSON text of the extension host's initialization data, reading each extension's

@@ -21,6 +21,9 @@ struct HostOptions {
     // JSON text of the extension host's IExtensionHostInitData.
     std::string init_data_json;
     std::chrono::milliseconds connect_timeout{15000};
+    // The extension host's working directory. Without one it inherits the editor's, which may be a
+    // directory that no longer exists; the host then fails to start.
+    std::filesystem::path working_directory{};
 };
 
 // A running extension host process connected to a Session. The caller drives it by calling pump()

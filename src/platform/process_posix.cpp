@@ -62,6 +62,26 @@ std::expected<Process, Error> Process::spawn(const ProcessSpec& spec) {
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    const std::string directory =
+        spec.working_directory ? spec.working_directory->string() : std::string();
+    if (spec.working_directory) {
+        // posix_spawn reports a failure to enter the directory as the same errno as a missing
+        // executable, so a directory that is plainly absent is named before trying.
+        std::error_code ignored;
+        if (!std::filesystem::is_directory(*spec.working_directory, ignored)) {
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(Error{ErrorCode::io_error,
+                                         "cannot start " + executable + ": the working directory " +
+                                             directory + " is not a directory"});
+        }
+        if (const int added = posix_spawn_file_actions_addchdir_np(&actions, directory.c_str());
+            added != 0) {
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(Error{ErrorCode::io_error, "cannot start " + executable +
+                                                                  " in " + directory + ": " +
+                                                                  std::strerror(added)});
+        }
+    }
 
     auto impl = std::make_unique<Impl>();
     const int result =
@@ -69,8 +89,10 @@ std::expected<Process, Error> Process::spawn(const ProcessSpec& spec) {
     posix_spawn_file_actions_destroy(&actions);
     if (result != 0) {
         impl->pid = -1;
-        return std::unexpected(Error{ErrorCode::io_error,
-                                     "cannot start " + executable + ": " + std::strerror(result)});
+        return std::unexpected(
+            Error{ErrorCode::io_error, "cannot start " + executable +
+                                           (directory.empty() ? "" : " in " + directory) + ": " +
+                                           std::strerror(result)});
     }
     return Process(std::move(impl));
 }
