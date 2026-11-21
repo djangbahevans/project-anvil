@@ -30,19 +30,32 @@ using MatchData = std::unique_ptr<pcre2_match_data, Deleter<pcre2_match_data_fre
 using MatchContext = std::unique_ptr<pcre2_match_context, Deleter<pcre2_match_context_free>>;
 using JitStack = std::unique_ptr<pcre2_jit_stack, Deleter<pcre2_jit_stack_free>>;
 
-std::string engine_message(int code) {
+bool is_resource_limit(int code) {
     switch (code) {
     case PCRE2_ERROR_MATCHLIMIT:
     case PCRE2_ERROR_DEPTHLIMIT:
     case PCRE2_ERROR_HEAPLIMIT:
     case PCRE2_ERROR_JIT_STACKLIMIT:
-        return "the regular expression is too complex to run on this text";
+        return true;
     default:
-        break;
+        return false;
+    }
+}
+
+std::string engine_message(int code) {
+    if (is_resource_limit(code)) {
+        return "the regular expression is too complex to run on this text";
     }
     PCRE2_UCHAR buffer[256];
     pcre2_get_error_message(code, buffer, sizeof buffer);
     return reinterpret_cast<const char*>(buffer);
+}
+
+// A failure while matching. Hitting a resource limit depends on the text, not on the pattern,
+// which compiled.
+Error match_error(int code) {
+    return {is_resource_limit(code) ? ErrorCode::limit_exceeded : ErrorCode::invalid_argument,
+            engine_message(code)};
 }
 
 std::size_t char_length(char lead) {
@@ -261,7 +274,7 @@ private:
                 break;
             }
             if (result < 0) {
-                return std::unexpected(Error{ErrorCode::invalid_argument, engine_message(result)});
+                return std::unexpected(match_error(result));
             }
             const PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(data_.get());
             const std::size_t begin = ovector[0];

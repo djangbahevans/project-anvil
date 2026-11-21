@@ -11,6 +11,10 @@ enum class ErrorCode {
     io_error,
     unsupported,
     invalid_argument,
+    // An operation gave up because it exceeded a resource bound that depends on its input, such
+    // as the backtracking limit of a regular expression on a particular text. The same request may
+    // succeed on other input.
+    limit_exceeded,
 };
 
 struct Error {
