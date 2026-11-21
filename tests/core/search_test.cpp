@@ -619,3 +619,34 @@ TEST(SearchReplaceTest, ReplacementForAcceptsAnOverlappedRangeThatScanningWouldS
     EXPECT_EQ(all_matches(search, text), (std::vector<Match>{{0, 2}}));
     EXPECT_TRUE(search.replacement_for(text, {1, 3}, "x")->has_value());
 }
+
+TEST(EscapeRegexTest, EveryCharacterThatIsSpecialIsEscaped) {
+    EXPECT_EQ(escape_regex("a.b*c+d?e"), "a\\.b\\*c\\+d\\?e");
+    EXPECT_EQ(escape_regex("(x)[y]{z}|^$\\"), "\\(x\\)\\[y\\]\\{z\\}\\|\\^\\$\\\\");
+    EXPECT_EQ(escape_regex("plain text é€ 123 _-/#"), "plain text é€ 123 _-/#");
+    EXPECT_EQ(escape_regex(""), "");
+}
+
+TEST(EscapeRegexTest, AnEscapedTextAsARegularExpressionMatchesTheTextItself) {
+    std::mt19937 random(13);
+    static const char* const pieces[] = {"a", "b", ".", "*", "+",  "?", "(", ")", "[", "]", "{",
+                                         "}", "|", "^", "$", "\\", " ", "é", "€", "-", "x"};
+    for (int round = 0; round < 200; ++round) {
+        std::string pattern;
+        for (std::size_t i = 1 + random() % 8; i > 0; --i) {
+            pattern += pieces[random() % std::size(pieces)];
+        }
+        std::string raw;
+        for (int i = 0; i < 40; ++i) {
+            raw += random() % 4 == 0 ? pattern : std::string(pieces[random() % std::size(pieces)]);
+        }
+        const Text text = make_text(raw);
+        const Search literal = make_search({.pattern = pattern, .match_case = true});
+        const Search escaped =
+            make_search({.pattern = escape_regex(pattern), .match_case = true, .regex = true});
+        // A literal search runs across lines and a regular expression does not, but this text
+        // has no line breaks, so the two must agree.
+        EXPECT_EQ(all_matches(escaped, text), all_matches(literal, text))
+            << "pattern '" << pattern << "'";
+    }
+}

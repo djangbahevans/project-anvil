@@ -390,6 +390,19 @@ std::string expand(const std::vector<ReplacementPiece>& pieces, const Found& fou
 
 } // namespace
 
+std::string escape_regex(std::string_view text) {
+    constexpr std::string_view special = "\\^$.|?*+()[]{}";
+    std::string result;
+    result.reserve(text.size());
+    for (const char c : text) {
+        if (special.find(c) != std::string_view::npos) {
+            result += '\\';
+        }
+        result += c;
+    }
+    return result;
+}
+
 std::expected<Search, Error> Search::create(Query query, std::size_t window_bytes) {
     auto impl = std::make_shared<detail::SearchImpl>();
     impl->window_bytes = std::max<std::size_t>(window_bytes, 1);
