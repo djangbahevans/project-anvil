@@ -22,7 +22,6 @@ namespace {
 
 constexpr int text_padding = 6;
 constexpr int gutter_padding = 8;
-constexpr int tab_columns = 4;
 const QColor match_highlight(255, 190, 0, 90);
 
 // Marks clipboard text that was copied from a lone caret and stands for its line, so that a paste
@@ -33,6 +32,58 @@ constexpr const char* line_marker_key = "isFromEmptySelection";
 
 QString to_qstring(const std::string& utf8) {
     return QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
+}
+
+// The families of a CSS-style font list: comma separated, each optionally in quotes.
+QStringList font_families(const QString& list) {
+    QStringList families;
+    for (QString name : list.split(',')) {
+        name = name.trimmed();
+        if (name.size() >= 2 && (name.front() == '\'' || name.front() == '"') &&
+            name.back() == name.front()) {
+            name = name.sliced(1, name.size() - 2).trimmed();
+        }
+        if (!name.isEmpty()) {
+            families << name;
+        }
+    }
+    return families;
+}
+
+// The first installed family of the list, with "monospace" standing for the system's fixed-width
+// font, which is also what an uninstalled list falls back to.
+QFont font_for(const std::string& family_list, int pixel_size) {
+    const QFont fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    QFont font = fixed;
+    const QStringList installed = QFontDatabase::families();
+    for (const QString& family : font_families(to_qstring(family_list))) {
+        if (family.compare(QLatin1String("monospace"), Qt::CaseInsensitive) == 0) {
+            break;
+        }
+        const auto match =
+            std::find_if(installed.begin(), installed.end(), [&](const QString& name) {
+                return name.compare(family, Qt::CaseInsensitive) == 0;
+            });
+        if (match != installed.end()) {
+            font.setFamily(*match);
+            break;
+        }
+    }
+    font.setPixelSize(pixel_size);
+    return font;
+}
+
+// The column that the end of `prefix` is shown at, where a tab advances to the next tab stop.
+std::size_t visual_column(std::string_view prefix, std::size_t tab_size) {
+    std::size_t column = 0;
+    for (const char c : prefix) {
+        if (c == '\t') {
+            column += tab_size - column % tab_size;
+        } else if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u) {
+            ++column;
+        }
+    }
+    return column;
 }
 
 bool is_marked_as_line(const QMimeData* data) {
@@ -66,10 +117,7 @@ struct EditorView::LineLayout {
 };
 
 EditorView::EditorView(QWidget* parent) : QAbstractScrollArea(parent) {
-    QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    font.setPointSize(std::max(font.pointSize(), 11));
-    setFont(font);
-    update_metrics();
+    apply_settings(core::EditorSettings{});
 
     viewport()->setCursor(Qt::IBeamCursor);
     viewport()->setAttribute(Qt::WA_InputMethodEnabled);
@@ -95,6 +143,31 @@ void EditorView::update_metrics() {
     const QFontMetrics metrics(font());
     line_height_ = metrics.lineSpacing();
     char_width_ = std::max(1, metrics.horizontalAdvance(QLatin1Char('M')));
+}
+
+void EditorView::apply_settings(const core::EditorSettings& settings) {
+    // Scroll positions are in pixels, so they are converted to lines and columns and back to keep
+    // the same text in view when the metrics change.
+    const int first_line = verticalScrollBar()->value() / line_height_;
+    const int first_column = horizontalScrollBar()->value() / char_width_;
+    const int previous_char_width = char_width_;
+
+    tab_size_ = static_cast<std::size_t>(settings.tab_size);
+    insert_spaces_ = settings.insert_spaces;
+    const QFont wanted = font_for(settings.font_family, settings.font_size);
+    if (wanted != font()) {
+        setFont(wanted);
+    }
+    update_metrics();
+    // The widest line is only measured while painting, so until the next paint the old width,
+    // scaled to the new font, keeps the horizontal range from collapsing to nothing.
+    max_line_width_ = max_line_width_ * char_width_ / previous_char_width;
+    verticalScrollBar()->setSingleStep(line_height_);
+    horizontalScrollBar()->setSingleStep(char_width_ * 4);
+    update_scroll_bars();
+    verticalScrollBar()->setValue(first_line * line_height_);
+    horizontalScrollBar()->setValue(first_column * char_width_);
+    viewport()->update();
 }
 
 void EditorView::set_document(std::shared_ptr<core::Document> document) {
@@ -155,7 +228,7 @@ std::unique_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line
     }
     QTextOption option;
     option.setWrapMode(QTextOption::NoWrap);
-    option.setTabStopDistance(char_width_ * tab_columns);
+    option.setTabStopDistance(char_width_ * static_cast<qreal>(tab_size_));
     result->layout.setText(result->text);
     result->layout.setFont(font());
     result->layout.setTextOption(option);
@@ -328,11 +401,16 @@ void EditorView::select_all() {
 }
 
 void EditorView::insert_tab() {
+    if (!insert_spaces_) {
+        apply(controller_->type("\t"));
+        return;
+    }
     // Spaces up to the next tab stop of the primary caret.
-    const core::Position position =
-        document_->text().position_at(document_->selections().primary().active);
-    const std::size_t width = tab_columns - position.column % tab_columns;
-    apply(controller_->type(std::string(width, ' ')));
+    const core::Text& text = document_->text();
+    const std::size_t caret = document_->selections().primary().active;
+    const std::size_t line_start = text.line_start(text.position_at(caret).line);
+    const std::size_t column = visual_column(text.slice(line_start, caret - line_start), tab_size_);
+    apply(controller_->type(std::string(tab_size_ - column % tab_size_, ' ')));
 }
 
 void EditorView::keyPressEvent(QKeyEvent* event) {

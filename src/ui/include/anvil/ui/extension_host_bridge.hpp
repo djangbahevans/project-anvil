@@ -63,6 +63,9 @@ public:
     // Shows the document in an editor and makes it the active one.
     void show(const core::Uri& uri);
 
+    // The tab size and indentation style that extensions see on every editor.
+    void set_editor_options(exthost::DocumentsService::EditorOptions options);
+
     void text_changed(const core::Uri& uri, const core::DocumentChange& change);
     void selections_changed(const core::Uri& uri);
     void saved(const core::Uri& uri);

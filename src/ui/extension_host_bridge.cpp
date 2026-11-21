@@ -92,6 +92,12 @@ void ExtensionHostBridge::show(const core::Uri& uri) {
     }
 }
 
+void ExtensionHostBridge::set_editor_options(exthost::DocumentsService::EditorOptions options) {
+    if (host_) {
+        host_->documents().set_editor_options(options);
+    }
+}
+
 void ExtensionHostBridge::text_changed(const core::Uri& uri, const core::DocumentChange& change) {
     if (host_) {
         host_->documents().document_changed(uri, change);

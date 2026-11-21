@@ -1,3 +1,4 @@
+#include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/main_window.hpp"
 
@@ -10,6 +11,8 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSignalSpy>
+#include <QStatusBar>
 #include <QTabBar>
 #include <QTest>
 #include <QTimer>
@@ -40,6 +43,7 @@ protected:
     void create_window(bool with_extension_host = false, bool confirm_unsaved_changes = false) {
         ui::MainWindowOptions options;
         options.confirm_unsaved_changes = confirm_unsaved_changes;
+        options.settings_file = settings_file_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
             const std::filesystem::path node = ANVIL_NODE_EXECUTABLE;
@@ -142,6 +146,7 @@ protected:
     }
 
     std::filesystem::path scratch_;
+    std::filesystem::path settings_file_;
     std::unique_ptr<MainWindow> window_;
     bool prompt_shown_ = false;
 };
@@ -803,4 +808,123 @@ TEST_F(MainWindowTest, NoMenuUsesAnOptionShortcutAsItsMnemonic) {
             EXPECT_NE(mnemonic, QKeySequence(Qt::ALT | key)) << menu->text().toStdString();
         }
     }
+}
+
+// --- settings ---
+
+TEST_F(MainWindowTest, WithoutASettingsFileTheEditorUsesTheDefaults) {
+    settings_file_ = scratch_ / "settings.json";
+    create_window();
+    EXPECT_EQ(window_->view()->font().pixelSize(), platform::editor_defaults().font_size);
+    EXPECT_EQ(window_->current_document()->line_ending(), core::LineEnding::lf);
+    EXPECT_FALSE(std::filesystem::exists(settings_file_));
+}
+
+TEST_F(MainWindowTest, TheSettingsFileDrivesTheEditorAtStartup) {
+    settings_file_ = write("settings.json", R"j({
+        // VS Code's key names
+        "editor.fontSize": 22,
+        "editor.tabSize": 3,
+        "editor.insertSpaces": true,
+        "files.eol": "\r\n",
+    })j");
+    create_window();
+    EXPECT_EQ(window_->view()->font().pixelSize(), 22);
+    EXPECT_EQ(window_->current_document()->line_ending(), core::LineEnding::crlf);
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+    QApplication::sendEvent(window_->view(), &press);
+    EXPECT_EQ(current_text(), "   ");
+}
+
+TEST_F(MainWindowTest, ChangingTheFileChangesTheMetricsWithoutARestartAndKeepsTheCaret) {
+    settings_file_ = write("settings.json", R"j({"editor.fontSize": 14})j");
+    create_window();
+    type("hello");
+    const int height = window_->view()->line_height();
+    const int width = window_->view()->char_width();
+    const auto selections = window_->current_document()->selections();
+
+    write("settings.json", R"j({"editor.fontSize": 30})j");
+    ASSERT_TRUE(wait_until([&] { return window_->view()->line_height() != height; }));
+    EXPECT_GT(window_->view()->line_height(), height);
+    EXPECT_GT(window_->view()->char_width(), width);
+    EXPECT_EQ(window_->current_document()->selections(), selections);
+    EXPECT_EQ(current_text(), "hello");
+}
+
+TEST_F(MainWindowTest, ACorruptFileKeepsThePreviousValuesAndReportsOnceInTheStatusBar) {
+    settings_file_ = write("settings.json", R"j({"editor.fontSize": 20})j");
+    auto logger = std::make_shared<core::RecordingLogger>();
+    ui::MainWindowOptions options;
+    options.settings_file = settings_file_;
+    options.logger = logger;
+    window_ = std::make_unique<MainWindow>(std::move(options));
+    window_->show();
+    QSignalSpy failures(&window_->settings(), &ui::SettingsStore::load_failed);
+    ASSERT_EQ(window_->view()->font().pixelSize(), 20);
+
+    write("settings.json", "{ \"editor.fontSize\": 40,, }");
+    ASSERT_TRUE(wait_until([&] { return failures.count() == 1; }));
+    EXPECT_EQ(window_->view()->font().pixelSize(), 20);
+    const QString shown = window_->statusBar()->currentMessage();
+    EXPECT_TRUE(shown.contains("line 1, column 25")) << shown.toStdString();
+    EXPECT_TRUE(logger->contains(core::LogLevel::error, "line 1, column 25", "settings"));
+
+    window_->statusBar()->clearMessage();
+    write("settings.json", "{ \"editor.fontSize\": 40,, }");
+    QTest::qWait(400);
+    EXPECT_EQ(failures.count(), 1);
+    EXPECT_TRUE(window_->statusBar()->currentMessage().isEmpty());
+    EXPECT_EQ(window_->view()->font().pixelSize(), 20);
+}
+
+TEST_F(MainWindowTest, AWronglyTypedValueKeepsThePreviousValuesAndNamesTheKey) {
+    settings_file_ = write("settings.json", R"j({"editor.fontSize": 20, "editor.tabSize": 2})j");
+    create_window();
+    write("settings.json", R"j({"editor.fontSize": 40, "editor.tabSize": "wide"})j");
+    ASSERT_TRUE(wait_until(
+        [&] { return window_->statusBar()->currentMessage().contains("editor.tabSize"); }));
+    EXPECT_EQ(window_->view()->font().pixelSize(), 20);
+}
+
+TEST_F(MainWindowTest, TheEditorStartsWhenTheSettingsFileIsCorrupt) {
+    settings_file_ = write("settings.json", "not json at all");
+    create_window();
+    EXPECT_EQ(window_->view()->font().pixelSize(), platform::editor_defaults().font_size);
+    EXPECT_TRUE(window_->statusBar()->currentMessage().contains("settings.json"));
+    type("still works");
+    EXPECT_EQ(current_text(), "still works");
+}
+
+TEST_F(MainWindowTest, NewUntitledDocumentsTakeTheirLineEndingFromTheSettings) {
+    settings_file_ = write("settings.json", R"j({"files.eol": "\r\n"})j");
+    create_window();
+    ASSERT_EQ(window_->current_document()->line_ending(), core::LineEnding::crlf);
+
+    write("settings.json", R"j({"files.eol": "\n"})j");
+    ASSERT_TRUE(wait_until(
+        [&] { return window_->settings().editor().line_ending == core::LineEnding::lf; }));
+    ASSERT_TRUE(window_->close_document(0));
+    EXPECT_EQ(window_->current_document()->line_ending(), core::LineEnding::lf);
+}
+
+TEST_F(MainWindowTest, OpenedFilesKeepTheirOwnLineEndingWhateverTheSetting) {
+    settings_file_ = write("settings.json", R"j({"files.eol": "\r\n"})j");
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("lf.txt", "a\nb\n").string())));
+    EXPECT_EQ(window_->current_document()->line_ending(), core::LineEnding::lf);
+}
+
+TEST_F(MainWindowTest, ExtensionsSeeTheTabSizeAndInsertSpacesFromTheSettings) {
+    settings_file_ =
+        write("settings.json", R"j({"editor.tabSize": 2, "editor.insertSpaces": false})j");
+    create_window(true);
+    json active = run("anvil.docs.active");
+    ASSERT_TRUE(active.contains("options")) << active.dump();
+    EXPECT_EQ(active["options"]["tabSize"], 2);
+    EXPECT_EQ(active["options"]["insertSpaces"], false);
+
+    write("settings.json", R"j({"editor.tabSize": 6, "editor.insertSpaces": true})j");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["options"]["tabSize"] == 6; }));
+    EXPECT_EQ(run("anvil.docs.active")["options"]["insertSpaces"], true);
 }

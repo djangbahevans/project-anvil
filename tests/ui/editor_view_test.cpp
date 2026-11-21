@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImage>
 #include <QKeyEvent>
@@ -512,4 +513,160 @@ TEST_F(EditorViewTest, ALineCopiedFromACaretPastesIntoAnEmptyDocument) {
     ASSERT_EQ(text(), "");
     view_.paste();
     EXPECT_EQ(text(), "only\n");
+}
+
+namespace {
+
+core::EditorSettings settings(int font_size = 14, int tab_size = 4, bool insert_spaces = true,
+                              std::string font_family = "") {
+    core::EditorSettings result;
+    result.font_size = font_size;
+    result.tab_size = tab_size;
+    result.insert_spaces = insert_spaces;
+    result.font_family = std::move(font_family);
+    return result;
+}
+
+} // namespace
+
+TEST_F(EditorViewTest, TheFontSizeSetsTheLineHeightAndTheCharacterWidth) {
+    open("abc");
+    view_.apply_settings(settings(12));
+    const int small_height = view_.line_height();
+    const int small_width = view_.char_width();
+    EXPECT_EQ(view_.font().pixelSize(), 12);
+
+    view_.apply_settings(settings(30));
+    EXPECT_EQ(view_.font().pixelSize(), 30);
+    EXPECT_GT(view_.line_height(), small_height);
+    EXPECT_GT(view_.char_width(), small_width);
+}
+
+TEST_F(EditorViewTest, ChangingTheFontKeepsTheCaretSelectionAndTopLine) {
+    std::string lines;
+    for (int i = 0; i < 300; ++i) {
+        lines += "line " + std::to_string(i) + (i < 299 ? "\n" : "");
+    }
+    open(lines);
+    view_.apply_settings(settings(14));
+    view_.select_range({20, 30});
+    view_.verticalScrollBar()->setValue(100 * view_.line_height());
+    const auto selections = document_->selections();
+    const int top_line_before = view_.verticalScrollBar()->value() / view_.line_height();
+
+    view_.apply_settings(settings(28));
+    EXPECT_EQ(document_->selections(), selections);
+    EXPECT_EQ(view_.verticalScrollBar()->value() / view_.line_height(), top_line_before);
+    EXPECT_EQ(view_.verticalScrollBar()->value() % view_.line_height(), 0);
+    EXPECT_EQ(view_.verticalScrollBar()->singleStep(), view_.line_height());
+}
+
+TEST_F(EditorViewTest, ChangingTheFontKeepsTheHorizontalScrollPosition) {
+    open(std::string(400, 'x'));
+    view_.apply_settings(settings(14));
+    view_.horizontalScrollBar()->setValue(50 * view_.char_width());
+    view_.apply_settings(settings(28));
+    EXPECT_EQ(view_.horizontalScrollBar()->value() / view_.char_width(), 50);
+}
+
+TEST_F(EditorViewTest, TheScrollRangeFollowsTheLineHeight) {
+    open(std::string(200, '\n'));
+    view_.apply_settings(settings(14));
+    const int before = view_.verticalScrollBar()->maximum();
+    view_.apply_settings(settings(40));
+    EXPECT_GT(view_.verticalScrollBar()->maximum(), before);
+}
+
+TEST_F(EditorViewTest, AFontFamilyThatIsNotInstalledFallsBackToTheFixedFont) {
+    open("abc");
+    view_.apply_settings(settings(14, 4, true, "No Such Family Anvil, 'Neither This One'"));
+    EXPECT_EQ(view_.font().family(), QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+}
+
+TEST_F(EditorViewTest, AnInstalledFamilyInTheListIsUsedInstead) {
+    const QStringList installed = QFontDatabase::families();
+    if (installed.isEmpty()) {
+        GTEST_SKIP() << "no fonts are installed";
+    }
+    open("abc");
+    const std::string list =
+        "'No Such Family Anvil', \"" + installed.first().toLower().toStdString() + "\", monospace";
+    view_.apply_settings(settings(14, 4, true, list));
+    EXPECT_EQ(view_.font().family(), installed.first());
+}
+
+TEST_F(EditorViewTest, MonospaceStandsForTheFixedFont) {
+    const QStringList installed = QFontDatabase::families();
+    if (installed.isEmpty()) {
+        GTEST_SKIP() << "no fonts are installed";
+    }
+    open("abc");
+    view_.apply_settings(
+        settings(14, 4, true, "monospace, '" + installed.first().toStdString() + "'"));
+    EXPECT_EQ(view_.font().family(), QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+}
+
+TEST_F(EditorViewTest, TheTabSizeSetsTheWidthOfATabCharacter) {
+    open("\tx");
+    view_.apply_settings(settings(14, 4));
+    const int four = view_.cursor_rect(1).x() - view_.cursor_rect(0).x();
+    EXPECT_EQ(four, 4 * view_.char_width());
+    view_.apply_settings(settings(14, 8));
+    EXPECT_EQ(view_.cursor_rect(1).x() - view_.cursor_rect(0).x(), 8 * view_.char_width());
+}
+
+TEST_F(EditorViewTest, TabInsertsSpacesUpToTheNextMultipleOfTheTabSize) {
+    struct Case {
+        int tab_size;
+        std::string line;
+        std::size_t caret;
+        std::string expected;
+    };
+    for (const Case& c : std::vector<Case>{
+             {4, "", 0, "    "},
+             {4, "a", 1, "a   "},
+             {4, "ab", 2, "ab  "},
+             {4, "abc", 3, "abc "},
+             {4, "abcd", 4, "abcd    "},
+             {4, "abcde", 5, "abcde   "},
+             {2, "a", 1, "a "},
+             {2, "ab", 2, "ab  "},
+             {8, "abc", 3, "abc     "},
+             {1, "abc", 3, "abc "},
+             {4, "\xC3\xA9", 2, "\xC3\xA9   "},
+         }) {
+        open(c.line);
+        view_.apply_settings(settings(14, c.tab_size, true));
+        view_.select_range(core::Selection::caret(c.caret));
+        key(Qt::Key_Tab);
+        EXPECT_EQ(text(), c.expected) << "tab size " << c.tab_size << ", line '" << c.line << "'";
+    }
+}
+
+TEST_F(EditorViewTest, TabCountsATabCharacterAsAdvancingToTheNextTabStop) {
+    open("\tab");
+    view_.apply_settings(settings(14, 4, true));
+    view_.select_range(core::Selection::caret(3));
+    key(Qt::Key_Tab);
+    EXPECT_EQ(text(), "\tab  ");
+}
+
+TEST_F(EditorViewTest, TabInsertsATabCharacterWhenSpacesAreTurnedOff) {
+    for (const std::size_t caret : {0u, 1u, 2u, 3u}) {
+        open("abc");
+        view_.apply_settings(settings(14, 4, false));
+        view_.select_range(core::Selection::caret(caret));
+        key(Qt::Key_Tab);
+        std::string expected = "abc";
+        expected.insert(caret, "\t");
+        EXPECT_EQ(text(), expected);
+    }
+}
+
+TEST_F(EditorViewTest, TabFollowsTheLatestSettings) {
+    open("");
+    view_.apply_settings(settings(14, 2, false));
+    view_.apply_settings(settings(14, 3, true));
+    key(Qt::Key_Tab);
+    EXPECT_EQ(text(), "   ");
 }
