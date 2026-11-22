@@ -7,8 +7,10 @@ add_library(anvil_ui STATIC
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/find_bar.hpp
   include/anvil/ui/main_window.hpp
+  include/anvil/ui/quick_pick.hpp
   include/anvil/ui/settings_store.hpp
   main_window.cpp
+  quick_pick.cpp
   settings_store.cpp
 )
 add_library(anvil::ui ALIAS anvil_ui)

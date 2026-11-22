@@ -1,0 +1,344 @@
+#include "anvil/ui/quick_pick.hpp"
+
+#include <QAbstractItemModel>
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListView>
+#include <QSignalSpy>
+#include <QTest>
+#include <QVBoxLayout>
+#include <gtest/gtest.h>
+#include <memory>
+
+using anvil::core::MatchRange;
+using anvil::ui::QuickPick;
+using anvil::ui::QuickPickItem;
+using Ranges = std::vector<MatchRange>;
+
+namespace {
+
+// Sanitizers slow code down several times over, so the time limit applies to plain builds only.
+#if defined(__SANITIZE_ADDRESS__)
+constexpr bool timing_is_meaningful = false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr bool timing_is_meaningful = false;
+#else
+constexpr bool timing_is_meaningful = true;
+#endif
+#else
+constexpr bool timing_is_meaningful = true;
+#endif
+
+class QuickPickTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        host_ = std::make_unique<QWidget>();
+        host_->resize(900, 600);
+        auto* layout = new QVBoxLayout(host_.get());
+        other_ = new QLineEdit(host_.get());
+        second_ = new QLineEdit(host_.get());
+        layout->addWidget(other_);
+        layout->addWidget(second_);
+        layout->addStretch();
+        pick_ = new QuickPick(host_.get());
+        pick_->set_items(sample_items());
+        host_->show();
+        host_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(host_.get()));
+    }
+    void TearDown() override {
+        host_.reset();
+    }
+
+    static std::vector<QuickPickItem> items_of(const std::vector<QString>& labels) {
+        std::vector<QuickPickItem> items;
+        for (const QString& label : labels) {
+            items.push_back({label, {}, {}, {}});
+        }
+        return items;
+    }
+    static std::vector<QuickPickItem> sample_items() {
+        return items_of({"Format Document", "Open File…", "Open Folder…", "Save As…", "Save",
+                         "Toggle Terminal", "Go to Line", "Save All"});
+    }
+
+    void type(const QString& text) {
+        QTest::keyClicks(pick_->filter_field(), text);
+    }
+    void press(Qt::Key key) {
+        QTest::keyClick(pick_->filter_field(), key);
+    }
+    int current_row() const {
+        return pick_->list()->currentIndex().row();
+    }
+    QString label_at(std::size_t row) const {
+        return pick_->list()->model()->index(static_cast<int>(row), 0).data().toString();
+    }
+
+    std::unique_ptr<QWidget> host_;
+    QLineEdit* other_ = nullptr;
+    QLineEdit* second_ = nullptr;
+    QuickPick* pick_ = nullptr;
+};
+
+} // namespace
+
+TEST_F(QuickPickTest, ShowsEveryItemInTheOrderGivenWhenThereIsNoFilter) {
+    EXPECT_TRUE(pick_->isHidden());
+    pick_->open();
+    EXPECT_TRUE(pick_->isVisible());
+    EXPECT_EQ(pick_->shown_items(), (std::vector<std::size_t>{0, 1, 2, 3, 4, 5, 6, 7}));
+    EXPECT_EQ(current_row(), 0);
+    EXPECT_TRUE(pick_->filter_field()->hasFocus());
+}
+
+TEST_F(QuickPickTest, FiltersAndRanksAsTheUserTypes) {
+    pick_->open();
+    type("op");
+    ASSERT_EQ(pick_->shown_items().size(), 2U);
+    EXPECT_EQ(label_at(0), "Open File…");
+    EXPECT_EQ(label_at(1), "Open Folder…");
+    EXPECT_EQ(pick_->label_highlights(0), (Ranges{{0, 2}}));
+    EXPECT_EQ(current_row(), 0);
+
+    pick_->filter_field()->clear();
+    type("sav");
+    EXPECT_EQ(label_at(0), "Save");
+    EXPECT_EQ(pick_->shown_items().size(), 3U);
+
+    pick_->filter_field()->clear();
+    type("tt");
+    ASSERT_EQ(pick_->shown_items().size(), 2U);
+    EXPECT_EQ(label_at(0), "Toggle Terminal");
+    EXPECT_EQ(pick_->label_highlights(0), (Ranges{{0, 1}, {7, 8}}));
+    EXPECT_EQ(label_at(1), "Format Document");
+}
+
+TEST_F(QuickPickTest, ADescriptionIsMatchedToo) {
+    pick_->set_items({{"Toggle Terminal", "View", {}, {}}, {"Save", "File", {}, {}}});
+    pick_->open();
+    type("file");
+    ASSERT_EQ(pick_->shown_items().size(), 1U);
+    EXPECT_EQ(pick_->shown_items().front(), 1U);
+}
+
+TEST_F(QuickPickTest, ShowsAMessageWhenNothingMatches) {
+    pick_->set_empty_message("No matching commands");
+    pick_->open();
+    type("zzz");
+    EXPECT_TRUE(pick_->shown_items().empty());
+    EXPECT_TRUE(pick_->list()->isHidden());
+    bool shown = false;
+    for (const QLabel* label : pick_->findChildren<QLabel*>()) {
+        shown = shown || (label->text() == "No matching commands" && label->isVisible());
+    }
+    EXPECT_TRUE(shown);
+
+    pick_->filter_field()->clear();
+    EXPECT_FALSE(pick_->list()->isHidden());
+}
+
+TEST_F(QuickPickTest, AnIgnoredPrefixIsNotMatched) {
+    pick_->set_ignored_prefix(">");
+    pick_->open(">");
+    EXPECT_EQ(pick_->shown_items().size(), 8U);
+    EXPECT_EQ(pick_->filter_field()->text(), ">");
+    type("open");
+    EXPECT_EQ(pick_->shown_items().size(), 2U);
+    EXPECT_EQ(pick_->label_highlights(0), (Ranges{{0, 4}}));
+}
+
+TEST_F(QuickPickTest, UpAndDownMoveTheSelectionAndWrapAround) {
+    pick_->open();
+    press(Qt::Key_Down);
+    EXPECT_EQ(current_row(), 1);
+    press(Qt::Key_Up);
+    EXPECT_EQ(current_row(), 0);
+    press(Qt::Key_Up);
+    EXPECT_EQ(current_row(), 7);
+    press(Qt::Key_Down);
+    EXPECT_EQ(current_row(), 0);
+}
+
+TEST_F(QuickPickTest, PageKeysMoveByAPageAndStopAtTheEnds) {
+    std::vector<QString> labels;
+    for (int i = 0; i < 100; ++i) {
+        labels.push_back(QString("Item %1").arg(i));
+    }
+    pick_->set_items(items_of(labels));
+    pick_->open();
+    press(Qt::Key_PageDown);
+    const int page = current_row();
+    EXPECT_GT(page, 3);
+    EXPECT_LT(page, 100);
+    press(Qt::Key_PageDown);
+    EXPECT_EQ(current_row(), 2 * page);
+    press(Qt::Key_PageUp);
+    press(Qt::Key_PageUp);
+    press(Qt::Key_PageUp);
+    EXPECT_EQ(current_row(), 0);
+    for (int i = 0; i < 20; ++i) {
+        press(Qt::Key_PageDown);
+    }
+    EXPECT_EQ(current_row(), 99);
+}
+
+TEST_F(QuickPickTest, EnterChoosesTheSelectedItemAndClosesThePopup) {
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    QSignalSpy cancelled(pick_, &QuickPick::cancelled);
+    pick_->open();
+    type("save");
+    press(Qt::Key_Down);
+    ASSERT_EQ(pick_->shown_items().size(), 3U);
+    const std::size_t second = pick_->shown_items()[1];
+    press(Qt::Key_Return);
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.front().front().value<std::size_t>(), second);
+    EXPECT_EQ(cancelled.count(), 0);
+    EXPECT_TRUE(pick_->isHidden());
+}
+
+TEST_F(QuickPickTest, EscapeClosesThePopupWithoutAChoice) {
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    QSignalSpy cancelled(pick_, &QuickPick::cancelled);
+    pick_->open();
+    press(Qt::Key_Escape);
+    EXPECT_TRUE(pick_->isHidden());
+    EXPECT_EQ(accepted.count(), 0);
+    EXPECT_EQ(cancelled.count(), 1);
+}
+
+TEST_F(QuickPickTest, EnterWithNothingShownDoesNotChoose) {
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    pick_->open();
+    type("zzz");
+    press(Qt::Key_Return);
+    EXPECT_EQ(accepted.count(), 0);
+    EXPECT_TRUE(pick_->isVisible());
+}
+
+TEST_F(QuickPickTest, AClickChoosesAnItem) {
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    pick_->open();
+    const QModelIndex index = pick_->list()->model()->index(2, 0);
+    QTest::mouseClick(pick_->list()->viewport(), Qt::LeftButton, {},
+                      pick_->list()->visualRect(index).center());
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.front().front().value<std::size_t>(), 2U);
+    EXPECT_TRUE(pick_->isHidden());
+}
+
+TEST_F(QuickPickTest, TheFocusReturnsToWhereItWasWhenThePopupCloses) {
+    second_->setFocus();
+    ASSERT_TRUE(second_->hasFocus());
+    pick_->open();
+    EXPECT_FALSE(second_->hasFocus());
+    press(Qt::Key_Escape);
+    EXPECT_TRUE(second_->hasFocus());
+
+    pick_->open();
+    press(Qt::Key_Return);
+    EXPECT_TRUE(second_->hasFocus());
+}
+
+TEST_F(QuickPickTest, TheFocusLeavingThePopupClosesIt) {
+    QSignalSpy cancelled(pick_, &QuickPick::cancelled);
+    pick_->open();
+    other_->setFocus();
+    EXPECT_TRUE(pick_->isHidden());
+    EXPECT_EQ(cancelled.count(), 1);
+    EXPECT_TRUE(other_->hasFocus());
+}
+
+TEST_F(QuickPickTest, ReplacingTheItemsWhileOpenFiltersThemAgain) {
+    pick_->open();
+    type("open");
+    ASSERT_EQ(pick_->shown_items().size(), 2U);
+    pick_->set_items(items_of({"Open Recent", "Close", "Reopen Closed Editor"}));
+    EXPECT_EQ(pick_->shown_items(), (std::vector<std::size_t>{0, 2}));
+}
+
+TEST_F(QuickPickTest, SitsAtTheTopCenterOfTheWindowNoWiderThanItsLimit) {
+    pick_->set_top_offset(24);
+    pick_->open();
+    EXPECT_EQ(pick_->width(), 600);
+    EXPECT_EQ(pick_->y(), 24);
+    EXPECT_NEAR(pick_->x() + pick_->width() / 2, host_->width() / 2, 1);
+
+    host_->resize(400, 600);
+    QApplication::processEvents();
+    EXPECT_EQ(pick_->width(), 400 - 16);
+    EXPECT_NEAR(pick_->x() + pick_->width() / 2, host_->width() / 2, 1);
+}
+
+TEST_F(QuickPickTest, TheListFitsItsRowsAndIsCappedByTheWindowHeight) {
+    pick_->set_items(items_of({"One", "Two", "Three"}));
+    pick_->open();
+    EXPECT_EQ(pick_->list()->height(), 3 * QuickPick::row_height);
+
+    std::vector<QString> many;
+    for (int i = 0; i < 500; ++i) {
+        many.push_back(QString::number(i));
+    }
+    pick_->set_items(items_of(many));
+    EXPECT_LE(pick_->list()->height(), static_cast<int>(host_->height() * 0.4) + 6);
+    EXPECT_GT(pick_->list()->height(), 5 * QuickPick::row_height);
+    EXPECT_LT(pick_->y() + pick_->height(), host_->height());
+}
+
+TEST_F(QuickPickTest, ADetailMakesItsRowTwoLinesHigh) {
+    pick_->set_items({{"One", {}, "detail of one", {}}, {"Two", {}, {}, {}}});
+    pick_->open();
+    EXPECT_EQ(pick_->list()->sizeHintForRow(0), 2 * QuickPick::row_height);
+    EXPECT_EQ(pick_->list()->sizeHintForRow(1), QuickPick::row_height);
+    EXPECT_EQ(pick_->list()->height(), 3 * QuickPick::row_height);
+}
+
+TEST_F(QuickPickTest, FiltersFiveThousandItemsWithoutNoticeableDelay) {
+    std::vector<QString> labels;
+    const char* categories[] = {"View", "File", "Git", "Preferences", "Debug", "Terminal"};
+    const char* verbs[] = {"Toggle", "Open", "Close", "Focus", "Move", "Select", "Delete"};
+    for (int i = 0; i < 5000; ++i) {
+        labels.push_back(
+            QString("%1: %2 Something %3").arg(categories[i % 6], verbs[(i / 6) % 7]).arg(i));
+    }
+    pick_->set_items(items_of(labels));
+    pick_->open();
+
+    qint64 slowest = 0;
+    for (const QString& query : {QString("t"), QString("to"), QString("tog"), QString("togg"),
+                                 QString("toggle f"), QString("toggle fi")}) {
+        pick_->filter_field()->clear();
+        QElapsedTimer timer;
+        timer.start();
+        pick_->filter_field()->setText(query);
+        QApplication::processEvents();
+        slowest = std::max(slowest, timer.elapsed());
+        EXPECT_FALSE(pick_->shown_items().empty()) << query.toStdString();
+    }
+    std::printf("[ measured ] slowest filter of 5000 items: %lld ms\n",
+                static_cast<long long>(slowest));
+    if (timing_is_meaningful) {
+        EXPECT_LT(slowest, 500);
+    }
+}
+
+TEST_F(QuickPickTest, RendersTheList) {
+    pick_->set_items({{"Format Document", {}, {}, "Shift+Alt+F"},
+                      {"Open File…", {}, {}, "Ctrl+O"},
+                      {"Open Folder…", "File", "Opens a folder in the explorer", "Ctrl+K Ctrl+O"},
+                      {"Save", {}, {}, "Ctrl+S"},
+                      {"Toggle Terminal", {}, {}, {}}});
+    pick_->set_ignored_prefix(">");
+    pick_->set_top_offset(10);
+    pick_->open(">op");
+    QApplication::processEvents();
+    const QImage image = host_->grab().toImage();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/quick_pick.png");
+    }
+}
