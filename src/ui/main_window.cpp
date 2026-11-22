@@ -5,10 +5,10 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -53,6 +53,15 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     tabs_->setFocusPolicy(Qt::NoFocus);
     view_ = new EditorView(central);
     find_bar_ = new FindBar(view_, central);
+    palette_ = new QuickPick(this);
+    palette_->set_ignored_prefix(">");
+    palette_->set_placeholder(tr("Type the name of a command to run"));
+    palette_->set_empty_message(tr("No matching commands"));
+    connect(palette_, &QuickPick::accepted, this, [this](std::size_t item) {
+        if (item < palette_ids_.size()) {
+            run_palette_command(palette_ids_[item]);
+        }
+    });
     layout->addWidget(tabs_);
     layout->addWidget(find_bar_);
     layout->addWidget(view_, 1);
@@ -169,6 +178,8 @@ void MainWindow::register_commands() {
     add("workbench.action.files.saveAs", tr("Save As…"), [this] { save_as_dialog(); });
     add("workbench.action.closeActiveEditor", tr("Close Editor"),
         [this] { close_document(current_); });
+    add("workbench.action.showCommands", tr("Show All Commands"),
+        [this] { show_command_palette(); });
 }
 
 void MainWindow::share_commands_with_extensions() {
@@ -218,8 +229,10 @@ void MainWindow::build_menus() {
                     run("editor.action.startFindReplace"));
 
     QMenu* commands = menuBar()->addMenu(tr("Comm&ands"));
-    commands->addAction(tr("&Run Command…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this,
-                        &MainWindow::run_command);
+    QAction* show_commands =
+        commands->addAction(tr("&Show All Commands…"), this, run("workbench.action.showCommands"));
+    show_commands->setShortcuts(
+        {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), QKeySequence(Qt::Key_F1)});
 
     window_menu_ = menuBar()->addMenu(tr("Wi&ndow"));
     connect(window_menu_, &QMenu::aboutToShow, this, [this] {
@@ -443,34 +456,69 @@ void MainWindow::open_dialog() {
     }
 }
 
-void MainWindow::run_command() {
-    if (!bridge_.running()) {
-        statusBar()->showMessage(tr("No extension host is running."), 5000);
+void MainWindow::show_command_palette() {
+    if (QApplication::activeModalWidget()) {
         return;
     }
-    QStringList ids;
-    for (const std::string& id : bridge_.host()->commands().command_ids()) {
-        if (!id.starts_with("_")) {
-            ids << QString::fromStdString(id);
+    struct Entry {
+        std::string id;
+        QString title;
+    };
+    std::vector<Entry> entries;
+    for (const CommandRegistry::Command& command : commands_.commands()) {
+        entries.push_back({command.id, QString::fromStdString(command.title)});
+    }
+    if (bridge_.running()) {
+        for (const std::string& id : bridge_.host()->commands().extension_commands()) {
+            if (!id.starts_with("_") && !commands_.find(id)) {
+                entries.push_back({id, QString::fromStdString(id)});
+            }
         }
     }
-    if (ids.isEmpty()) {
-        statusBar()->showMessage(tr("No commands are available."), 5000);
+    std::ranges::sort(entries, [](const Entry& a, const Entry& b) {
+        return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
+    });
+    for (auto recent = recent_commands_.rbegin(); recent != recent_commands_.rend(); ++recent) {
+        const auto found = std::ranges::find(entries, *recent, &Entry::id);
+        if (found != entries.end()) {
+            std::rotate(entries.begin(), found, found + 1);
+        }
+    }
+
+    palette_ids_.clear();
+    std::vector<QuickPickItem> items;
+    for (Entry& entry : entries) {
+        palette_ids_.push_back(std::move(entry.id));
+        items.push_back({entry.title, {}, {}, {}});
+    }
+    palette_->set_items(std::move(items));
+    palette_->set_top_offset(menuBar()->height());
+    palette_->open(">");
+}
+
+void MainWindow::run_palette_command(const std::string& id) {
+    if (QApplication::activeModalWidget()) {
         return;
     }
-    bool accepted = false;
-    const QString id =
-        QInputDialog::getItem(this, tr("Run Command"), tr("Command:"), ids, 0, false, &accepted);
-    if (!accepted) {
-        return;
+    std::erase(recent_commands_, id);
+    recent_commands_.insert(recent_commands_.begin(), id);
+    constexpr std::size_t remembered = 30;
+    if (recent_commands_.size() > remembered) {
+        recent_commands_.resize(remembered);
     }
-    bridge_.host()->commands().execute(
-        id.toStdString(), "[]", [this, id](exthost::CallResult result) {
-            const QString shown =
-                result ? (*result ? QString::fromStdString(**result) : tr("done"))
-                       : tr("failed: %1").arg(QString::fromStdString(result.error()));
-            statusBar()->showMessage(tr("%1: %2").arg(id, shown), 8000);
+
+    if (bridge_.running()) {
+        bridge_.host()->commands().execute(id, "[]", [this, id](exthost::CallResult result) {
+            if (!result) {
+                statusBar()->showMessage(
+                    tr("%1 failed: %2")
+                        .arg(QString::fromStdString(id), QString::fromStdString(result.error())),
+                    8000);
+            }
         });
+    } else if (!commands_.execute(id)) {
+        statusBar()->showMessage(tr("Command %1 not found").arg(QString::fromStdString(id)), 5000);
+    }
 }
 
 void MainWindow::on_text_changed(const core::DocumentChange& change) {
