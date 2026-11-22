@@ -84,6 +84,16 @@ TEST(EditorSettings, ABlankFontFamilyKeepsTheDefault) {
               "Mono");
 }
 
+TEST(EditorSettings, TheColorThemeDefaultsToVsCodesDefaultAndIsReadFromTheSettings) {
+    EXPECT_EQ(read("{}")->color_theme, "Dark 2026");
+    EXPECT_EQ(read("{}", {"f", 14, LineEnding::lf, "Light 2026"})->color_theme, "Light 2026");
+    EXPECT_EQ(read(R"j({"workbench.colorTheme": "Dark Modern"})j")->color_theme, "Dark Modern");
+    EXPECT_EQ(read(R"j({"workbench": {"colorTheme": "Light+"}})j")->color_theme, "Light+");
+    EXPECT_EQ(read(R"j({"workbench.colorTheme": " "})j", {"f", 14, LineEnding::lf, "Light 2026"})
+                  ->color_theme,
+              "Light 2026");
+}
+
 TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
     for (const auto& [text, key] : std::vector<std::pair<std::string, std::string>>{
              {R"j({"editor.fontFamily": 3})j", "editor.fontFamily"},
@@ -91,6 +101,7 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"editor.tabSize": "4"})j", "editor.tabSize"},
              {R"j({"editor.tabSize": 2.5})j", "editor.tabSize"},
              {R"j({"editor.insertSpaces": "yes"})j", "editor.insertSpaces"},
+             {R"j({"workbench.colorTheme": 5})j", "workbench.colorTheme"},
              {R"j({"files.eol": 1})j", "files.eol"},
              {R"j({"files.eol": "\r"})j", "files.eol"},
          }) {
@@ -110,7 +121,7 @@ TEST(EditorSettings, TheErrorNamesEveryOffendingKey) {
 }
 
 TEST(EditorSettings, UnrelatedKeysDoNotMatter) {
-    const auto result = read(R"j({"workbench.colorTheme": 5, "editor.rulers": "no"})j");
+    const auto result = read(R"j({"workbench.iconTheme": 5, "editor.rulers": "no"})j");
     EXPECT_TRUE(result.has_value());
 }
 

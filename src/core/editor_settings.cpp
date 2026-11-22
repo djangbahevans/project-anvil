@@ -25,6 +25,7 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
     result.font_family = defaults.font_family;
     result.font_size = defaults.font_size;
     result.line_ending = defaults.auto_line_ending;
+    result.color_theme = defaults.color_theme;
     std::vector<std::string> problems;
 
     if (settings.contains("editor.fontFamily")) {
@@ -55,6 +56,15 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             result.insert_spaces = *insert;
         } else {
             problems.emplace_back("editor.insertSpaces must be true or false");
+        }
+    }
+    if (settings.contains("workbench.colorTheme")) {
+        if (const auto theme = settings.get<std::string>("workbench.colorTheme")) {
+            if (!is_blank(*theme)) {
+                result.color_theme = *theme;
+            }
+        } else {
+            problems.emplace_back("workbench.colorTheme must be a string");
         }
     }
     if (settings.contains("files.eol")) {
