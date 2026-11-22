@@ -346,6 +346,52 @@ TEST_F(EditorLayoutTest, MovingATabChecksItsArguments) {
     EXPECT_FALSE(layout_.move_tab(id(77), 0, g, 0));
 }
 
+TEST_F(EditorLayoutTest, ReplacingADocumentKeepsItsTabInPlaceAndActive) {
+    const GroupId g = layout_.focused();
+    open(g, {"a", "b", "c"});
+    ASSERT_TRUE(layout_.activate(g, 1));
+    EXPECT_EQ(layout_.replace_document(doc("b"), doc("renamed")), 1U);
+    EXPECT_EQ(tabs(g), (Names{"a", "renamed", "c"}));
+    EXPECT_EQ(layout_.group(g)->active, 1U);
+    EXPECT_TRUE(layout_.locations(doc("b")).empty());
+    expect_consistent();
+}
+
+TEST_F(EditorLayoutTest, ReplacingADocumentChangesItInEveryGroupThatHasIt) {
+    const GroupId first = layout_.focused();
+    open(first, {"a", "b"});
+    const GroupId second = *layout_.split(first, Direction::right);
+    open(second, {"b", "x"});
+    recorder_.events.clear();
+    EXPECT_EQ(layout_.replace_document(doc("b"), doc("c")), 2U);
+    EXPECT_EQ(tabs(first), (Names{"a", "c"}));
+    EXPECT_EQ(tabs(second), (Names{"c", "x"}));
+    EXPECT_EQ(recorder_.events, (std::vector<std::string>{"tabs 1", "active 1", "tabs 2"}));
+}
+
+TEST_F(EditorLayoutTest, ReplacingADocumentWithOneThatTheGroupHasClosesTheOldTab) {
+    const GroupId g = layout_.focused();
+    open(g, {"a", "b", "c"});
+    ASSERT_TRUE(layout_.activate(g, 0));
+    EXPECT_EQ(layout_.replace_document(doc("a"), doc("c")), 1U);
+    EXPECT_EQ(tabs(g), (Names{"b", "c"}));
+    EXPECT_EQ(layout_.group(g)->active, 0U);
+    ASSERT_TRUE(layout_.activate(g, 1));
+    EXPECT_EQ(layout_.replace_document(doc("b"), doc("c")), 1U);
+    EXPECT_EQ(tabs(g), (Names{"c"}));
+    EXPECT_EQ(layout_.group(g)->active, 0U);
+    expect_consistent();
+}
+
+TEST_F(EditorLayoutTest, ReplacingADocumentThatIsNotOpenOrWithItselfDoesNothing) {
+    const GroupId g = layout_.focused();
+    open(g, {"a"});
+    EXPECT_EQ(layout_.replace_document(doc("zzz"), doc("b")), 0U);
+    EXPECT_EQ(layout_.replace_document(doc("a"), doc("a")), 0U);
+    EXPECT_EQ(tabs(g), (Names{"a"}));
+    EXPECT_TRUE(recorder_.events.empty());
+}
+
 TEST_F(EditorLayoutTest, SplittingRightPutsANewGroupAfterTheOldOneAndFocusesIt) {
     const GroupId first = layout_.focused();
     const auto second = layout_.split(first, Direction::right);

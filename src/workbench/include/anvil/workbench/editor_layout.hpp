@@ -144,6 +144,11 @@ public:
     // after it when it was the first. The only group cannot be closed.
     bool close_group(GroupId group);
 
+    // Makes every tab of the document `from` show `to` in its place, as when a document is saved
+    // under another name. A group that has `to` already closes its tab of `from` instead, as when
+    // a tab closes. Returns the number of groups that changed.
+    std::size_t replace_document(const core::Uri& from, const core::Uri& to);
+
     bool focus(GroupId group);
     // Moves the focus to the next or previous group in the order they are shown, wrapping around.
     void focus_next();

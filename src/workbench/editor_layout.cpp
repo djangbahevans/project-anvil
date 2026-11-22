@@ -403,6 +403,30 @@ bool EditorLayout::close_group(GroupId id) {
     return true;
 }
 
+std::size_t EditorLayout::replace_document(const core::Uri& from, const core::Uri& to) {
+    if (from == to) {
+        return 0;
+    }
+    const Snapshot before = snapshot();
+    std::size_t changed = 0;
+    for (const GroupId id : group_ids()) {
+        EditorGroup& target = *mutable_group(id);
+        const auto old_index = index_of(target, from);
+        if (!old_index) {
+            continue;
+        }
+        ++changed;
+        if (index_of(target, to)) {
+            remove_tab(target, *old_index);
+            close_group_if_empty(id);
+        } else {
+            target.tabs[*old_index] = to;
+        }
+    }
+    notify(before);
+    return changed;
+}
+
 bool EditorLayout::focus(GroupId id) {
     if (!group(id)) {
         return false;
