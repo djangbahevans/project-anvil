@@ -64,6 +64,12 @@ public:
     void set_visible(Part part, bool visible);
     void toggle(Part part);
 
+    // The panel can take the whole editor area: the editor area is hidden while it does, and
+    // restoring shows it again with the panel at the size it had. Maximizing shows a hidden panel,
+    // and hiding the panel restores it. Other parts cannot be maximized.
+    bool is_maximized(Part part) const;
+    void set_maximized(Part part, bool maximized);
+
     // How far the part reaches along the axis it is resized on: the width of the activity bar, the
     // sidebar and the editor area, the height of the panel and the status bar. A hidden sidebar or
     // panel reports the size it has when shown again.
@@ -74,6 +80,7 @@ public:
 
 signals:
     void visibility_changed(anvil::ui::Part part, bool visible);
+    void maximized_changed(anvil::ui::Part part, bool maximized);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -94,6 +101,7 @@ private:
     QPointer<QWidget> status_bar_;
     int sidebar_size_ = default_size;
     int panel_size_ = default_size;
+    bool panel_maximized_ = false;
 };
 
 } // namespace anvil::ui
