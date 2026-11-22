@@ -14,7 +14,7 @@ A command runs an operation that already has a public entry point on the object 
 
 `MainWindow::register_commands` adds each command with `add(id, title, action)`. A command ignores the JSON arguments it does not use. The registry is copied into the extension host's command service when the host starts, so extensions run the command with `vscode.commands.executeCommand(id, ...args)` without further work.
 
-Call the command from the menu with `commands_.execute(id)`.
+The command appears in the command palette under its title with no further work. Call it from the menu with `commands_.execute(id)`.
 
 ## 4. Test it
 

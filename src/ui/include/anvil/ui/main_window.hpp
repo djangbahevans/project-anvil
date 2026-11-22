@@ -7,6 +7,7 @@
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
 
 #include <QMainWindow>
@@ -64,6 +65,9 @@ public:
     FindBar* find_bar() {
         return find_bar_;
     }
+    QuickPick* command_palette() {
+        return palette_;
+    }
     SettingsStore& settings() {
         return *settings_;
     }
@@ -113,7 +117,10 @@ private:
     void on_selections_changed();
     void save_as_dialog();
     void open_dialog();
-    void run_command();
+    // Shows the command palette, unless a dialog is open.
+    void show_command_palette();
+    // Runs the command the user chose in the palette, found by the id captured when it was chosen.
+    void run_palette_command(const std::string& id);
     // The document at `index` is saved whichever one is shown, because an extension can change the
     // shown document while a dialog is open.
     bool save_document(std::size_t index);
@@ -128,6 +135,11 @@ private:
     QTabBar* tabs_ = nullptr;
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
+    QuickPick* palette_ = nullptr;
+    // The commands shown in the palette, by position in its list.
+    std::vector<std::string> palette_ids_;
+    // The commands run from the palette, the latest first.
+    std::vector<std::string> recent_commands_;
     SettingsStore* settings_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;

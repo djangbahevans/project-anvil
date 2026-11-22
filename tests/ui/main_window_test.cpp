@@ -9,6 +9,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListView>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
@@ -954,7 +955,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "actions.find",
                                           "editor.action.nextMatchFindAction",
                                           "editor.action.previousMatchFindAction",
-                                          "editor.action.startFindReplace"};
+                                          "editor.action.startFindReplace",
+                                          "workbench.action.showCommands"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
         ASSERT_NE(command, nullptr) << id;
@@ -1112,4 +1114,189 @@ TEST_F(MainWindowTest, ExtensionsCanRunEditorCommandsByTheirId) {
 
     run("anvil.docs.execute", json::array({"cursorRight", "ignored", 1}));
     EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{1, 1}));
+}
+
+// --- command palette ---
+
+TEST_F(MainWindowTest, TheCommandPaletteListsTheEditorsCommandsByTitle) {
+    create_window();
+    EXPECT_TRUE(window_->command_palette()->isHidden());
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    EXPECT_TRUE(palette->isVisible());
+    EXPECT_EQ(palette->filter_field()->text(), ">");
+    EXPECT_EQ(palette->shown_items().size(), window_->commands().commands().size());
+
+    std::vector<QString> titles;
+    for (std::size_t i = 0; i < palette->shown_items().size(); ++i) {
+        titles.push_back(palette->list()->model()->index(static_cast<int>(i), 0).data().toString());
+    }
+    EXPECT_NE(std::find(titles.begin(), titles.end(), "Undo"), titles.end());
+    EXPECT_NE(std::find(titles.begin(), titles.end(), "Show All Commands"), titles.end());
+    EXPECT_TRUE(
+        std::is_sorted(titles.begin(), titles.end(), [](const QString& a, const QString& b) {
+            return a.compare(b, Qt::CaseInsensitive) < 0;
+        }));
+}
+
+TEST_F(MainWindowTest, TypingFiltersThePaletteAndEnterRunsTheCommand) {
+    create_window();
+    type("ab");
+    ASSERT_EQ(current_text(), "ab");
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    QTest::keyClicks(palette->filter_field(), "undo");
+    ASSERT_FALSE(palette->shown_items().empty());
+    EXPECT_EQ(palette->list()->model()->index(0, 0).data().toString(), "Undo");
+
+    QTest::keyClick(palette->filter_field(), Qt::Key_Return);
+    EXPECT_TRUE(palette->isHidden());
+    EXPECT_EQ(current_text(), "");
+}
+
+TEST_F(MainWindowTest, TheShortcutsAndTheMenuOpenThePalette) {
+    create_window();
+    window_->activateWindow();
+    EXPECT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+
+    QTest::keyClick(window_->view(), Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_TRUE(window_->command_palette()->isVisible());
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->command_palette()->isHidden());
+
+    QTest::keyClick(window_->view(), Qt::Key_F1);
+    EXPECT_TRUE(window_->command_palette()->isVisible());
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
+
+    QAction* menu_item = nullptr;
+    for (QAction* top : window_->menuBar()->actions()) {
+        if (top->menu()) {
+            for (QAction* action : top->menu()->actions()) {
+                if (action->text() == "&Show All Commands…") {
+                    menu_item = action;
+                }
+            }
+        }
+    }
+    ASSERT_NE(menu_item, nullptr);
+    menu_item->trigger();
+    EXPECT_TRUE(window_->command_palette()->isVisible());
+}
+
+TEST_F(MainWindowTest, EscapeClosesThePaletteAndTheEditorKeepsTheFocus) {
+    create_window();
+    window_->activateWindow();
+    EXPECT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    ASSERT_TRUE(window_->view()->hasFocus());
+
+    window_->commands().execute("workbench.action.showCommands");
+    EXPECT_FALSE(window_->view()->hasFocus());
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->view()->hasFocus());
+}
+
+TEST_F(MainWindowTest, RecentlyUsedCommandsComeFirstInThePalette) {
+    create_window();
+    const auto first_title = [&] {
+        return window_->command_palette()->list()->model()->index(0, 0).data().toString();
+    };
+    window_->commands().execute("workbench.action.showCommands");
+    EXPECT_EQ(first_title(), "Close Editor");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "select all");
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
+
+    window_->commands().execute("workbench.action.showCommands");
+    EXPECT_EQ(first_title(), "Select All");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "redo");
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
+
+    window_->commands().execute("workbench.action.showCommands");
+    EXPECT_EQ(first_title(), "Redo");
+    EXPECT_EQ(window_->command_palette()->list()->model()->index(1, 0).data().toString(),
+              "Select All");
+}
+
+TEST_F(MainWindowTest, TheCommandPaletteShowsAMessageWhenNoCommandMatches) {
+    create_window();
+    window_->commands().execute("workbench.action.showCommands");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "qqqqzz");
+    EXPECT_TRUE(window_->command_palette()->shown_items().empty());
+    bool shown = false;
+    for (const QLabel* label : window_->command_palette()->findChildren<QLabel*>()) {
+        shown = shown || (label->text() == "No matching commands" && label->isVisible());
+    }
+    EXPECT_TRUE(shown);
+}
+
+TEST_F(MainWindowTest, ExtensionCommandsAreInThePaletteByIdAndRunFromIt) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "ab\ncd").string())));
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    QTest::keyClicks(palette->filter_field(), "anvil.docs.replacetwo");
+    ASSERT_FALSE(palette->shown_items().empty());
+    EXPECT_EQ(palette->list()->model()->index(0, 0).data().toString(), "anvil.docs.replaceTwo");
+
+    QTest::keyClick(palette->filter_field(), Qt::Key_Return);
+    ASSERT_TRUE(wait_until([&] { return current_text() == "Xb\nd"; })) << current_text();
+}
+
+TEST_F(MainWindowTest, AFailingCommandRunFromThePaletteIsReportedInTheStatusBar) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    QTest::keyClicks(palette->filter_field(), "anvil.docs.open");
+    QTest::keyClick(palette->filter_field(), Qt::Key_Return);
+    // The command needs a path it is not given, so it throws in the extension host.
+    EXPECT_TRUE(wait_until([&] {
+        return window_->statusBar()->currentMessage().contains("anvil.docs.open failed");
+    })) << window_->statusBar()->currentMessage().toStdString();
+}
+
+TEST_F(MainWindowTest, NoCommandPaletteOpensOrRunsWhileADialogIsOpen) {
+    create_window();
+    type("ab");
+    QMessageBox box(window_.get());
+    bool checked = false;
+    QTimer::singleShot(50, &box, [&] {
+        window_->commands().execute("workbench.action.showCommands");
+        EXPECT_TRUE(window_->command_palette()->isHidden());
+        checked = true;
+        box.accept();
+    });
+    box.exec();
+    ASSERT_TRUE(checked);
+
+    // A choice made while a dialog is open does not run.
+    window_->commands().execute("workbench.action.showCommands");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "undo");
+    QMessageBox second(window_.get());
+    QTimer::singleShot(50, &second, [&] {
+        QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
+        second.accept();
+    });
+    second.exec();
+    EXPECT_EQ(current_text(), "ab");
+}
+
+TEST_F(MainWindowTest, RendersTheCommandPalette) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(
+        QString::fromStdString(write("sample.txt", "hello, world\nsecond line\n").string())));
+    window_->commands().execute("workbench.action.showCommands");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "se");
+    QApplication::processEvents();
+    const QImage image = window_->grab().toImage();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/command_palette.png");
+    }
 }
