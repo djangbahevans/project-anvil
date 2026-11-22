@@ -110,6 +110,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 - Designated initializers need a default member initializer on every member, or `-Wmissing-field-initializers` fires.
 - Qt sizes are signed (`qsizetype`); cast them explicitly under `-Wconversion`. AUTOMOC only processes headers that are listed in the target's sources.
 - `QTest::mouseMove` sends nothing when the cursor is already at that position, which a previous test can leave it at, so a hover test that uses it passes or fails by test order. Send a `QMouseEvent` to the widget instead. `QToolTip::hideText()` hides the tip after a delay; wait for `QToolTip::isVisible()` to turn false.
+- A key that the editor view uses, such as Tab, also moves the focus between widgets, and Qt does that first when another widget can take the focus. `EditorView` refuses to hand the focus on; test its keys in a shown `MainWindow` with the sidebar and the panel open, because with the editor alone nothing else can take the focus and the bug does not show.
 - Process tests that start `sh -c` must `exec` the real program, or killing the shell leaves an orphan holding ctest's output pipe open.
 - Benchmarks on WSL2 vary by several times between runs; compare orders of magnitude.
 

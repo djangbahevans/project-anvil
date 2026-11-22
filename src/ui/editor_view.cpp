@@ -432,6 +432,10 @@ void EditorView::insert_tab() {
     apply(controller_->type(std::string(tab_size_ - column % tab_size_, ' ')));
 }
 
+bool EditorView::focusNextPrevChild(bool) {
+    return false;
+}
+
 void EditorView::keyPressEvent(QKeyEvent* event) {
     if (!controller_) {
         QAbstractScrollArea::keyPressEvent(event);
@@ -497,6 +501,8 @@ void EditorView::keyPressEvent(QKeyEvent* event) {
         apply(controller_->insert_newline());
     } else if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier) {
         insert_tab();
+    } else if (event->key() == Qt::Key_Backtab) {
+        // Left to the commands that will outdent; unhandled, it would move the focus out.
     } else if (event->key() == Qt::Key_Escape) {
         apply(controller_->keep_primary_selection());
     } else {
