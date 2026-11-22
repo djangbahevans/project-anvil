@@ -730,6 +730,75 @@ TEST_F(TabStripTest, TheBordersBelowTheStripAndTheSelectedTabShowOnlyWhenTheThem
     EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).left() + 5, bottom)), QColor("#ff0000"));
 }
 
+TEST_F(TabStripTest, AStripThatDoesNotHaveTheFocusUsesTheUnfocusedColors) {
+    colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#101010")},
+                        {"tab.activeBackground", QColor("#202020")},
+                        {"tab.inactiveBackground", QColor("#303030")},
+                        {"tab.activeBorderTop", QColor("#3994bc")},
+                        {"tab.unfocusedActiveBackground", QColor("#252525")},
+                        {"tab.unfocusedInactiveBackground", QColor("#353535")},
+                        {"tab.activeForeground", QColor("#ffffff")},
+                        {"tab.unfocusedActiveForeground", QColor("#ff0000")}});
+    add_many(2);
+    EXPECT_TRUE(strip_->focused());
+    strip_->set_focused(false);
+    EXPECT_FALSE(strip_->focused());
+    const QImage image = grab();
+    const QRect active = strip_->tab_rect(0);
+    EXPECT_EQ(pixel(image, active.topLeft() + QPoint(5, 10)), QColor("#252525"));
+    EXPECT_EQ(pixel(image, strip_->tab_rect(1).topLeft() + QPoint(5, 10)), QColor("#353535"));
+    EXPECT_EQ(pixel(image, active.topLeft() + QPoint(5, 0)), QColor("#252525"));
+
+    strip_->set_focused(true);
+    const QImage focused = grab();
+    EXPECT_EQ(pixel(focused, active.topLeft() + QPoint(5, 10)), QColor("#202020"));
+    EXPECT_EQ(pixel(focused, active.topLeft() + QPoint(5, 0)), QColor("#3994bc"));
+}
+
+TEST_F(TabStripTest, TheLineOnTopOfTheSelectedTabOfAnUnfocusedStripShowsWhenTheThemeHasOne) {
+    colors_.set_colors({{"tab.activeBackground", QColor("#202020")},
+                        {"tab.activeBorderTop", QColor("#3994bc")},
+                        {"tab.unfocusedActiveBorderTop", QColor("#112233")}});
+    add_many(1);
+    strip_->set_focused(false);
+    EXPECT_EQ(pixel(grab(), strip_->tab_rect(0).topLeft() + QPoint(5, 0)), QColor("#112233"));
+}
+
+TEST_F(TabStripTest, TheTitlesOfAnUnfocusedStripUseTheUnfocusedForegrounds) {
+    colors_.set_colors({{"tab.activeBackground", QColor("#000000")},
+                        {"tab.inactiveBackground", QColor("#000000")},
+                        {"tab.activeForeground", QColor("#ffffff")},
+                        {"tab.unfocusedActiveForeground", QColor("#00ff00")}});
+    add("WWWWWW");
+    strip_->set_focused(false);
+    const QImage image = grab();
+    const QRect area = strip_->tab_rect(0);
+    int green = 0;
+    int white = 0;
+    for (int y = 2; y < 30; ++y) {
+        for (int x = area.left() + 10; x < area.left() + 60; ++x) {
+            const QColor c(image.pixel(x, y));
+            green += c.green() > 200 && c.red() < 60;
+            white += c.red() > 200 && c.green() > 200 && c.blue() > 200;
+        }
+    }
+    EXPECT_GT(green, 0);
+    EXPECT_EQ(white, 0);
+}
+
+TEST_F(TabStripTest, SettingTheFocusToWhatItIsDoesNotRepaint) {
+    add_many(2);
+    QApplication::processEvents();
+    PaintCounter counter;
+    strip_->installEventFilter(&counter);
+    strip_->set_focused(true);
+    QApplication::processEvents();
+    EXPECT_EQ(counter.count, 0);
+    strip_->set_focused(false);
+    QApplication::processEvents();
+    EXPECT_EQ(counter.count, 1);
+}
+
 TEST_F(TabStripTest, RendersAStripForReview) {
     colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#191A1B")},
                         {"editorGroupHeader.tabsBorder", QColor("#2A2B2C")},

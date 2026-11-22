@@ -211,6 +211,13 @@ int TabStrip::tab_at(int x) const {
     return static_cast<int>(found - entries_.begin());
 }
 
+void TabStrip::set_focused(bool focused) {
+    if (focused_ != focused) {
+        focused_ = focused;
+        update();
+    }
+}
+
 void TabStrip::set_hovered(int tab, bool button) {
     if (hovered_ == tab && hovered_button_ == button) {
         return;
@@ -227,12 +234,17 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
     const QRect area(x, 0, entry.width, height_pixels);
 
     const bool hover_fill = hovered && !active && colors_.is_themed("tab.hoverBackground");
-    painter.fillRect(area, colors_.color(active       ? "tab.activeBackground"
-                                         : hover_fill ? "tab.hoverBackground"
-                                                      : "tab.inactiveBackground"));
+    const char* background =
+        active       ? (focused_ ? "tab.activeBackground" : "tab.unfocusedActiveBackground")
+        : hover_fill ? "tab.hoverBackground"
+        : focused_   ? "tab.inactiveBackground"
+                     : "tab.unfocusedInactiveBackground";
+    painter.fillRect(area, colors_.color(background));
     if (active) {
-        painter.fillRect(QRect(area.left(), 0, area.width(), 1),
-                         colors_.color("tab.activeBorderTop"));
+        const char* top = focused_ ? "tab.activeBorderTop" : "tab.unfocusedActiveBorderTop";
+        if (focused_ || colors_.is_themed(top)) {
+            painter.fillRect(QRect(area.left(), 0, area.width(), 1), colors_.color(top));
+        }
         if (colors_.is_themed("tab.activeBorder")) {
             painter.fillRect(QRect(area.left(), height_pixels - 1, area.width(), 1),
                              colors_.color("tab.activeBorder"));
@@ -240,8 +252,11 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
     }
     painter.fillRect(QRect(area.right(), 0, 1, height_pixels), colors_.color("tab.border"));
 
-    const QColor foreground =
-        colors_.color(active ? "tab.activeForeground" : "tab.inactiveForeground");
+    const char* foreground_key =
+        active     ? (focused_ ? "tab.activeForeground" : "tab.unfocusedActiveForeground")
+        : focused_ ? "tab.inactiveForeground"
+                   : "tab.unfocusedInactiveForeground";
+    const QColor foreground = colors_.color(foreground_key);
     painter.setPen(foreground);
     painter.drawText(QRect(area.left() + title_padding, 0, entry.title_width + 2, height_pixels),
                      Qt::AlignVCenter | Qt::AlignLeft, entry.tab.title);
