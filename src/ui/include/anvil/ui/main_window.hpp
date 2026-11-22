@@ -7,6 +7,7 @@
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/panel.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
 #include "anvil/ui/sidebar.hpp"
@@ -81,6 +82,9 @@ public:
     }
     Sidebar* sidebar() {
         return sidebar_;
+    }
+    Panel* panel() {
+        return panel_;
     }
     // The colors of the window's parts; a color theme replaces them.
     WorkbenchColors& colors() {
@@ -161,6 +165,7 @@ private:
     Workbench* workbench_ = nullptr;
     ViewContainerRegistry view_containers_;
     Sidebar* sidebar_ = nullptr;
+    Panel* panel_ = nullptr;
     QuickPick* palette_ = nullptr;
     // The commands shown in the palette, by position in its list.
     std::vector<std::string> palette_ids_;
