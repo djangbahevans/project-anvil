@@ -10,10 +10,13 @@
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QSignalSpy>
+#include <algorithm>
+#include <cmath>
 #include <gtest/gtest.h>
 
 using namespace anvil;
 using anvil::ui::EditorView;
+using anvil::ui::WorkbenchColors;
 
 namespace {
 
@@ -669,4 +672,215 @@ TEST_F(EditorViewTest, TabFollowsTheLatestSettings) {
     view_.apply_settings(settings(14, 3, true));
     key(Qt::Key_Tab);
     EXPECT_EQ(text(), "   ");
+}
+
+TEST_F(EditorViewTest, ApplyingTheSameSettingsAgainKeepsTheExactScrollPosition) {
+    std::string many;
+    for (int i = 0; i < 200; ++i) {
+        many += "line " + std::to_string(i) + "\n";
+    }
+    open(many);
+    core::EditorSettings settings;
+    settings.font_family = "monospace";
+    settings.font_size = 14;
+    view_.apply_settings(settings);
+    view_.verticalScrollBar()->setValue(301);
+    ASSERT_EQ(view_.verticalScrollBar()->value(), 301);
+
+    view_.apply_settings(settings);
+    EXPECT_EQ(view_.verticalScrollBar()->value(), 301);
+
+    settings.font_size = 20;
+    view_.apply_settings(settings);
+    EXPECT_EQ(view_.verticalScrollBar()->value() % view_.line_height(), 0);
+}
+
+namespace {
+
+// How far the pixel of the image nearest to the color is from it, the largest difference of a
+// channel. Antialiased text may not contain the exact color.
+int nearest(const QImage& image, const QRect& area, const QColor& color) {
+    int best = 255;
+    for (int y = std::max(0, area.top()); y <= std::min(image.height() - 1, area.bottom()); ++y) {
+        for (int x = std::max(0, area.left()); x <= std::min(image.width() - 1, area.right());
+             ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            best = std::min(best, std::max({std::abs(pixel.red() - color.red()),
+                                            std::abs(pixel.green() - color.green()),
+                                            std::abs(pixel.blue() - color.blue())}));
+        }
+    }
+    return best;
+}
+
+QColor blended(const QColor& over, const QColor& under) {
+    const double a = over.alphaF();
+    return QColor(static_cast<int>(std::lround(over.red() * a + under.red() * (1 - a))),
+                  static_cast<int>(std::lround(over.green() * a + under.green() * (1 - a))),
+                  static_cast<int>(std::lround(over.blue() * a + under.blue() * (1 - a))));
+}
+
+bool close(const QColor& a, const QColor& b, int tolerance = 2) {
+    return std::abs(a.red() - b.red()) <= tolerance &&
+           std::abs(a.green() - b.green()) <= tolerance &&
+           std::abs(a.blue() - b.blue()) <= tolerance;
+}
+
+} // namespace
+
+TEST_F(EditorViewTest, PaintsWithTheColorsOfTheWorkbench) {
+    WorkbenchColors colors(QApplication::palette());
+    colors.set_colors({{"editor.background", QColor("#102030")},
+                       {"editor.foreground", QColor("#ffffff")},
+                       {"editorGutter.background", QColor("#0a0a0a")},
+                       {"editor.lineHighlightBackground", QColor("#203040")},
+                       {"editorLineNumber.foreground", QColor("#ff0000")},
+                       {"editorLineNumber.activeForeground", QColor("#00ff00")},
+                       {"editorCursor.foreground", QColor("#ffff00")}});
+    view_.set_colors(&colors);
+    open("one\ntwo\nthree");
+    QApplication::processEvents();
+    const QImage image = view_.viewport()->grab().toImage();
+
+    const int right = image.width() - 5;
+    const int line = view_.line_height();
+    EXPECT_EQ(image.pixelColor(right, line * 2 + 2), QColor("#102030"));
+    EXPECT_EQ(image.pixelColor(right, 2), QColor("#203040"));
+    EXPECT_EQ(image.pixelColor(2, line + 2), QColor("#0a0a0a"));
+
+    // The caret is drawn while the view has the focus.
+    if (view_.hasFocus()) {
+        EXPECT_EQ(image.pixelColor(view_.cursor_rect(0).x(), line / 2), QColor("#ffff00"));
+    }
+
+    const QRect gutter(0, 0, view_.cursor_rect(0).x() - 4, line * 3);
+    EXPECT_LE(nearest(image, QRect(0, 0, gutter.width(), line), QColor("#00ff00")), 40);
+    EXPECT_LE(nearest(image, QRect(0, line, gutter.width(), line), QColor("#ff0000")), 40);
+    EXPECT_GT(nearest(image, QRect(0, line, gutter.width(), line), QColor("#00ff00")), 100);
+    EXPECT_LE(
+        nearest(image, QRect(view_.cursor_rect(0).x(), line * 2, 60, line), QColor("#ffffff")), 40);
+}
+
+TEST_F(EditorViewTest, ASelectionOfTheThemeIsDrawnWithItsAlpha) {
+    WorkbenchColors colors(QApplication::palette());
+    colors.set_colors({{"editor.background", QColor("#102030")},
+                       {"editor.selectionBackground", QColor(0, 255, 0, 128)}});
+    view_.set_colors(&colors);
+    open("one\ntwo\nthree");
+    key(Qt::Key_Right, Qt::ShiftModifier);
+    key(Qt::Key_Right, Qt::ShiftModifier);
+    key(Qt::Key_Right, Qt::ShiftModifier);
+    QApplication::processEvents();
+    const QImage image = view_.viewport()->grab().toImage();
+
+    const QRect selected = view_.cursor_rect(1);
+    const QColor shown = image.pixelColor(selected.x() + 2, selected.y() + 1);
+    const QColor expected = blended(QColor(0, 255, 0, 128), QColor("#102030"));
+    EXPECT_TRUE(close(shown, expected))
+        << shown.name().toStdString() << " vs " << expected.name().toStdString();
+    EXPECT_NE(shown, QColor(0, 255, 0));
+}
+
+TEST_F(
+    EditorViewTest,
+    TextUnderAThemedSelectionKeepsItsColorButUnderAPaletteSelectionTakesTheHighlightedTextColor) {
+    QPalette palette = view_.palette();
+    palette.setColor(QPalette::HighlightedText, QColor("#00ff00"));
+    palette.setColor(QPalette::Highlight, QColor("#000000"));
+    view_.setPalette(palette);
+    WorkbenchColors colors(view_.palette());
+    view_.set_colors(&colors);
+    open("one two three");
+    key(Qt::Key_Right, Qt::ShiftModifier);
+    key(Qt::Key_Right, Qt::ShiftModifier);
+    key(Qt::Key_Right, Qt::ShiftModifier);
+    QApplication::processEvents();
+    const QRect selected(view_.cursor_rect(0).x(), 0,
+                         view_.cursor_rect(3).x() - view_.cursor_rect(0).x(), view_.line_height());
+
+    // No theme sets the selection: the palette's highlighted text color is used.
+    QImage image = view_.viewport()->grab().toImage();
+    EXPECT_LE(nearest(image, selected, QColor("#00ff00")), 40);
+
+    colors.set_colors({{"editor.foreground", QColor("#ffffff")},
+                       {"editor.selectionBackground", QColor("#000000")}});
+    QApplication::processEvents();
+    image = view_.viewport()->grab().toImage();
+    EXPECT_LE(nearest(image, selected, QColor("#ffffff")), 40);
+    EXPECT_GT(nearest(image, selected, QColor("#00ff00")), 100);
+}
+
+TEST_F(EditorViewTest, FindMatchesAreDrawnWithTheThemesFindColorsAndTheCurrentOneStandsOut) {
+    WorkbenchColors colors(QApplication::palette());
+    colors.set_colors({{"editor.background", QColor("#102030")},
+                       {"editor.selectionBackground", QColor(0, 0, 0, 0)},
+                       {"editor.findMatchBackground", QColor("#ff0000")},
+                       {"editor.findMatchHighlightBackground", QColor("#0000ff")}});
+    view_.set_colors(&colors);
+    open("aa bbb cc ddd");
+    view_.set_highlights({{3, 6}, {10, 13}});
+    view_.select_range({3, 6});
+    QApplication::processEvents();
+    const QImage image = view_.viewport()->grab().toImage();
+
+    const QRect current = view_.cursor_rect(4);
+    const QRect other = view_.cursor_rect(11);
+    EXPECT_EQ(image.pixelColor(current.x() + 2, current.y() + 1), QColor("#ff0000"));
+    EXPECT_EQ(image.pixelColor(other.x() + 2, other.y() + 1), QColor("#0000ff"));
+}
+
+namespace {
+
+class PaintCounter : public QObject {
+public:
+    int paints = 0;
+
+protected:
+    bool eventFilter(QObject*, QEvent* event) override {
+        paints += event->type() == QEvent::Paint ? 1 : 0;
+        return false;
+    }
+};
+
+} // namespace
+
+TEST_F(EditorViewTest, ChangingTheColorsSchedulesARepaint) {
+    WorkbenchColors colors(QApplication::palette());
+    view_.set_colors(&colors);
+    open("text");
+    QApplication::processEvents();
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+
+    colors.set_colors({{"editor.background", QColor("#334455")}});
+    QApplication::processEvents();
+    EXPECT_GE(counter.paints, 1);
+
+    view_.set_colors(nullptr);
+    QApplication::processEvents();
+    counter.paints = 0;
+    colors.set_colors({{"editor.background", QColor("#554433")}});
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
+}
+
+TEST_F(EditorViewTest, ChangingTheColorsRepaintsAndTakingThemAwayReturnsToThePalette) {
+    WorkbenchColors colors(QApplication::palette());
+    view_.set_colors(&colors);
+    open("text");
+    colors.set_colors({{"editor.background", QColor("#334455")}});
+    QApplication::processEvents();
+    QImage image = view_.viewport()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#334455"));
+
+    colors.set_colors({{"editor.background", QColor("#554433")}});
+    QApplication::processEvents();
+    image = view_.viewport()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#554433"));
+
+    view_.set_colors(nullptr);
+    QApplication::processEvents();
+    image = view_.viewport()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5),
+              view_.palette().color(QPalette::Base));
 }
