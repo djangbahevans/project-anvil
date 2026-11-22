@@ -34,6 +34,14 @@ node tools/exthost-probe/probe.mjs --vscode .deps/vscode \
 
 Delete the old recording and update the file name in `tests/exthost/replay_test.cpp`.
 
-## 5. Update the documentation
+## 5. Record the fuzzy scorer's results again
+
+The core's fuzzy matcher is tested against results recorded from VS Code's own scorer. Record them from the new checkout and run the core tests; a difference is a change in VS Code's scoring to port.
+
+```sh
+node scripts/generate-fuzzy-cases.mjs
+```
+
+## 6. Update the documentation
 
 Update the version in `docs/extension-host-protocol.md` and every fact in it that changed, and the version in `README.md` where it appears.
