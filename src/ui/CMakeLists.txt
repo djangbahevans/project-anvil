@@ -47,7 +47,7 @@ qt_add_resources(anvil_ui anvil_codicons
   FILES ${CMAKE_SOURCE_DIR}/resources/codicons/codicon.ttf)
 target_include_directories(anvil_ui PUBLIC include)
 target_link_libraries(anvil_ui
-  PUBLIC Qt6::Widgets anvil::core anvil::exthost
+  PUBLIC Qt6::Widgets anvil::core anvil::exthost anvil::workbench
   PRIVATE anvil::platform anvil_compile_options
 )
 target_compile_definitions(anvil_ui PRIVATE ANVIL_THEMES_SOURCE_DIR="${CMAKE_SOURCE_DIR}/resources/themes")

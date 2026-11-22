@@ -62,6 +62,14 @@ target_link_libraries(anvil_exthost_tests PRIVATE anvil::exthost GTest::gtest_ma
 target_compile_definitions(anvil_exthost_tests PRIVATE ANVIL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/exthost/data")
 gtest_discover_tests(anvil_exthost_tests)
 
+add_executable(anvil_workbench_tests
+  workbench/editor_layout_model_test.cpp
+  workbench/editor_layout_test.cpp
+)
+target_link_libraries(anvil_workbench_tests
+  PRIVATE anvil::workbench GTest::gtest_main anvil_compile_options)
+gtest_discover_tests(anvil_workbench_tests)
+
 find_package(nlohmann_json REQUIRED)
 find_program(ANVIL_NODE node)
 add_executable(anvil_exthost_integration_tests
