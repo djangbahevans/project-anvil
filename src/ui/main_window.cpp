@@ -2,6 +2,7 @@
 
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/ui/resources.hpp"
 
 #include <QAction>
 #include <QActionGroup>
@@ -90,6 +91,12 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     });
     settings_->start();
 
+    themes_ = new ThemeStore(colors_, options_.themes_directory.value_or(themes_directory()),
+                             logger, this);
+    connect(themes_, &ThemeStore::load_failed, this,
+            [this](const QString& message) { statusBar()->showMessage(message, 15000); });
+    view_->set_colors(&colors_);
+
     connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
         if (index >= 0 && static_cast<std::size_t>(index) != current_) {
             activate(static_cast<std::size_t>(index));
@@ -148,6 +155,7 @@ MainWindow::~MainWindow() = default;
 void MainWindow::apply_settings() {
     const core::EditorSettings& editor = settings_->editor();
     view_->apply_settings(editor);
+    themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
                                 .insert_spaces = editor.insert_spaces});
 }

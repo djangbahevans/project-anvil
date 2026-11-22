@@ -47,6 +47,7 @@ protected:
         ui::MainWindowOptions options;
         options.confirm_unsaved_changes = confirm_unsaved_changes;
         options.settings_file = settings_file_;
+        options.themes_directory = themes_directory_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
             const std::filesystem::path node = ANVIL_NODE_EXECUTABLE;
@@ -150,6 +151,8 @@ protected:
 
     std::filesystem::path scratch_;
     std::filesystem::path settings_file_;
+    // Unset: the themes that ship with the editor.
+    std::optional<std::filesystem::path> themes_directory_;
     std::unique_ptr<MainWindow> window_;
     bool prompt_shown_ = false;
 };
@@ -1307,7 +1310,8 @@ TEST_F(MainWindowTest, RendersTheCommandPalette) {
 
 // --- colors ---
 
-TEST_F(MainWindowTest, TheWorkbenchColorsFollowTheWindowsPalette) {
+TEST_F(MainWindowTest, WithoutThemesTheWorkbenchColorsFollowTheWindowsPalette) {
+    themes_directory_ = scratch_ / "no-themes";
     create_window();
     QPalette palette = window_->palette();
     EXPECT_EQ(window_->colors().color("statusBar.background"), palette.color(QPalette::Window));
@@ -1496,4 +1500,102 @@ TEST_F(MainWindowTest, APanelContainerOpensInThePanelAndTheCommandsMaximizeIt) {
     QApplication::processEvents();
     EXPECT_FALSE(window_->workbench()->is_maximized(ui::Part::panel));
     EXPECT_TRUE(window_->view()->isVisible());
+}
+
+// --- color themes ---
+
+TEST_F(MainWindowTest, TheEditorStartsInVsCodesDefaultTheme) {
+    create_window();
+    EXPECT_EQ(window_->themes().current(), "Dark 2026");
+    EXPECT_EQ(window_->colors().color("editor.background"), QColor("#121314"));
+    window_->activateWindow();
+    QApplication::processEvents();
+    const QImage image = window_->view()->viewport()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#121314"));
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(
+            write("sample.txt", "hello, world\nsecond line\nthird line\n").string())));
+        window_->workbench()->set_visible(ui::Part::sidebar, true);
+        window_->workbench()->set_visible(ui::Part::panel, true);
+        window_->view()->select_range({3, 8});
+        QApplication::processEvents();
+        window_->grab().toImage().save(QString::fromUtf8(directory) + "/window_dark_2026.png");
+    }
+}
+
+TEST_F(MainWindowTest, TheSettingChoosesTheThemeAtStartup) {
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Light 2026"})j");
+    create_window();
+    EXPECT_EQ(window_->themes().current(), "Light 2026");
+    const QImage image = window_->view()->viewport()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#FFFFFF"));
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(
+            write("sample.txt", "hello, world\nsecond line\nthird line\n").string())));
+        window_->workbench()->set_visible(ui::Part::sidebar, true);
+        window_->workbench()->set_visible(ui::Part::panel, true);
+        window_->view()->select_range({3, 8});
+        QApplication::processEvents();
+        window_->grab().toImage().save(QString::fromUtf8(directory) + "/window_light_2026.png");
+    }
+}
+
+TEST_F(MainWindowTest, ChangingTheSettingSwitchesTheThemeAndKeepsTheCaretAndTheScrollPosition) {
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Dark 2026"})j");
+    create_window();
+    std::string many;
+    for (int i = 0; i < 200; ++i) {
+        many += "line " + std::to_string(i) + "\n";
+    }
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("many.txt", many).string())));
+    window_->view()->select_range({40, 44});
+    window_->view()->verticalScrollBar()->setValue(300);
+    const auto selections = window_->current_document()->selections();
+    const int scroll = window_->view()->verticalScrollBar()->value();
+    ASSERT_GT(scroll, 0);
+
+    write("settings.json", R"j({"workbench.colorTheme": "Light Modern"})j");
+    ASSERT_TRUE(wait_until([&] { return window_->themes().current() == "Light Modern"; }));
+    EXPECT_EQ(window_->colors().color("editor.background"), QColor("#FFFFFF"));
+    EXPECT_EQ(window_->current_document()->selections(), selections);
+    EXPECT_EQ(window_->view()->verticalScrollBar()->value(), scroll);
+    QApplication::processEvents();
+    const QImage image = window_->view()->viewport()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#FFFFFF"));
+}
+
+TEST_F(MainWindowTest, AnUnknownThemeInTheSettingsKeepsTheThemeAndIsReportedOnce) {
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Dark Modern"})j");
+    create_window();
+    ASSERT_EQ(window_->themes().current(), "Dark Modern");
+    QSignalSpy failures(&window_->themes(), &ui::ThemeStore::load_failed);
+
+    write("settings.json", R"j({"workbench.colorTheme": "Solarized"})j");
+    ASSERT_TRUE(wait_until([&] { return failures.count() == 1; }));
+    EXPECT_EQ(window_->themes().current(), "Dark Modern");
+    EXPECT_TRUE(window_->statusBar()->currentMessage().contains("Solarized"));
+
+    window_->statusBar()->clearMessage();
+    write("settings.json", R"j({"workbench.colorTheme": "Solarized", "editor.tabSize": 3})j");
+    ASSERT_TRUE(wait_until([&] { return window_->settings().editor().tab_size == 3; }));
+    EXPECT_EQ(failures.count(), 1);
+}
+
+TEST_F(MainWindowTest, AnUnknownThemeAtStartupFallsBackToTheDefaultAndIsReported) {
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Solarized"})j");
+    create_window();
+    EXPECT_EQ(window_->themes().current(), "Dark 2026");
+    EXPECT_TRUE(window_->statusBar()->currentMessage().contains("Solarized"));
+}
+
+TEST_F(MainWindowTest, TheEditorViewDrawsWithTheColorsOfTheTheme) {
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Dark Modern"})j");
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc\ndef\n").string())));
+    window_->view()->resize(500, 300);
+    QApplication::processEvents();
+    const QImage image = window_->view()->viewport()->grab().toImage();
+    // Dark Modern: editor background #1F1F1F, gutter the same, and nothing of the palette's white.
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#1F1F1F"));
+    EXPECT_EQ(image.pixelColor(2, image.height() - 5), QColor("#1F1F1F"));
 }
