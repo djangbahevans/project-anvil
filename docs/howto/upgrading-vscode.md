@@ -42,6 +42,14 @@ The core's fuzzy matcher is tested against results recorded from VS Code's own s
 node scripts/generate-fuzzy-cases.mjs
 ```
 
-## 6. Update the documentation
+## 6. Refresh the color themes
+
+The default color themes are copied from the checkout into `resources/themes`, and a test fails when the copies differ from it. Refresh them, review the diff, and check that the default theme (`EditorDefaults::color_theme`, VS Code's `ThemeSettingDefaults.COLOR_THEME_DARK` in `workbenchThemeService.ts`) is still in the list:
+
+```sh
+node scripts/sync-themes.mjs
+```
+
+## 7. Update the documentation
 
 Update the version in `docs/extension-host-protocol.md` and every fact in it that changed, and the version in `README.md` where it appears.
