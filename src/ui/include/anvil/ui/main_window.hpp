@@ -12,6 +12,7 @@
 #include "anvil/ui/settings_store.hpp"
 #include "anvil/ui/sidebar.hpp"
 #include "anvil/ui/status_bar.hpp"
+#include "anvil/ui/tab_strip.hpp"
 #include "anvil/ui/theme_store.hpp"
 #include "anvil/ui/view_container_registry.hpp"
 #include "anvil/ui/workbench.hpp"
@@ -19,12 +20,12 @@
 
 #include <QMainWindow>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
 
 class QMenu;
-class QTabBar;
 
 namespace anvil::ui {
 
@@ -67,7 +68,7 @@ public:
     EditorView* view() {
         return view_;
     }
-    QTabBar* tab_bar() {
+    TabStrip* tab_strip() {
         return tabs_;
     }
     FindBar* find_bar() {
@@ -144,6 +145,8 @@ private:
     void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
     void activate(std::size_t index);
     void move_document(int from, int to);
+    // Closes the documents whose position `wanted` accepts, stopping when the user cancels.
+    void close_documents_where(const std::function<bool(std::size_t)>& wanted);
     std::optional<std::size_t> index_of(const core::Uri& uri) const;
     void update_tab(std::size_t index);
     // Refreshes the tab of the document at `index`, and the window title when it is shown.
@@ -172,7 +175,7 @@ private:
 
     Options options_;
     WorkbenchColors colors_;
-    QTabBar* tabs_ = nullptr;
+    TabStrip* tabs_ = nullptr;
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
     Workbench* workbench_ = nullptr;
