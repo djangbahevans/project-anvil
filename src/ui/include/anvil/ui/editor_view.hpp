@@ -4,6 +4,7 @@
 #include "anvil/core/editing.hpp"
 #include "anvil/core/editor_settings.hpp"
 #include "anvil/core/search.hpp"
+#include "anvil/ui/workbench_colors.hpp"
 
 #include <QAbstractScrollArea>
 #include <QElapsedTimer>
@@ -34,6 +35,16 @@ public:
     // installed falls back to the system's fixed-width font. The text, caret and scroll position
     // stay as they are, so this can run while the user edits.
     void apply_settings(const core::EditorSettings& settings);
+
+    // Takes the colors of the editor from the workbench colors, which must outlive the view, and
+    // repaints when they change; null returns to the palette of the widget. The keys read are
+    // `editor.background`, `editor.foreground`, `editor.selectionBackground`,
+    // `editor.lineHighlightBackground`, `editorLineNumber.foreground`,
+    // `editorLineNumber.activeForeground`, `editorCursor.foreground`, `editorGutter.background`,
+    // `editor.findMatchBackground` and `editor.findMatchHighlightBackground`. Text under a
+    // selection keeps its color when the theme sets the selection's background, since that color
+    // may be translucent; otherwise it takes the palette's highlighted text color.
+    void set_colors(const WorkbenchColors* colors);
 
     // Shows `document`, or nothing when null. The document is shared with its other users.
     void set_document(std::shared_ptr<core::Document> document);
@@ -122,6 +133,11 @@ private:
     void restart_caret_blink();
     void insert_tab();
 
+    struct Colors;
+    Colors current_colors() const;
+
+    const WorkbenchColors* colors_ = nullptr;
+    QMetaObject::Connection colors_connection_;
     std::shared_ptr<core::Document> document_;
     std::unique_ptr<core::EditController> controller_;
     int line_height_ = 16;

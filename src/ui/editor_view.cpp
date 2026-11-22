@@ -148,8 +148,11 @@ void EditorView::update_metrics() {
 void EditorView::apply_settings(const core::EditorSettings& settings) {
     // Scroll positions are in pixels, so they are converted to lines and columns and back to keep
     // the same text in view when the metrics change.
-    const int first_line = verticalScrollBar()->value() / line_height_;
-    const int first_column = horizontalScrollBar()->value() / char_width_;
+    const int vertical = verticalScrollBar()->value();
+    const int horizontal = horizontalScrollBar()->value();
+    const int first_line = vertical / line_height_;
+    const int first_column = horizontal / char_width_;
+    const int previous_line_height = line_height_;
     const int previous_char_width = char_width_;
 
     tab_size_ = static_cast<std::size_t>(settings.tab_size);
@@ -165,8 +168,12 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     verticalScrollBar()->setSingleStep(line_height_);
     horizontalScrollBar()->setSingleStep(char_width_ * 4);
     update_scroll_bars();
-    verticalScrollBar()->setValue(first_line * line_height_);
-    horizontalScrollBar()->setValue(first_column * char_width_);
+    // A reload that leaves the metrics alone, such as a change of color theme, keeps the exact
+    // position instead of snapping to whole lines.
+    const bool same_metrics =
+        line_height_ == previous_line_height && char_width_ == previous_char_width;
+    verticalScrollBar()->setValue(same_metrics ? vertical : first_line * line_height_);
+    horizontalScrollBar()->setValue(same_metrics ? horizontal : first_column * char_width_);
     viewport()->update();
 }
 
@@ -605,10 +612,65 @@ void EditorView::changeEvent(QEvent* event) {
     }
 }
 
+struct EditorView::Colors {
+    QColor background;
+    QColor foreground;
+    QColor selection_background;
+    QColor selection_foreground;
+    QColor line_highlight;
+    QColor line_number;
+    QColor line_number_active;
+    QColor cursor;
+    QColor gutter_background;
+    QColor find_match;
+    QColor find_highlight;
+};
+
+void EditorView::set_colors(const WorkbenchColors* colors) {
+    QObject::disconnect(colors_connection_);
+    colors_ = colors;
+    if (colors_) {
+        colors_connection_ =
+            connect(colors_, &WorkbenchColors::changed, this, [this] { viewport()->update(); });
+    }
+    viewport()->update();
+}
+
+EditorView::Colors EditorView::current_colors() const {
+    if (!colors_) {
+        const QPalette& palette = this->palette();
+        return {palette.color(QPalette::Base),
+                palette.color(QPalette::Text),
+                palette.color(QPalette::Highlight),
+                palette.color(QPalette::HighlightedText),
+                palette.color(QPalette::AlternateBase),
+                palette.color(QPalette::PlaceholderText),
+                palette.color(QPalette::Text),
+                palette.color(QPalette::Text),
+                palette.color(QPalette::Window),
+                match_highlight,
+                match_highlight};
+    }
+    const QColor foreground = colors_->color("editor.foreground");
+    return {colors_->color("editor.background"),
+            foreground,
+            colors_->color("editor.selectionBackground"),
+            colors_->is_themed("editor.selectionBackground")
+                ? foreground
+                : palette().color(QPalette::HighlightedText),
+            colors_->color("editor.lineHighlightBackground"),
+            colors_->color("editorLineNumber.foreground"),
+            colors_->color("editorLineNumber.activeForeground"),
+            colors_->color("editorCursor.foreground"),
+            colors_->color("editorGutter.background"),
+            colors_->color("editor.findMatchBackground"),
+            colors_->color("editor.findMatchHighlightBackground")};
+}
+
 void EditorView::paintEvent(QPaintEvent*) {
     QPainter painter(viewport());
-    const QPalette& colors = palette();
-    painter.fillRect(viewport()->rect(), colors.color(QPalette::Base));
+    const Colors colors = current_colors();
+    painter.fillRect(viewport()->rect(), colors.background);
     if (!document_) {
         return;
     }
@@ -622,8 +684,9 @@ void EditorView::paintEvent(QPaintEvent*) {
                  static_cast<std::size_t>((scroll_y + viewport()->height()) / line_height_) + 1);
     const std::size_t active_line = text.position_at(document_->selections().primary().active).line;
     const int origin_x = text_origin_x();
-    const QColor selection_background = colors.color(QPalette::Highlight);
-    const QColor selection_foreground = colors.color(QPalette::HighlightedText);
+    const QColor selection_background = colors.selection_background;
+    const QColor selection_foreground = colors.selection_foreground;
+    const core::Selection primary = document_->selections().primary();
     int widest = max_line_width_;
 
     painter.setFont(font());
@@ -631,7 +694,7 @@ void EditorView::paintEvent(QPaintEvent*) {
         const int y = static_cast<int>(line) * line_height_ - scroll_y;
         const QRect row(0, y, viewport()->width(), line_height_);
         if (line == active_line && selections.size() == 1 && selections[0].empty()) {
-            painter.fillRect(row, colors.color(QPalette::AlternateBase));
+            painter.fillRect(row, colors.line_highlight);
         }
 
         const auto layout = layout_line(line);
@@ -649,7 +712,10 @@ void EditorView::paintEvent(QPaintEvent*) {
             const std::size_t to = std::min(highlight->end, line_end);
             if (from < to) {
                 QTextCharFormat format;
-                format.setBackground(match_highlight);
+                // The match the selection is on is the current one.
+                const bool current =
+                    highlight->begin == primary.start() && highlight->end == primary.end();
+                format.setBackground(current ? colors.find_match : colors.find_highlight);
                 const int start_column = static_cast<int>(text.utf16_offset(from) - line_units);
                 const int end_column = static_cast<int>(text.utf16_offset(to) - line_units);
                 formats.push_back(
@@ -681,7 +747,7 @@ void EditorView::paintEvent(QPaintEvent*) {
             }
         }
 
-        painter.setPen(colors.color(QPalette::Text));
+        painter.setPen(colors.foreground);
         layout->layout.draw(&painter, QPointF(origin_x, y), formats);
         widest = std::max(widest, static_cast<int>(layout->x_of(layout->size())) + char_width_);
 
@@ -692,7 +758,7 @@ void EditorView::paintEvent(QPaintEvent*) {
                 }
                 const std::size_t column = text.utf16_offset(selection.active) - line_units;
                 const int x = origin_x + static_cast<int>(layout->x_of(column));
-                painter.fillRect(QRect(x, y, 2, line_height_), colors.color(QPalette::Text));
+                painter.fillRect(QRect(x, y, 2, line_height_), colors.cursor);
                 if (!preedit_.isEmpty() &&
                     selection.active == document_->selections().primary().active) {
                     QFont underlined = font();
@@ -707,11 +773,10 @@ void EditorView::paintEvent(QPaintEvent*) {
 
     // The gutter covers the horizontally scrolled text and carries the line numbers.
     const int gutter = gutter_width();
-    painter.fillRect(QRect(0, 0, gutter, viewport()->height()), colors.color(QPalette::Window));
+    painter.fillRect(QRect(0, 0, gutter, viewport()->height()), colors.gutter_background);
     for (std::size_t line = first; line < last; ++line) {
         const int y = static_cast<int>(line) * line_height_ - scroll_y;
-        painter.setPen(
-            colors.color(line == active_line ? QPalette::Text : QPalette::PlaceholderText));
+        painter.setPen(line == active_line ? colors.line_number_active : colors.line_number);
         painter.drawText(QRect(0, y, gutter - gutter_padding, line_height_),
                          Qt::AlignRight | Qt::AlignVCenter, QString::number(line + 1));
     }
