@@ -1,5 +1,6 @@
 add_library(anvil_core STATIC
   char_class.cpp
+  color_theme.cpp
   document.cpp
   editing.cpp
   editor_settings.cpp

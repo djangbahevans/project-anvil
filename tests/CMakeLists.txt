@@ -3,6 +3,7 @@ include(GoogleTest)
 
 add_executable(anvil_core_tests
   core/char_class_test.cpp
+  core/color_theme_test.cpp
   core/document_model_test.cpp
   core/document_test.cpp
   core/editing_test.cpp
@@ -22,7 +23,8 @@ add_executable(anvil_core_tests
 )
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)
 target_include_directories(anvil_core_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
-target_compile_definitions(anvil_core_tests PRIVATE ANVIL_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/data")
+target_compile_definitions(anvil_core_tests PRIVATE ANVIL_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/data"
+  ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode")
 gtest_discover_tests(anvil_core_tests)
 
 if(UNIX)
