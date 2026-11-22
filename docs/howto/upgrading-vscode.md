@@ -51,6 +51,14 @@ The default color themes are copied from the checkout into `resources/themes`, a
 node scripts/sync-themes.mjs
 ```
 
-## 7. Update the documentation
+## 7. Refresh the Codicons
+
+The Codicons font, its license text and the table of icon names and code points come from the `@vscode/codicons` package in the checkout, and tests fail when the font or the table differs from it. Regenerate them and review the diff: an icon that the editor draws by name must still exist (the tests that draw every icon of the table show what changed), and the version in `THIRD_PARTY_NOTICES.md` follows the package.
+
+```sh
+node scripts/generate-codicons.mjs
+```
+
+## 8. Update the documentation
 
 Update the version in `docs/extension-host-protocol.md` and every fact in it that changed, and the version in `README.md` where it appears.
