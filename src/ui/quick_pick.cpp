@@ -69,7 +69,8 @@ private:
 
 class QuickPick::Delegate : public QStyledItemDelegate {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    Delegate(const WorkbenchColors& colors, QObject* parent)
+        : QStyledItemDelegate(parent), colors_(colors) {}
 
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex& index) const override {
         const auto* model = static_cast<const Model*>(index.model());
@@ -83,15 +84,16 @@ public:
         const QuickPickItem& item = model->item_of(index);
         const Model::Row& row = model->row_of(index);
         const bool selected = option.state & QStyle::State_Selected;
-        const QPalette& colors = option.palette;
 
         painter->save();
         painter->setClipRect(option.rect);
-        painter->fillRect(option.rect, selected ? colors.highlight() : colors.base());
+        painter->fillRect(option.rect, colors_.color(selected ? "quickInputList.focusBackground"
+                                                              : "quickInput.background"));
 
-        const QColor text = selected ? colors.highlightedText().color() : colors.text().color();
-        const QColor dim = selected ? text : colors.placeholderText().color();
-        const QColor accent = selected ? text : colors.link().color();
+        const QColor text =
+            colors_.color(selected ? "quickInputList.focusForeground" : "quickInput.foreground");
+        const QColor dim = selected ? text : colors_.color("descriptionForeground");
+        const QColor accent = selected ? text : colors_.color("list.highlightForeground");
 
         QFont bold = option.font;
         bold.setBold(true);
@@ -159,12 +161,13 @@ public:
         }
         painter->restore();
     }
+
+private:
+    const WorkbenchColors& colors_;
 };
 
-QuickPick::QuickPick(QWidget* window) : QFrame(window) {
-    setFrameShape(QFrame::Box);
-    setAutoFillBackground(true);
-    setBackgroundRole(QPalette::Base);
+QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
+    : QFrame(window), colors_(colors) {
     hide();
 
     filter_ = new QLineEdit(this);
@@ -176,7 +179,7 @@ QuickPick::QuickPick(QWidget* window) : QFrame(window) {
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    list_->setItemDelegate(new Delegate(list_));
+    list_->setItemDelegate(new Delegate(colors_, list_));
     model_ = new Model(items_, this);
     list_->setModel(model_);
     empty_ = new QLabel(this);
@@ -196,9 +199,37 @@ QuickPick::QuickPick(QWidget* window) : QFrame(window) {
     connect(qApp, &QApplication::focusChanged, this,
             [this](QWidget*, QWidget* now) { on_focus_changed(now); });
     window->installEventFilter(this);
+    connect(&colors_, &WorkbenchColors::changed, this, [this] { apply_colors(); });
+    apply_colors();
 }
 
 QuickPick::~QuickPick() = default;
+
+void QuickPick::apply_colors() {
+    QPalette input = filter_->palette();
+    input.setColor(QPalette::Base, colors_.color("input.background"));
+    input.setColor(QPalette::Text, colors_.color("input.foreground"));
+    input.setColor(QPalette::PlaceholderText, colors_.color("input.placeholderForeground"));
+    filter_->setPalette(input);
+
+    QPalette list = list_->palette();
+    list.setColor(QPalette::Base, colors_.color("quickInput.background"));
+    list_->setPalette(list);
+
+    QPalette message = empty_->palette();
+    message.setColor(QPalette::WindowText, colors_.color("descriptionForeground"));
+    empty_->setPalette(message);
+
+    list_->viewport()->update();
+    update();
+}
+
+void QuickPick::paintEvent(QPaintEvent*) {
+    QPainter painter(this);
+    painter.fillRect(rect(), colors_.color("quickInput.background"));
+    painter.setPen(colors_.color("widget.border"));
+    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+}
 
 void QuickPick::set_items(std::vector<QuickPickItem> items) {
     items_ = std::move(items);

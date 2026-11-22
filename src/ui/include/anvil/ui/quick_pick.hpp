@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/fuzzy.hpp"
+#include "anvil/ui/workbench_colors.hpp"
 
 #include <QFrame>
 #include <QPointer>
@@ -39,8 +40,10 @@ class QuickPick : public QFrame {
 public:
     static constexpr int row_height = 22;
 
-    // `window` is the window the popup overlays and the parent of the widget.
-    explicit QuickPick(QWidget* window);
+    // `window` is the window the popup overlays and the parent of the widget. The colors, which
+    // must outlive the popup, come from the `quickInput`, `quickInputList`, `input` and `widget`
+    // keys of `colors`, and the popup repaints when they change.
+    QuickPick(QWidget* window, const WorkbenchColors& colors);
     ~QuickPick() override;
 
     // Replaces the items; the filter is applied again.
@@ -80,6 +83,7 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
 
 private:
     class Model;
@@ -95,7 +99,9 @@ private:
     void move_selection(int rows, bool wrap);
     void close_popup(bool restore_focus);
     void on_focus_changed(QWidget* now);
+    void apply_colors();
 
+    const WorkbenchColors& colors_;
     QLineEdit* filter_ = nullptr;
     QListView* list_ = nullptr;
     QLabel* empty_ = nullptr;

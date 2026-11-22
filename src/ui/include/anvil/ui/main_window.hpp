@@ -9,6 +9,7 @@
 #include "anvil/ui/find_bar.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
+#include "anvil/ui/workbench_colors.hpp"
 
 #include <QMainWindow>
 #include <filesystem>
@@ -65,6 +66,10 @@ public:
     FindBar* find_bar() {
         return find_bar_;
     }
+    // The colors of the window's parts; a color theme replaces them.
+    WorkbenchColors& colors() {
+        return colors_;
+    }
     QuickPick* command_palette() {
         return palette_;
     }
@@ -90,6 +95,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     struct OpenDocument {
@@ -132,6 +138,7 @@ private:
     bool resolve_unsaved_changes();
 
     Options options_;
+    WorkbenchColors colors_;
     QTabBar* tabs_ = nullptr;
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
