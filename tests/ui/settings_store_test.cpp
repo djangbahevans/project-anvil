@@ -76,6 +76,15 @@ TEST_F(SettingsStoreTest, TheFileIsReadAtStartWithoutAChangeSignal) {
     EXPECT_EQ(changes_->count(), 0);
 }
 
+TEST_F(SettingsStoreTest, ChangingTheColorThemeSignalsAndTheDefaultIsVsCodes) {
+    write(R"j({"editor.tabSize": 2})j");
+    start();
+    EXPECT_EQ(store_->editor().color_theme, "Dark 2026");
+    write(R"j({"workbench.colorTheme": "Light Modern"})j");
+    ASSERT_TRUE(wait_until([&] { return changes_->count() >= 1; }));
+    EXPECT_EQ(store_->editor().color_theme, "Light Modern");
+}
+
 TEST_F(SettingsStoreTest, NoFileMeansNoSettingsAtAll) {
     store_ = std::make_unique<SettingsStore>(SettingsStore::Options{});
     store_->start();

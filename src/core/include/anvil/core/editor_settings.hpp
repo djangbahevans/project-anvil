@@ -17,6 +17,9 @@ struct EditorDefaults {
     int font_size = 14;
     // The line ending that `files.eol: "auto"` stands for.
     LineEnding auto_line_ending = LineEnding::lf;
+    // The color theme when `workbench.colorTheme` is not set: VS Code's default in the pinned
+    // release, which is the `id` of one of the themes in resources/themes/themes.json.
+    std::string color_theme = "Dark 2026";
 };
 
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
@@ -35,6 +38,8 @@ struct EditorSettings {
     bool insert_spaces = true;
     // files.eol, with "auto" resolved: the line ending of new documents
     LineEnding line_ending = LineEnding::lf;
+    // workbench.colorTheme: the `id` of a color theme, or its label when it has no id
+    std::string color_theme;
 
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 
