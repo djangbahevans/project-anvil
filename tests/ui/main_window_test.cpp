@@ -956,7 +956,10 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.nextMatchFindAction",
                                           "editor.action.previousMatchFindAction",
                                           "editor.action.startFindReplace",
-                                          "workbench.action.showCommands"};
+                                          "workbench.action.showCommands",
+                                          "workbench.action.toggleSidebarVisibility",
+                                          "workbench.action.togglePanel",
+                                          "workbench.action.toggleActivityBarVisibility"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
         ASSERT_NE(command, nullptr) << id;
@@ -1322,4 +1325,103 @@ TEST_F(MainWindowTest, TheCommandPaletteTakesItsColorsFromTheWorkbench) {
     QApplication::processEvents();
     const QImage image = window_->command_palette()->grab().toImage();
     EXPECT_EQ(image.pixelColor(image.width() / 2, image.height() - 3), QColor("#204060"));
+}
+
+// --- workbench ---
+
+TEST_F(MainWindowTest, TheWindowIsAWorkbenchWithTheEditorInItsEditorArea) {
+    create_window();
+    ASSERT_NE(window_->workbench(), nullptr);
+    EXPECT_EQ(window_->centralWidget(), window_->workbench());
+    EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->view()));
+    EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->tab_bar()));
+    EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->find_bar()));
+
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::status_bar));
+    EXPECT_GT(window_->workbench()->size(ui::Part::status_bar), 0);
+}
+
+TEST_F(MainWindowTest, TheViewMenuTogglesTheSidebarAndThePanel) {
+    create_window();
+    const auto find_action = [&](const QString& text) {
+        for (QAction* top : window_->menuBar()->actions()) {
+            if (top->menu() && top->text() == "&View") {
+                for (QAction* action : top->menu()->actions()) {
+                    if (action->text() == text) {
+                        return action;
+                    }
+                }
+            }
+        }
+        return static_cast<QAction*>(nullptr);
+    };
+    QAction* sidebar = find_action("Toggle &Sidebar");
+    QAction* panel = find_action("Toggle &Panel");
+    ASSERT_NE(sidebar, nullptr);
+    ASSERT_NE(panel, nullptr);
+    EXPECT_EQ(sidebar->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_B));
+    EXPECT_EQ(panel->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_J));
+
+    const int editor_width = window_->view()->width();
+    sidebar->trigger();
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_LT(window_->view()->width(), editor_width);
+    panel->trigger();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::panel));
+
+    sidebar->trigger();
+    panel->trigger();
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
+    EXPECT_EQ(window_->view()->width(), editor_width);
+}
+
+TEST_F(MainWindowTest, TheShortcutsAndTheCommandsToggleTheParts) {
+    create_window();
+    window_->activateWindow();
+    EXPECT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+
+    QTest::keyClick(window_->view(), Qt::Key_B, Qt::ControlModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::panel));
+
+    window_->commands().execute("workbench.action.toggleSidebarVisibility");
+    window_->commands().execute("workbench.action.togglePanel");
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
+
+    window_->commands().execute("workbench.action.toggleActivityBarVisibility");
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+}
+
+TEST_F(MainWindowTest, TheWorkbenchPartsFollowTheWorkbenchColors) {
+    create_window();
+    window_->workbench()->set_visible(ui::Part::sidebar, true);
+    window_->colors().set_colors({{"sideBar.background", QColor("#224466")}});
+    QApplication::processEvents();
+    QWidget* sidebar = window_->workbench()->sidebar();
+    const QImage image = sidebar->grab().toImage();
+    EXPECT_EQ(image.pixelColor(sidebar->width() / 2, sidebar->height() / 2), QColor("#224466"));
+}
+
+TEST_F(MainWindowTest, RendersTheWindowWithTheSidebarAndThePanelShown) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(
+        QString::fromStdString(write("sample.txt", "hello, world\nsecond line\n").string())));
+    window_->workbench()->set_visible(ui::Part::activity_bar, true);
+    window_->workbench()->set_visible(ui::Part::sidebar, true);
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    QApplication::processEvents();
+    const QImage image = window_->grab().toImage();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/main_window_workbench.png");
+    }
 }
