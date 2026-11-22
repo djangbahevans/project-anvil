@@ -87,6 +87,7 @@ if(TARGET anvil_ui)
     ui/quick_pick_test.cpp
     ui/settings_store_test.cpp
     ui/workbench_colors_test.cpp
+    ui/workbench_test.cpp
     ui/ui_test_main.cpp
   )
   target_link_libraries(anvil_ui_tests
