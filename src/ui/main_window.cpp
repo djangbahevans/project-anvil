@@ -10,12 +10,10 @@
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSignalBlocker>
-#include <QStatusBar>
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -23,6 +21,10 @@
 
 namespace anvil::ui {
 namespace {
+
+constexpr const char* position_item_id = "status.editor.position";
+constexpr const char* host_item_id = "status.extensionHost";
+constexpr int position_priority = 100;
 
 QString display_name(const core::Uri& uri) {
     if (const auto path = uri.file_path()) {
@@ -68,15 +70,12 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     layout->addWidget(view_, 1);
     workbench_ = new Workbench(colors_, this);
     workbench_->set_editor_area(central);
-    workbench_->set_status_bar(statusBar());
+    status_bar_ = new StatusBar(colors_, this);
+    workbench_->set_status_bar(status_bar_);
     setCentralWidget(workbench_);
     sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
     panel_ = new Panel(*workbench_, view_containers_, colors_, this);
 
-    position_label_ = new QLabel(this);
-    host_label_ = new QLabel(this);
-    statusBar()->addPermanentWidget(host_label_);
-    statusBar()->addPermanentWidget(position_label_);
     register_commands();
     build_menus();
 
@@ -86,7 +85,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         this);
     connect(settings_, &SettingsStore::changed, this, &MainWindow::apply_settings);
     connect(settings_, &SettingsStore::load_failed, this, [this](const QString& message) {
-        statusBar()->showMessage(
+        status_bar_->show_message(
             tr("Settings not applied, keeping the previous ones: %1").arg(message), 15000);
     });
     settings_->start();
@@ -94,8 +93,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     themes_ = new ThemeStore(colors_, options_.themes_directory.value_or(themes_directory()),
                              logger, this);
     connect(themes_, &ThemeStore::load_failed, this,
-            [this](const QString& message) { statusBar()->showMessage(message, 15000); });
+            [this](const QString& message) { status_bar_->show_message(message, 15000); });
     view_->set_colors(&colors_);
+    connect(status_bar_, &StatusBar::command_requested, this,
+            [this](const QString& command) { execute_command(command.toStdString()); });
 
     connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
         if (index >= 0 && static_cast<std::size_t>(index) != current_) {
@@ -132,15 +133,16 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             }
         };
         callbacks.stopped = [this](const std::string& reason) {
-            host_label_->setText(tr("Extension host stopped"));
-            statusBar()->showMessage(
+            status_bar_->set_item(host_item_id, StatusBarSide::right,
+                                  {.text = tr("Extension host stopped")});
+            status_bar_->show_message(
                 tr("The extension host stopped: %1").arg(QString::fromStdString(reason)), 10000);
         };
         if (auto started = bridge_.start(*options_.extension_host, logger, std::move(callbacks));
             !started) {
-            statusBar()->showMessage(tr("The extension host did not start: %1")
-                                         .arg(QString::fromStdString(started.error().message)),
-                                     15000);
+            status_bar_->show_message(tr("The extension host did not start: %1")
+                                          .arg(QString::fromStdString(started.error().message)),
+                                      15000);
         } else {
             share_commands_with_extensions();
         }
@@ -533,18 +535,21 @@ void MainWindow::run_palette_command(const std::string& id) {
     if (recent_commands_.size() > remembered) {
         recent_commands_.resize(remembered);
     }
+    execute_command(id);
+}
 
+void MainWindow::execute_command(const std::string& id) {
     if (bridge_.running()) {
         bridge_.host()->commands().execute(id, "[]", [this, id](exthost::CallResult result) {
             if (!result) {
-                statusBar()->showMessage(
+                status_bar_->show_message(
                     tr("%1 failed: %2")
                         .arg(QString::fromStdString(id), QString::fromStdString(result.error())),
                     8000);
             }
         });
     } else if (!commands_.execute(id)) {
-        statusBar()->showMessage(tr("Command %1 not found").arg(QString::fromStdString(id)), 5000);
+        status_bar_->show_message(tr("Command %1 not found").arg(QString::fromStdString(id)), 5000);
     }
 }
 
@@ -573,9 +578,11 @@ void MainWindow::update_status() {
     if (document.selections().all().size() > 1) {
         text += tr("  (%1 cursors)").arg(document.selections().all().size());
     }
-    position_label_->setText(text);
-    host_label_->setText(bridge_.running() ? tr("Extension host: running")
-                                           : tr("Extension host: off"));
+    status_bar_->set_item(
+        host_item_id, StatusBarSide::right,
+        {.text = bridge_.running() ? tr("Extension host: running") : tr("Extension host: off")});
+    status_bar_->set_item(position_item_id, StatusBarSide::right,
+                          {.text = text, .priority = position_priority});
 }
 
 bool MainWindow::resolve_unsaved_changes() {

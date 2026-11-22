@@ -11,6 +11,7 @@
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
 #include "anvil/ui/sidebar.hpp"
+#include "anvil/ui/status_bar.hpp"
 #include "anvil/ui/theme_store.hpp"
 #include "anvil/ui/view_container_registry.hpp"
 #include "anvil/ui/workbench.hpp"
@@ -22,7 +23,6 @@
 #include <optional>
 #include <vector>
 
-class QLabel;
 class QMenu;
 class QTabBar;
 
@@ -97,6 +97,10 @@ public:
     WorkbenchColors& colors() {
         return colors_;
     }
+    // The strip along the bottom; messages and the items of the window and of extensions show here.
+    StatusBar& status_bar() {
+        return *status_bar_;
+    }
     QuickPick* command_palette() {
         return palette_;
     }
@@ -154,6 +158,8 @@ private:
     void show_command_palette();
     // Runs the command the user chose in the palette, found by the id captured when it was chosen.
     void run_palette_command(const std::string& id);
+    // Runs a command by id, in the extension host when it is running, with a message when it fails.
+    void execute_command(const std::string& id);
     // The document at `index` is saved whichever one is shown, because an extension can change the
     // shown document while a dialog is open.
     bool save_document(std::size_t index);
@@ -186,8 +192,7 @@ private:
     std::vector<OpenDocument> documents_;
     std::size_t current_ = 0;
     std::size_t next_untitled_ = 1;
-    QLabel* position_label_ = nullptr;
-    QLabel* host_label_ = nullptr;
+    StatusBar* status_bar_ = nullptr;
     QMenu* window_menu_ = nullptr;
 };
 
