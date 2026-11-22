@@ -14,6 +14,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/resources.hpp
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
+  include/anvil/ui/theme_store.hpp
   include/anvil/ui/view_container_registry.hpp
   include/anvil/ui/view_container_stack.hpp
   include/anvil/ui/workbench.hpp
@@ -24,6 +25,7 @@ add_library(anvil_ui STATIC
   resources.cpp
   settings_store.cpp
   sidebar.cpp
+  theme_store.cpp
   view_container_registry.cpp
   view_container_stack.cpp
   workbench.cpp
