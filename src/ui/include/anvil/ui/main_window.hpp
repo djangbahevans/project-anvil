@@ -9,6 +9,8 @@
 #include "anvil/ui/find_bar.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
+#include "anvil/ui/sidebar.hpp"
+#include "anvil/ui/view_container_registry.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
@@ -71,6 +73,14 @@ public:
     // activity bar, sidebar and panel around it.
     Workbench* workbench() {
         return workbench_;
+    }
+    // The view containers that fill the sidebar and the panel: the explorer, search, extension
+    // views. Registering one for the sidebar shows the activity bar.
+    ViewContainerRegistry& view_containers() {
+        return view_containers_;
+    }
+    Sidebar* sidebar() {
+        return sidebar_;
     }
     // The colors of the window's parts; a color theme replaces them.
     WorkbenchColors& colors() {
@@ -149,6 +159,8 @@ private:
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
     Workbench* workbench_ = nullptr;
+    ViewContainerRegistry view_containers_;
+    Sidebar* sidebar_ = nullptr;
     QuickPick* palette_ = nullptr;
     // The commands shown in the palette, by position in its list.
     std::vector<std::string> palette_ids_;

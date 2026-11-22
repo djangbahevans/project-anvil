@@ -1425,3 +1425,41 @@ TEST_F(MainWindowTest, RendersTheWindowWithTheSidebarAndThePanelShown) {
         image.save(QString::fromUtf8(directory) + "/main_window_workbench.png");
     }
 }
+
+// --- view containers ---
+
+TEST_F(MainWindowTest, ARegisteredViewContainerShowsTheActivityBarAndOpensInTheSidebar) {
+    create_window();
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::black);
+    int created = 0;
+    ui::ViewContainer container;
+    container.id = "workbench.view.explorer";
+    container.title = "Explorer";
+    container.icon = QIcon(pixmap);
+    container.create = [&] {
+        ++created;
+        return new QLabel("files");
+    };
+    window_->view_containers().add(std::move(container));
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_EQ(created, 0);
+
+    const int editor_width = window_->view()->width();
+    window_->sidebar()->activate("workbench.view.explorer");
+    QApplication::processEvents();
+    EXPECT_EQ(created, 1);
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_EQ(window_->sidebar()->title(), "EXPLORER");
+    EXPECT_LT(window_->view()->width(), editor_width);
+
+    window_->commands().execute("workbench.action.toggleSidebarVisibility");
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));
+    window_->commands().execute("workbench.action.toggleSidebarVisibility");
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_EQ(window_->sidebar()->active_container(), "workbench.view.explorer");
+    EXPECT_EQ(created, 1);
+}

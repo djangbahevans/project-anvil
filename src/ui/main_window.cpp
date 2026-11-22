@@ -69,6 +69,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     workbench_->set_editor_area(central);
     workbench_->set_status_bar(statusBar());
     setCentralWidget(workbench_);
+    sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
 
     position_label_ = new QLabel(this);
     host_label_ = new QLabel(this);
