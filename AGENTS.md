@@ -60,17 +60,18 @@ ctest --preset linux-clang-debug -R Session   # a subset
 scripts/format.sh                             # format; --check only reports
 ```
 
-Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-gcc-debug`, plus Windows and macOS presets that have not been built. Test binaries are in `build/<preset>/bin/`: `anvil_core_tests`, `anvil_platform_tests`, `anvil_exthost_tests`, `anvil_exthost_integration_tests` (real extension host), `anvil_ui_tests` (Qt, offscreen). Run the editor with `build/<preset>/bin/anvil` (see the README).
+Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-gcc-debug`, plus Windows and macOS presets that have not been built. Test binaries are in `build/<preset>/bin/`: `anvil_core_tests`, `anvil_platform_tests`, `anvil_exthost_tests`, `anvil_workbench_tests`, `anvil_exthost_integration_tests` (real extension host), `anvil_ui_tests` (Qt, offscreen). Run the editor with `build/<preset>/bin/anvil` (see the README).
 
 ## Layers
 
-`ui` → `workbench` → `exthost` → `core` / `platform`. Dependencies point down only. `core` has no Qt and no OS code; per-OS code lives only in `platform`; Qt lives only in `ui`. The CMake targets enforce this, so a violation fails to link or include. `workbench` does not exist yet.
+`ui` → `workbench` → `exthost` → `core` / `platform`. Dependencies point down only. `core` has no Qt and no OS code; per-OS code lives only in `platform`; Qt lives only in `ui`. The CMake targets enforce this, so a violation fails to link or include. `workbench` holds the editor layout model so far.
 
 | Directory | Contents |
 | --- | --- |
 | `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, color themes, fuzzy matching, UTF-8/UTF-16, URIs, JSON with comments, settings, logging interface |
 | `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services |
+| `src/workbench` | the editor layout: groups of tabs, the split tree, focus, saving and restoring it (no Qt) |
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, tab strip, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
