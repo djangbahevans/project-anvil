@@ -94,6 +94,7 @@ if(TARGET anvil_ui)
     ui/resources_test.cpp
     ui/settings_store_test.cpp
     ui/sidebar_test.cpp
+    ui/theme_store_test.cpp
     ui/view_container_registry_test.cpp
     ui/workbench_colors_test.cpp
     ui/workbench_test.cpp
