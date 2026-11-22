@@ -34,12 +34,13 @@ node tools/exthost-probe/probe.mjs --vscode .deps/vscode \
 
 Delete the old recording and update the file name in `tests/exthost/replay_test.cpp`.
 
-## 5. Record the fuzzy scorer's results again
+## 5. Record the results of the ported matchers again
 
-The core's fuzzy matcher is tested against results recorded from VS Code's own scorer. Record them from the new checkout and run the core tests; a difference is a change in VS Code's scoring to port.
+The core's fuzzy matcher and its token theme matcher are tested against results recorded from VS Code's own code (the scorer in the checkout, and `vscode-textmate` with `vscode-oniguruma` in its `node_modules`). Record them from the new checkout and run the core tests; a difference is a change in VS Code's behavior to port.
 
 ```sh
 node scripts/generate-fuzzy-cases.mjs
+node scripts/generate-token-theme-cases.mjs
 ```
 
 ## 6. Refresh the color themes
