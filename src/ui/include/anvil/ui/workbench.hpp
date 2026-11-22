@@ -8,6 +8,7 @@
 #include <string_view>
 
 class QSplitter;
+class QVBoxLayout;
 
 namespace anvil::ui {
 
@@ -31,8 +32,8 @@ std::optional<Part> part_from_id(std::string_view id);
 // parts other than the editor area are empty containers for views to be added to: the sidebar and
 // the panel start hidden, and so does the activity bar, because nothing is in them.
 //
-// The status bar belongs to the window, which hands it over so that it can be shown and hidden like
-// the other parts.
+// The status bar belongs to the window, which hands it over; it goes along the bottom edge, below
+// everything else, and shows and hides like the other parts.
 class Workbench : public QWidget {
     Q_OBJECT
 
@@ -98,6 +99,7 @@ private:
     QWidget* editor_host_ = nullptr;
     QSplitter* across_ = nullptr;
     QSplitter* down_ = nullptr;
+    QVBoxLayout* root_layout_ = nullptr;
     QPointer<QWidget> status_bar_;
     int sidebar_size_ = default_size;
     int panel_size_ = default_size;

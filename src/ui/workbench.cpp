@@ -161,11 +161,17 @@ Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     across_->setStretchFactor(0, 0);
     across_->setStretchFactor(1, 1);
 
-    auto* layout = new QHBoxLayout(this);
+    auto* row = new QWidget(this);
+    auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(activity_bar_);
     layout->addWidget(across_, 1);
+
+    root_layout_ = new QVBoxLayout(this);
+    root_layout_->setContentsMargins(0, 0, 0, 0);
+    root_layout_->setSpacing(0);
+    root_layout_->addWidget(row, 1);
 
     connect(&colors_, &WorkbenchColors::changed, this, [this] {
         for (QWidget* widget : {static_cast<QWidget*>(activity_bar_),
@@ -188,6 +194,7 @@ void Workbench::set_editor_area(QWidget* editor_area) {
 
 void Workbench::set_status_bar(QWidget* status_bar) {
     status_bar_ = status_bar;
+    root_layout_->addWidget(status_bar);
 }
 
 QWidget* Workbench::activity_bar() const {

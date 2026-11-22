@@ -15,7 +15,6 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSignalSpy>
-#include <QStatusBar>
 #include <QTabBar>
 #include <QTest>
 #include <QTimer>
@@ -27,6 +26,9 @@
 
 using namespace anvil;
 using anvil::ui::MainWindow;
+using anvil::ui::Part;
+using anvil::ui::StatusBar;
+using anvil::ui::StatusBarSide;
 using nlohmann::json;
 
 namespace {
@@ -107,9 +109,12 @@ protected:
     }
 
     QString label_text(const QString& fragment) const {
-        for (const QLabel* label : window_->findChildren<QLabel*>()) {
-            if (label->text().contains(fragment)) {
-                return label->text();
+        const StatusBar& bar = window_->status_bar();
+        for (const auto side : {StatusBarSide::left, StatusBarSide::right}) {
+            for (const std::string& id : bar.item_ids(side)) {
+                if (bar.item(id)->text.contains(fragment)) {
+                    return bar.item(id)->text;
+                }
             }
         }
         return {};
@@ -237,6 +242,67 @@ TEST_F(MainWindowTest, OpeningAnOpenFileShowsTheExistingDocument) {
     ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
     EXPECT_EQ(window_->open_document_count(), 3u);
     EXPECT_EQ(current_text(), "!A"); // the unsaved edit is still there
+}
+
+TEST_F(MainWindowTest, TheStatusBarShowsThePositionLeftOfTheExtensionHostState) {
+    create_window();
+    StatusBar& bar = window_->status_bar();
+    const auto ids = bar.item_ids(StatusBarSide::right);
+    ASSERT_EQ(ids.size(), 2U);
+    EXPECT_EQ(bar.item(ids[0])->text, "Ln 1, Col 1");
+    EXPECT_TRUE(bar.item(ids[1])->text.startsWith("Extension host"));
+    EXPECT_TRUE(bar.item_ids(StatusBarSide::left).empty());
+}
+
+TEST_F(MainWindowTest, TheStatusBarSitsAtTheBottomEdgeOfTheWindow) {
+    create_window();
+    window_->show();
+    QApplication::processEvents();
+    const StatusBar& bar = window_->status_bar();
+    EXPECT_TRUE(bar.isVisible());
+    EXPECT_EQ(bar.height(), 22);
+    EXPECT_EQ(bar.width(), window_->width());
+    EXPECT_EQ(bar.mapTo(window_.get(), QPoint(0, 0)).y() + bar.height(), window_->height());
+    EXPECT_GT(window_->view()->mapTo(window_.get(), QPoint(0, 0)).y(), 0);
+    EXPECT_LE(window_->view()->mapTo(window_.get(), QPoint(0, window_->view()->height())).y(),
+              bar.mapTo(window_.get(), QPoint(0, 0)).y());
+}
+
+TEST_F(MainWindowTest, ClickingAStatusBarItemRunsItsCommand) {
+    create_window();
+    window_->show();
+    QApplication::processEvents();
+    window_->status_bar().set_item("test.item", StatusBarSide::left,
+                                   {.text = "toggle", .command = "workbench.action.togglePanel"});
+    ASSERT_FALSE(window_->workbench()->is_visible(Part::panel));
+
+    QTest::mouseClick(&window_->status_bar(), Qt::LeftButton, {},
+                      window_->status_bar().item_rect("test.item").center());
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+}
+
+TEST_F(MainWindowTest, ClickingAStatusBarItemWithAnUnknownCommandSaysSo) {
+    create_window();
+    window_->show();
+    QApplication::processEvents();
+    window_->status_bar().set_item("test.item", StatusBarSide::left,
+                                   {.text = "broken", .command = "no.such.command"});
+    QTest::mouseClick(&window_->status_bar(), Qt::LeftButton, {},
+                      window_->status_bar().item_rect("test.item").center());
+    EXPECT_TRUE(window_->status_bar().message().contains("no.such.command"));
+}
+
+TEST_F(MainWindowTest, ClickingAStatusBarItemDoesNotChangeTheCommandPaletteRecents) {
+    create_window();
+    window_->show();
+    QApplication::processEvents();
+    window_->status_bar().set_item("test.item", StatusBarSide::left,
+                                   {.text = "toggle", .command = "workbench.action.togglePanel"});
+    QTest::mouseClick(&window_->status_bar(), Qt::LeftButton, {},
+                      window_->status_bar().item_rect("test.item").center());
+    window_->commands().execute("workbench.action.showCommands");
+    EXPECT_EQ(window_->command_palette()->list()->model()->index(0, 0).data().toString(),
+              "Close Editor");
 }
 
 TEST_F(MainWindowTest, ShowsTheCursorCountForMultipleCursors) {
@@ -872,15 +938,15 @@ TEST_F(MainWindowTest, ACorruptFileKeepsThePreviousValuesAndReportsOnceInTheStat
     write("settings.json", "{ \"editor.fontSize\": 40,, }");
     ASSERT_TRUE(wait_until([&] { return failures.count() == 1; }));
     EXPECT_EQ(window_->view()->font().pixelSize(), 20);
-    const QString shown = window_->statusBar()->currentMessage();
+    const QString shown = window_->status_bar().message();
     EXPECT_TRUE(shown.contains("line 1, column 25")) << shown.toStdString();
     EXPECT_TRUE(logger->contains(core::LogLevel::error, "line 1, column 25", "settings"));
 
-    window_->statusBar()->clearMessage();
+    window_->status_bar().clear_message();
     write("settings.json", "{ \"editor.fontSize\": 40,, }");
     QTest::qWait(400);
     EXPECT_EQ(failures.count(), 1);
-    EXPECT_TRUE(window_->statusBar()->currentMessage().isEmpty());
+    EXPECT_TRUE(window_->status_bar().message().isEmpty());
     EXPECT_EQ(window_->view()->font().pixelSize(), 20);
 }
 
@@ -888,8 +954,8 @@ TEST_F(MainWindowTest, AWronglyTypedValueKeepsThePreviousValuesAndNamesTheKey) {
     settings_file_ = write("settings.json", R"j({"editor.fontSize": 20, "editor.tabSize": 2})j");
     create_window();
     write("settings.json", R"j({"editor.fontSize": 40, "editor.tabSize": "wide"})j");
-    ASSERT_TRUE(wait_until(
-        [&] { return window_->statusBar()->currentMessage().contains("editor.tabSize"); }));
+    ASSERT_TRUE(
+        wait_until([&] { return window_->status_bar().message().contains("editor.tabSize"); }));
     EXPECT_EQ(window_->view()->font().pixelSize(), 20);
 }
 
@@ -897,7 +963,7 @@ TEST_F(MainWindowTest, TheEditorStartsWhenTheSettingsFileIsCorrupt) {
     settings_file_ = write("settings.json", "not json at all");
     create_window();
     EXPECT_EQ(window_->view()->font().pixelSize(), platform::editor_defaults().font_size);
-    EXPECT_TRUE(window_->statusBar()->currentMessage().contains("settings.json"));
+    EXPECT_TRUE(window_->status_bar().message().contains("settings.json"));
     type("still works");
     EXPECT_EQ(current_text(), "still works");
 }
@@ -1264,8 +1330,8 @@ TEST_F(MainWindowTest, AFailingCommandRunFromThePaletteIsReportedInTheStatusBar)
     QTest::keyClick(palette->filter_field(), Qt::Key_Return);
     // The command needs a path it is not given, so it throws in the extension host.
     EXPECT_TRUE(wait_until([&] {
-        return window_->statusBar()->currentMessage().contains("anvil.docs.open failed");
-    })) << window_->statusBar()->currentMessage().toStdString();
+        return window_->status_bar().message().contains("anvil.docs.open failed");
+    })) << window_->status_bar().message().toStdString();
 }
 
 TEST_F(MainWindowTest, NoCommandPaletteOpensOrRunsWhileADialogIsOpen) {
@@ -1573,9 +1639,9 @@ TEST_F(MainWindowTest, AnUnknownThemeInTheSettingsKeepsTheThemeAndIsReportedOnce
     write("settings.json", R"j({"workbench.colorTheme": "Solarized"})j");
     ASSERT_TRUE(wait_until([&] { return failures.count() == 1; }));
     EXPECT_EQ(window_->themes().current(), "Dark Modern");
-    EXPECT_TRUE(window_->statusBar()->currentMessage().contains("Solarized"));
+    EXPECT_TRUE(window_->status_bar().message().contains("Solarized"));
 
-    window_->statusBar()->clearMessage();
+    window_->status_bar().clear_message();
     write("settings.json", R"j({"workbench.colorTheme": "Solarized", "editor.tabSize": 3})j");
     ASSERT_TRUE(wait_until([&] { return window_->settings().editor().tab_size == 3; }));
     EXPECT_EQ(failures.count(), 1);
@@ -1585,7 +1651,7 @@ TEST_F(MainWindowTest, AnUnknownThemeAtStartupFallsBackToTheDefaultAndIsReported
     settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Solarized"})j");
     create_window();
     EXPECT_EQ(window_->themes().current(), "Dark 2026");
-    EXPECT_TRUE(window_->statusBar()->currentMessage().contains("Solarized"));
+    EXPECT_TRUE(window_->status_bar().message().contains("Solarized"));
 }
 
 TEST_F(MainWindowTest, TheEditorViewDrawsWithTheColorsOfTheTheme) {

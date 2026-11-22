@@ -92,6 +92,8 @@ constexpr WorkbenchColorKey table[] = {
     from_palette("statusBar.background", "Background of the status bar.", QPalette::Window),
     from_palette("statusBar.border", "Border above the status bar.", QPalette::Mid),
     from_palette("statusBar.foreground", "Text of the status bar.", QPalette::WindowText),
+    from_palette("statusBarItem.activeBackground",
+                 "Background of a status bar item while the mouse button is down.", QPalette::Mid),
     from_palette("statusBarItem.hoverBackground",
                  "Background of a status bar item under the mouse.", QPalette::Midlight),
     from_palette("tab.activeBackground", "Background of the selected tab.", QPalette::Base),
