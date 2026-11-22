@@ -13,6 +13,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
   include/anvil/ui/view_container_registry.hpp
+  include/anvil/ui/view_container_stack.hpp
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
   main_window.cpp
@@ -20,6 +21,7 @@ add_library(anvil_ui STATIC
   settings_store.cpp
   sidebar.cpp
   view_container_registry.cpp
+  view_container_stack.cpp
   workbench.cpp
   workbench_colors.cpp
 )

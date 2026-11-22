@@ -4,7 +4,6 @@
 
 #include <QHBoxLayout>
 #include <QPainter>
-#include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace anvil::ui {
@@ -71,9 +70,10 @@ Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
     content->setSpacing(0);
     title_ = new Title(colors, workbench_.sidebar());
     title_actions_ = title_->actions();
-    stack_ = new QStackedWidget(workbench_.sidebar());
+    stack_ = std::make_unique<ViewContainerStack>(registry_, ViewContainerLocation::sidebar,
+                                                  workbench_.sidebar());
     content->addWidget(title_);
-    content->addWidget(stack_, 1);
+    content->addWidget(stack_->widget(), 1);
 
     connect(activity_bar_, &ActivityBar::activated, this,
             [this](const QString& id) { choose(id.toStdString()); });
@@ -96,17 +96,10 @@ Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
 Sidebar::~Sidebar() = default;
 
 void Sidebar::activate(std::string_view id) {
-    const ViewContainer* container = registry_.find(id);
-    if (!container || container->location != ViewContainerLocation::sidebar) {
+    const ViewContainer* container = stack_->show(id);
+    if (!container) {
         return;
     }
-    QPointer<QWidget>& slot = widgets_[container->id];
-    if (!slot) {
-        QWidget* widget = container->create ? container->create() : nullptr;
-        slot = widget ? widget : new QWidget;
-        stack_->addWidget(slot);
-    }
-    stack_->setCurrentWidget(slot);
     title_->set_text(container->title);
 
     const bool changed = active_ != container->id;
@@ -123,8 +116,7 @@ QString Sidebar::title() const {
 }
 
 QWidget* Sidebar::container_widget(std::string_view id) const {
-    const auto found = widgets_.find(std::string(id));
-    return found == widgets_.end() ? nullptr : found->second.data();
+    return stack_->container_widget(id);
 }
 
 void Sidebar::choose(const std::string& id) {
@@ -139,16 +131,6 @@ void Sidebar::update_buttons() {
     activity_bar_->set_active(workbench_.is_visible(Part::sidebar) ? active_ : std::string());
 }
 
-void Sidebar::forget(const std::string& id) {
-    if (const auto found = widgets_.find(id); found != widgets_.end()) {
-        if (found->second) {
-            stack_->removeWidget(found->second);
-            delete found->second.data();
-        }
-        widgets_.erase(found);
-    }
-}
-
 void Sidebar::refresh() {
     const auto containers = registry_.containers(ViewContainerLocation::sidebar);
 
@@ -160,16 +142,7 @@ void Sidebar::refresh() {
     workbench_.set_visible(Part::activity_bar, !entries.empty());
 
     // A container that was removed, or moved to the panel, leaves with its widget.
-    for (auto it = widgets_.begin(); it != widgets_.end();) {
-        const ViewContainer* container = registry_.find(it->first);
-        if (container && container->location == ViewContainerLocation::sidebar) {
-            ++it;
-            continue;
-        }
-        const std::string id = it->first;
-        ++it;
-        forget(id);
-    }
+    stack_->prune();
 
     const ViewContainer* active = registry_.find(active_);
     if (!active_.empty() && (!active || active->location != ViewContainerLocation::sidebar)) {
