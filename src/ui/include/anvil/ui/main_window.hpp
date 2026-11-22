@@ -9,6 +9,7 @@
 #include "anvil/ui/find_bar.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
+#include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QMainWindow>
@@ -65,6 +66,11 @@ public:
     }
     FindBar* find_bar() {
         return find_bar_;
+    }
+    // The parts of the window: the editor area with the tabs and the editor, and the empty
+    // activity bar, sidebar and panel around it.
+    Workbench* workbench() {
+        return workbench_;
     }
     // The colors of the window's parts; a color theme replaces them.
     WorkbenchColors& colors() {
@@ -142,6 +148,7 @@ private:
     QTabBar* tabs_ = nullptr;
     EditorView* view_ = nullptr;
     FindBar* find_bar_ = nullptr;
+    Workbench* workbench_ = nullptr;
     QuickPick* palette_ = nullptr;
     // The commands shown in the palette, by position in its list.
     std::vector<std::string> palette_ids_;

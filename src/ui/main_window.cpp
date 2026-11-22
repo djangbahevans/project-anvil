@@ -65,7 +65,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     layout->addWidget(tabs_);
     layout->addWidget(find_bar_);
     layout->addWidget(view_, 1);
-    setCentralWidget(central);
+    workbench_ = new Workbench(colors_, this);
+    workbench_->set_editor_area(central);
+    workbench_->set_status_bar(statusBar());
+    setCentralWidget(workbench_);
 
     position_label_ = new QLabel(this);
     host_label_ = new QLabel(this);
@@ -180,6 +183,12 @@ void MainWindow::register_commands() {
         [this] { close_document(current_); });
     add("workbench.action.showCommands", tr("Show All Commands"),
         [this] { show_command_palette(); });
+    add("workbench.action.toggleSidebarVisibility", tr("Toggle Primary Side Bar Visibility"),
+        [this] { workbench_->toggle(Part::sidebar); });
+    add("workbench.action.togglePanel", tr("Toggle Panel Visibility"),
+        [this] { workbench_->toggle(Part::panel); });
+    add("workbench.action.toggleActivityBarVisibility", tr("Toggle Activity Bar Visibility"),
+        [this] { workbench_->toggle(Part::activity_bar); });
 }
 
 void MainWindow::share_commands_with_extensions() {
@@ -227,6 +236,12 @@ void MainWindow::build_menus() {
                     run("editor.action.previousMatchFindAction"));
     edit->addAction(tr("&Replace…"), QKeySequence::Replace, this,
                     run("editor.action.startFindReplace"));
+
+    QMenu* view = menuBar()->addMenu(tr("&View"));
+    view->addAction(tr("Toggle &Sidebar"), QKeySequence(Qt::CTRL | Qt::Key_B), this,
+                    run("workbench.action.toggleSidebarVisibility"));
+    view->addAction(tr("Toggle &Panel"), QKeySequence(Qt::CTRL | Qt::Key_J), this,
+                    run("workbench.action.togglePanel"));
 
     QMenu* commands = menuBar()->addMenu(tr("Comm&ands"));
     QAction* show_commands =
