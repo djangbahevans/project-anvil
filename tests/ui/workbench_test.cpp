@@ -372,3 +372,125 @@ TEST_F(WorkbenchTest, RendersAllTheParts) {
         image.save(QString::fromUtf8(directory) + "/workbench.png");
     }
 }
+
+TEST_F(WorkbenchTest, MaximizingThePanelGivesItTheWholeEditorArea) {
+    workbench_->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_FALSE(workbench_->is_maximized(Part::panel));
+
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_TRUE(workbench_->is_maximized(Part::panel));
+    EXPECT_FALSE(workbench_->is_visible(Part::editor));
+    EXPECT_EQ(workbench_->panel()->height(), workbench_->height());
+    EXPECT_EQ(workbench_->panel()->y(), 0);
+}
+
+TEST_F(WorkbenchTest, RestoringThePanelBringsItBackToTheSizeItHad) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::panel, 210);
+    QApplication::processEvents();
+    const int editor_height_before = editor_height();
+
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+    workbench_->set_maximized(Part::panel, false);
+    QApplication::processEvents();
+    EXPECT_FALSE(workbench_->is_maximized(Part::panel));
+    EXPECT_TRUE(workbench_->is_visible(Part::editor));
+    EXPECT_NEAR(workbench_->panel()->height(), 210, 1);
+    EXPECT_NEAR(editor_height(), editor_height_before, 1);
+}
+
+TEST_F(WorkbenchTest, ADraggedPanelSizeSurvivesMaximizingAndRestoring) {
+    workbench_->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    QSplitterHandle* sash = sashes().front();
+    const QPoint start = sash->rect().center();
+    QTest::mousePress(sash, Qt::LeftButton, {}, start);
+    QTest::mouseMove(sash, start + QPoint(0, -70));
+    QTest::mouseRelease(sash, Qt::LeftButton, {}, start + QPoint(0, -70));
+    QApplication::processEvents();
+    const int dragged = workbench_->panel()->height();
+
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+    workbench_->set_maximized(Part::panel, false);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), dragged, 1);
+}
+
+TEST_F(WorkbenchTest, MaximizingAHiddenPanelShowsIt) {
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_TRUE(workbench_->is_visible(Part::panel));
+    EXPECT_TRUE(workbench_->is_maximized(Part::panel));
+    EXPECT_EQ(workbench_->panel()->height(), workbench_->height());
+}
+
+TEST_F(WorkbenchTest, HidingAMaximizedPanelRestoresTheEditorAreaAndTheSize) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::panel, 190);
+    QApplication::processEvents();
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+
+    workbench_->set_visible(Part::panel, false);
+    QApplication::processEvents();
+    EXPECT_FALSE(workbench_->is_maximized(Part::panel));
+    EXPECT_TRUE(workbench_->is_visible(Part::editor));
+    EXPECT_EQ(editor_height(), workbench_->height());
+
+    workbench_->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), 190, 1);
+    EXPECT_FALSE(workbench_->is_maximized(Part::panel));
+}
+
+TEST_F(WorkbenchTest, OnlyThePanelCanBeMaximizedAndTheSignalFollowsEachChange) {
+    QSignalSpy changed(workbench_.get(), &Workbench::maximized_changed);
+    workbench_->set_maximized(Part::sidebar, true);
+    workbench_->set_maximized(Part::editor, true);
+    EXPECT_FALSE(workbench_->is_maximized(Part::sidebar));
+    EXPECT_EQ(changed.count(), 0);
+
+    workbench_->set_maximized(Part::panel, true);
+    workbench_->set_maximized(Part::panel, true);
+    ASSERT_EQ(changed.count(), 1);
+    EXPECT_EQ(changed.at(0).at(0).value<Part>(), Part::panel);
+    EXPECT_TRUE(changed.at(0).at(1).toBool());
+    workbench_->set_maximized(Part::panel, false);
+    ASSERT_EQ(changed.count(), 2);
+    EXPECT_FALSE(changed.at(1).at(1).toBool());
+}
+
+TEST_F(WorkbenchTest, RestoringAfterTheWindowWasResizedWhileMaximizedGivesThePanelItsOldSize) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::panel, 210);
+    QApplication::processEvents();
+
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+    workbench_->resize(1000, 900);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->panel()->height(), 900);
+
+    workbench_->set_maximized(Part::panel, false);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), 210, 1);
+    EXPECT_NEAR(editor_height(), 900 - 210 - 4, 2);
+}
+
+TEST_F(WorkbenchTest, ASizeSetWhileMaximizedAppliesWhenThePanelIsRestored) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::panel, 210);
+    QApplication::processEvents();
+    workbench_->set_maximized(Part::panel, true);
+    QApplication::processEvents();
+
+    workbench_->set_size(Part::panel, 150);
+    EXPECT_EQ(workbench_->panel()->height(), workbench_->height());
+    workbench_->set_maximized(Part::panel, false);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), 150, 1);
+}

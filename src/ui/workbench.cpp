@@ -209,7 +209,7 @@ bool Workbench::is_visible(Part part) const {
     case Part::sidebar:
         return !sidebar_->isHidden();
     case Part::editor:
-        return true;
+        return !editor_host_->isHidden();
     case Part::panel:
         return !panel_->isHidden();
     case Part::status_bar:
@@ -240,7 +240,11 @@ void Workbench::set_visible(Part part, bool visible) {
             panel_->show();
             apply_sizes();
         } else {
-            panel_size_ = panel_->height();
+            if (panel_maximized_) {
+                set_maximized(Part::panel, false);
+            } else {
+                panel_size_ = panel_->height();
+            }
             panel_->hide();
         }
         break;
@@ -251,6 +255,30 @@ void Workbench::set_visible(Part part, bool visible) {
         break;
     }
     emit visibility_changed(part, visible);
+}
+
+bool Workbench::is_maximized(Part part) const {
+    return part == Part::panel && panel_maximized_;
+}
+
+void Workbench::set_maximized(Part part, bool maximized) {
+    if (part != Part::panel || panel_maximized_ == maximized) {
+        return;
+    }
+    if (maximized) {
+        const bool was_shown = !panel_->isHidden();
+        set_visible(Part::panel, true);
+        if (was_shown) {
+            panel_size_ = panel_->height();
+        }
+        panel_maximized_ = true;
+        editor_host_->hide();
+    } else {
+        panel_maximized_ = false;
+        editor_host_->show();
+        apply_sizes();
+    }
+    emit maximized_changed(part, maximized);
 }
 
 void Workbench::toggle(Part part) {
@@ -289,7 +317,7 @@ void Workbench::apply_sizes() {
         const int total = across_->width();
         across_->setSizes({sidebar_size_, std::max(1, total - sidebar_size_)});
     }
-    if (!panel_->isHidden()) {
+    if (!panel_->isHidden() && !panel_maximized_) {
         const int total = down_->height();
         down_->setSizes({std::max(1, total - panel_size_), panel_size_});
     }
