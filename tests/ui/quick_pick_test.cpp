@@ -15,6 +15,7 @@
 using anvil::core::MatchRange;
 using anvil::ui::QuickPick;
 using anvil::ui::QuickPickItem;
+using anvil::ui::WorkbenchColors;
 using Ranges = std::vector<MatchRange>;
 
 namespace {
@@ -43,7 +44,7 @@ protected:
         layout->addWidget(other_);
         layout->addWidget(second_);
         layout->addStretch();
-        pick_ = new QuickPick(host_.get());
+        pick_ = new QuickPick(host_.get(), colors_);
         pick_->set_items(sample_items());
         host_->show();
         host_->activateWindow();
@@ -78,6 +79,7 @@ protected:
         return pick_->list()->model()->index(static_cast<int>(row), 0).data().toString();
     }
 
+    WorkbenchColors colors_{QApplication::palette()};
     std::unique_ptr<QWidget> host_;
     QLineEdit* other_ = nullptr;
     QLineEdit* second_ = nullptr;
@@ -341,4 +343,41 @@ TEST_F(QuickPickTest, RendersTheList) {
     if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
         image.save(QString::fromUtf8(directory) + "/quick_pick.png");
     }
+}
+
+TEST_F(QuickPickTest, RepaintsWithTheColorsOfTheWorkbench) {
+    pick_->set_items(items_of({"One", "Two", "Three"}));
+    pick_->open();
+    const auto grab = [&] {
+        QApplication::processEvents();
+        return pick_->grab().toImage();
+    };
+    // Inside the list, at the left edge of a row: the first row is the chosen one, the second is
+    // not.
+    const int first_row_y = pick_->list()->geometry().top() + QuickPick::row_height / 2;
+    const int second_row_y = first_row_y + QuickPick::row_height;
+    const int x = pick_->list()->geometry().left() + 2;
+
+    const QImage before = grab();
+    EXPECT_EQ(before.pixelColor(x, first_row_y), colors_.color("quickInputList.focusBackground"));
+    EXPECT_EQ(before.pixelColor(x, second_row_y), colors_.color("quickInput.background"));
+    EXPECT_EQ(before.pixelColor(0, 5), colors_.color("widget.border"));
+
+    QSignalSpy changed(&colors_, &WorkbenchColors::changed);
+    colors_.set_colors({{"quickInputList.focusBackground", QColor("#aa0000")},
+                        {"quickInput.background", QColor("#102030")},
+                        {"widget.border", QColor("#00cc00")},
+                        {"input.background", QColor("#334455")},
+                        {"input.foreground", QColor("#ffeedd")}});
+    EXPECT_EQ(changed.count(), 1);
+
+    // The widgets that draw from their own palette follow without being painted.
+    EXPECT_EQ(pick_->list()->palette().color(QPalette::Base), QColor("#102030"));
+    EXPECT_EQ(pick_->filter_field()->palette().color(QPalette::Base), QColor("#334455"));
+    EXPECT_EQ(pick_->filter_field()->palette().color(QPalette::Text), QColor("#ffeedd"));
+
+    const QImage after = grab();
+    EXPECT_EQ(after.pixelColor(x, first_row_y), QColor("#aa0000"));
+    EXPECT_EQ(after.pixelColor(x, second_row_y), QColor("#102030"));
+    EXPECT_EQ(after.pixelColor(0, 5), QColor("#00cc00"));
 }

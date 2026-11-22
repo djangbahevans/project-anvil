@@ -1300,3 +1300,26 @@ TEST_F(MainWindowTest, RendersTheCommandPalette) {
         image.save(QString::fromUtf8(directory) + "/command_palette.png");
     }
 }
+
+// --- colors ---
+
+TEST_F(MainWindowTest, TheWorkbenchColorsFollowTheWindowsPalette) {
+    create_window();
+    QPalette palette = window_->palette();
+    EXPECT_EQ(window_->colors().color("statusBar.background"), palette.color(QPalette::Window));
+
+    palette.setColor(QPalette::Window, QColor("#4466aa"));
+    palette.setColor(QPalette::Base, QColor("#aa6644"));
+    window_->setPalette(palette);
+    EXPECT_EQ(window_->colors().color("statusBar.background"), QColor("#4466aa"));
+    EXPECT_EQ(window_->colors().color("editor.background"), QColor("#aa6644"));
+}
+
+TEST_F(MainWindowTest, TheCommandPaletteTakesItsColorsFromTheWorkbench) {
+    create_window();
+    window_->commands().execute("workbench.action.showCommands");
+    window_->colors().set_colors({{"quickInput.background", QColor("#204060")}});
+    QApplication::processEvents();
+    const QImage image = window_->command_palette()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() / 2, image.height() - 3), QColor("#204060"));
+}

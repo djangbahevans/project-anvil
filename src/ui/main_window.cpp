@@ -39,7 +39,7 @@ QString tab_title(const core::Uri& uri, const core::Document& document) {
 } // namespace
 
 MainWindow::MainWindow(Options options, QWidget* parent)
-    : QMainWindow(parent), options_(std::move(options)), bridge_(this) {
+    : QMainWindow(parent), options_(std::move(options)), colors_(palette()), bridge_(this) {
     resize(1000, 700);
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);
@@ -53,7 +53,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     tabs_->setFocusPolicy(Qt::NoFocus);
     view_ = new EditorView(central);
     find_bar_ = new FindBar(view_, central);
-    palette_ = new QuickPick(this);
+    palette_ = new QuickPick(this, colors_);
     palette_->set_ignored_prefix(">");
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));
@@ -558,6 +558,13 @@ bool MainWindow::resolve_unsaved_changes() {
         }
     }
     return true;
+}
+
+void MainWindow::changeEvent(QEvent* event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange) {
+        colors_.set_palette(palette());
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
