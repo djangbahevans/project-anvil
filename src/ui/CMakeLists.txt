@@ -1,19 +1,25 @@
 add_library(anvil_ui STATIC
+  activity_bar.cpp
   command_registry.cpp
   editor_view.cpp
   extension_host_bridge.cpp
   find_bar.cpp
+  include/anvil/ui/activity_bar.hpp
   include/anvil/ui/command_registry.hpp
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/find_bar.hpp
   include/anvil/ui/main_window.hpp
   include/anvil/ui/quick_pick.hpp
   include/anvil/ui/settings_store.hpp
+  include/anvil/ui/sidebar.hpp
+  include/anvil/ui/view_container_registry.hpp
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
   main_window.cpp
   quick_pick.cpp
   settings_store.cpp
+  sidebar.cpp
+  view_container_registry.cpp
   workbench.cpp
   workbench_colors.cpp
 )
