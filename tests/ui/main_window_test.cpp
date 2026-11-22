@@ -12,10 +12,10 @@
 #include <QListView>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSignalSpy>
-#include <QTabBar>
 #include <QTest>
 #include <QTimer>
 #include <chrono>
@@ -29,6 +29,7 @@ using anvil::ui::MainWindow;
 using anvil::ui::Part;
 using anvil::ui::StatusBar;
 using anvil::ui::StatusBarSide;
+using anvil::ui::TabStrip;
 using nlohmann::json;
 
 namespace {
@@ -142,10 +143,56 @@ protected:
         timer->start();
     }
 
+    void send_mouse(QEvent::Type type, const QPoint& position, Qt::MouseButton button,
+                    Qt::MouseButtons buttons) {
+        TabStrip* strip = window_->tab_strip();
+        QMouseEvent event(type, position, strip->mapToGlobal(position), button, buttons, {});
+        QApplication::sendEvent(strip, &event);
+    }
+
+    // What the user does with the mouse on the tab strip.
+    void click_tab(int index) {
+        const QPoint at = window_->tab_strip()->tab_rect(index).center() - QPoint(10, 0);
+        send_mouse(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+        send_mouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+    }
+    void click_close_button(int index) {
+        const QPoint at = window_->tab_strip()->close_button_rect(index).center();
+        send_mouse(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+        send_mouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+    }
+    void drag_tab(int from, int to) {
+        window_->show();
+        QApplication::processEvents();
+        TabStrip* strip = window_->tab_strip();
+        const QPoint start = strip->tab_rect(from).center() - QPoint(10, 0);
+        const int direction = to > from ? 1 : -1;
+        send_mouse(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+        send_mouse(QEvent::MouseMove, start + QPoint(direction * 12, 0), Qt::NoButton,
+                   Qt::LeftButton);
+        const int target = strip->tab_rect(to).center().x() + (direction > 0 ? 5 : -20);
+        send_mouse(QEvent::MouseMove, QPoint(target, start.y()), Qt::NoButton, Qt::LeftButton);
+        send_mouse(QEvent::MouseButtonRelease, QPoint(target, start.y()), Qt::LeftButton,
+                   Qt::NoButton);
+    }
+
+    // Chooses an item of the context menu of a tab, as the user does with a right click.
+    void choose_from_tab_menu(int index, const QString& text) {
+        const auto menu = window_->tab_strip()->build_context_menu(index);
+        for (QAction* action : menu->actions()) {
+            if (action->text() == text) {
+                ASSERT_TRUE(action->isEnabled()) << text.toStdString();
+                action->trigger();
+                return;
+            }
+        }
+        ADD_FAILURE() << "no menu item " << text.toStdString();
+    }
+
     std::vector<QString> tab_titles() const {
         std::vector<QString> titles;
-        for (int i = 0; i < window_->tab_bar()->count(); ++i) {
-            titles.push_back(window_->tab_bar()->tabText(i));
+        for (int i = 0; i < window_->tab_strip()->count(); ++i) {
+            titles.push_back(window_->tab_strip()->tab(i).title);
         }
         return titles;
     }
@@ -337,14 +384,14 @@ TEST_F(MainWindowTest, ShowsATabPerOpenDocument) {
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
     EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "a.txt", "b.txt"}));
-    EXPECT_EQ(window_->tab_bar()->currentIndex(), 2);
+    EXPECT_EQ(window_->tab_strip()->current_index(), 2);
 }
 
 TEST_F(MainWindowTest, SelectingATabShowsItsDocument) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
-    window_->tab_bar()->setCurrentIndex(1);
+    click_tab(1);
     EXPECT_EQ(current_text(), "A");
     EXPECT_EQ(window_->view()->document(), window_->current_document());
     EXPECT_TRUE(window_->windowTitle().contains("a.txt"));
@@ -353,14 +400,17 @@ TEST_F(MainWindowTest, SelectingATabShowsItsDocument) {
 TEST_F(MainWindowTest, TheTabOfAnEditedDocumentIsMarkedModified) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
-    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "a.txt");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
     type("x");
-    EXPECT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● a.txt"));
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
     window_->view()->undo();
-    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "a.txt");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
     type("x");
     ASSERT_TRUE(window_->save());
-    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "a.txt");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
 }
 
 TEST_F(MainWindowTest, SaveAsRenamesTheTab) {
@@ -373,27 +423,27 @@ TEST_F(MainWindowTest, SaveAsRenamesTheTab) {
 TEST_F(MainWindowTest, AmpersandsInFileNamesAreShownLiterally) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a&b.txt", "").string())));
-    EXPECT_EQ(window_->tab_bar()->tabText(1), "a&&b.txt");
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "a&b.txt");
 }
 
 TEST_F(MainWindowTest, ReorderingTabsKeepsTheShownDocument) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
-    window_->tab_bar()->moveTab(2, 0); // b.txt moves to the front
+    drag_tab(2, 0); // b.txt moves to the front
     EXPECT_EQ(tab_titles(), (std::vector<QString>{"b.txt", "Untitled-1", "a.txt"}));
     EXPECT_EQ(current_text(), "B");
-    window_->tab_bar()->setCurrentIndex(2);
+    click_tab(2);
     EXPECT_EQ(current_text(), "A");
-    window_->tab_bar()->setCurrentIndex(1);
+    click_tab(1);
     EXPECT_EQ(window_->current_document()->text().to_string(), "");
     EXPECT_EQ(window_->current_uri().scheme, "untitled");
 
-    window_->tab_bar()->moveTab(0, 2); // and back again, the other direction
+    drag_tab(0, 2); // and back again, the other direction
     EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "a.txt", "b.txt"}));
-    window_->tab_bar()->setCurrentIndex(2);
+    click_tab(2);
     EXPECT_EQ(current_text(), "B");
-    window_->tab_bar()->setCurrentIndex(1);
+    click_tab(1);
     EXPECT_EQ(current_text(), "A");
 }
 
@@ -401,7 +451,7 @@ TEST_F(MainWindowTest, ClosingTheShownTabShowsItsNeighbour) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
-    window_->tab_bar()->setCurrentIndex(1);
+    click_tab(1);
     ASSERT_TRUE(window_->close_document(1));
     EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "b.txt"}));
     EXPECT_EQ(current_text(), "B");
@@ -416,18 +466,116 @@ TEST_F(MainWindowTest, ClosingAnotherTabKeepsTheShownDocument) {
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
     ASSERT_TRUE(window_->close_document(0));
     EXPECT_EQ(current_text(), "B");
-    EXPECT_EQ(window_->tab_bar()->currentIndex(), 1);
+    EXPECT_EQ(window_->tab_strip()->current_index(), 1);
     ASSERT_TRUE(window_->close_document(0));
     EXPECT_EQ(current_text(), "B");
-    EXPECT_EQ(window_->tab_bar()->currentIndex(), 0);
+    EXPECT_EQ(window_->tab_strip()->current_index(), 0);
     EXPECT_EQ(window_->open_document_count(), 1u);
 }
 
 TEST_F(MainWindowTest, TheCloseButtonClosesTheTab) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
-    emit window_->tab_bar()->tabCloseRequested(1);
+    click_close_button(1);
     EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1"}));
+}
+
+TEST_F(MainWindowTest, AMiddleClickOnATabClosesIt) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    const QPoint at = window_->tab_strip()->tab_rect(1).center();
+    send_mouse(QEvent::MouseButtonPress, at, Qt::MiddleButton, Qt::MiddleButton);
+    send_mouse(QEvent::MouseButtonRelease, at, Qt::MiddleButton, Qt::NoButton);
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "b.txt"}));
+}
+
+TEST_F(MainWindowTest, CloseOthersKeepsOnlyTheTabTheMenuIsFor) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    choose_from_tab_menu(2, "Close Others");
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"b.txt"}));
+    EXPECT_EQ(current_text(), "B");
+}
+
+TEST_F(MainWindowTest, CloseToTheRightClosesTheTabsAfterTheOneTheMenuIsFor) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    choose_from_tab_menu(1, "Close to the Right");
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_EQ(current_text(), "A");
+}
+
+TEST_F(MainWindowTest, CloseSavedClosesTheTabsWithoutUnsavedChanges) {
+    create_window(false, true);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    type("!");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    answer_next_prompt(QMessageBox::Cancel);
+    choose_from_tab_menu(0, "Close Saved");
+    EXPECT_FALSE(prompt_shown_);
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"a.txt"}));
+    EXPECT_EQ(current_text(), "!A");
+}
+
+TEST_F(MainWindowTest, CloseSavedWithEverythingSavedLeavesANewUntitledDocument) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    choose_from_tab_menu(0, "Close Saved");
+    EXPECT_EQ(window_->open_document_count(), 1u);
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+}
+
+TEST_F(MainWindowTest, CancellingTheQuestionOfCloseOthersStopsClosing) {
+    create_window(false, true);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    type("!");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    answer_next_prompt(QMessageBox::Cancel);
+    choose_from_tab_menu(3, "Close Others");
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"a.txt", "b.txt", "c.txt"}));
+}
+
+TEST_F(MainWindowTest, DiscardingInTheQuestionOfCloseOthersClosesTheTab) {
+    create_window(false, true);
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    answer_next_prompt(QMessageBox::Discard);
+    choose_from_tab_menu(2, "Close Others");
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"b.txt"}));
+    EXPECT_EQ(*platform::read_file(path), "A");
+}
+
+TEST_F(MainWindowTest, CopyPathPutsTheFilesPathOnTheClipboard) {
+    create_window();
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    QApplication::clipboard()->setText("something else");
+    choose_from_tab_menu(1, "Copy Path");
+    EXPECT_EQ(QApplication::clipboard()->text(), QString::fromStdString(path.string()));
+}
+
+TEST_F(MainWindowTest, AnUntitledTabHasNoPathToCopy) {
+    create_window();
+    EXPECT_FALSE(window_->tab_strip()->tab(0).has_path);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    EXPECT_TRUE(window_->tab_strip()->tab(1).has_path);
+}
+
+TEST_F(MainWindowTest, ATabShowsThePathOfItsFileAsItsToolTip) {
+    create_window();
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    EXPECT_EQ(window_->tab_strip()->tab(1).tooltip, QString::fromStdString(path.string()));
 }
 
 TEST_F(MainWindowTest, ClosingTheLastDocumentLeavesANewUntitledOne) {
@@ -514,7 +662,7 @@ TEST_F(MainWindowTest, CancellingTheCloseKeepsTheTab) {
     create_window(false, true);
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
     type("!");
-    window_->tab_bar()->setCurrentIndex(0);
+    click_tab(0);
     answer_next_prompt(QMessageBox::Cancel);
     EXPECT_FALSE(window_->close_document(1));
     EXPECT_TRUE(prompt_shown_);
@@ -592,8 +740,8 @@ TEST_F(MainWindowTest, ExtensionsEditingAnotherDocumentUpdateItsTab) {
     ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
     ASSERT_TRUE(run("anvil.docs.workspaceEdit", json::array({a.string()})).get<bool>());
-    ASSERT_TRUE(wait_until([&] { return window_->tab_bar()->tabText(1).startsWith(u'●'); }));
-    EXPECT_EQ(window_->tab_bar()->currentIndex(), 2);
+    ASSERT_TRUE(wait_until([&] { return window_->tab_strip()->tab(1).dirty; }));
+    EXPECT_EQ(window_->tab_strip()->current_index(), 2);
 }
 
 TEST_F(MainWindowTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
@@ -613,18 +761,18 @@ TEST_F(MainWindowTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
     };
     const auto one_tab = time_typing();
 
-    for (int i = 0; i < 300; ++i) {
+    for (int i = 0; i < 499; ++i) {
         ASSERT_TRUE(window_->open_file(
             QString::fromStdString(write("tab" + std::to_string(i) + ".txt", "x").string())));
     }
-    ASSERT_EQ(window_->tab_bar()->count(), 301);
+    ASSERT_EQ(window_->tab_strip()->count(), 500);
     const auto many_tabs = time_typing();
 
-    // Typing into the last tab costs about as much as typing into the only one. Re-laying out the
-    // tab bar on every keystroke costs tens of times as much.
+    // Typing into the last tab costs about as much as typing into the only one. Laying out or
+    // repainting the strip for every tab on every keystroke would cost many times as much.
     EXPECT_LT(many_tabs, one_tab * 5 + std::chrono::milliseconds(5))
         << "one tab: " << std::chrono::duration_cast<std::chrono::microseconds>(one_tab).count()
-        << " us, 301 tabs: "
+        << " us, 500 tabs: "
         << std::chrono::duration_cast<std::chrono::microseconds>(many_tabs).count() << " us";
 }
 
@@ -716,12 +864,13 @@ TEST_F(MainWindowTest, SavingFromAnExtensionClearsTheModifiedMarkers) {
     ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
     type("!");
     ASSERT_TRUE(window_->isWindowModified());
-    ASSERT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● a.txt"));
+    ASSERT_TRUE(window_->tab_strip()->tab(1).dirty);
 
     run("anvil.docs.save");
     EXPECT_EQ(*platform::read_file(path), "!abc");
     EXPECT_FALSE(window_->isWindowModified());
-    EXPECT_EQ(window_->tab_bar()->tabText(1), "a.txt");
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "a.txt");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
 }
 
 TEST_F(MainWindowTest, ExtensionCommandsAreAvailableFromTheCommandList) {
@@ -752,7 +901,7 @@ TEST_F(MainWindowTest, TheFindBarSitsBetweenTheTabBarAndTheEditor) {
     create_window();
     window_->find_bar()->open();
     QApplication::processEvents();
-    const int tabs_bottom = window_->tab_bar()->geometry().bottom();
+    const int tabs_bottom = window_->tab_strip()->geometry().bottom();
     const int bar_top = window_->find_bar()->geometry().top();
     const int bar_bottom = window_->find_bar()->geometry().bottom();
     const int editor_top = window_->view()->geometry().top();
@@ -785,7 +934,7 @@ TEST_F(MainWindowTest, SwitchingTabsSearchesTheNewDocument) {
 
     ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
     EXPECT_EQ(window_->find_bar()->match_count(), 4u);
-    window_->tab_bar()->setCurrentIndex(0);
+    click_tab(0);
     EXPECT_EQ(window_->find_bar()->match_count(), 0u);
 }
 
@@ -800,7 +949,8 @@ TEST_F(MainWindowTest, ReplacingMarksTheDocumentModifiedAndReachesTheTab) {
     window_->find_bar()->replace_all();
     EXPECT_EQ(window_->current_document()->text().to_string(), "1 two 1");
     EXPECT_TRUE(window_->isWindowModified());
-    EXPECT_EQ(window_->tab_bar()->tabText(1), QString::fromUtf8("● c.txt"));
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "c.txt");
 }
 
 TEST_F(MainWindowTest, CtrlFSeedsTheFindFieldFromTheEditor) {
@@ -1405,7 +1555,7 @@ TEST_F(MainWindowTest, TheWindowIsAWorkbenchWithTheEditorInItsEditorArea) {
     ASSERT_NE(window_->workbench(), nullptr);
     EXPECT_EQ(window_->centralWidget(), window_->workbench());
     EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->view()));
-    EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->tab_bar()));
+    EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->tab_strip()));
     EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->find_bar()));
 
     EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));

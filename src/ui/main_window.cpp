@@ -7,14 +7,13 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QSignalBlocker>
-#include <QTabBar>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
@@ -33,12 +32,6 @@ QString display_name(const core::Uri& uri) {
     return QString::fromStdString(uri.path);
 }
 
-QString tab_title(const core::Uri& uri, const core::Document& document) {
-    // A single ampersand would be taken as a keyboard mnemonic marker.
-    QString name = display_name(uri).replace('&', "&&");
-    return document.is_dirty() ? QString::fromUtf8("● ") + name : name;
-}
-
 } // namespace
 
 MainWindow::MainWindow(Options options, QWidget* parent)
@@ -48,12 +41,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     auto* layout = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    tabs_ = new QTabBar(central);
-    tabs_->setTabsClosable(true);
-    tabs_->setMovable(true);
-    tabs_->setExpanding(false);
-    tabs_->setDocumentMode(true);
-    tabs_->setFocusPolicy(Qt::NoFocus);
+    tabs_ = new TabStrip(colors_, central);
     view_ = new EditorView(central);
     find_bar_ = new FindBar(view_, central);
     palette_ = new QuickPick(this, colors_);
@@ -98,14 +86,28 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     connect(status_bar_, &StatusBar::command_requested, this,
             [this](const QString& command) { execute_command(command.toStdString()); });
 
-    connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
-        if (index >= 0 && static_cast<std::size_t>(index) != current_) {
-            activate(static_cast<std::size_t>(index));
+    connect(tabs_, &TabStrip::current_changed, this,
+            [this](int index) { activate(static_cast<std::size_t>(index)); });
+    connect(tabs_, &TabStrip::tab_moved, this, &MainWindow::move_document);
+    connect(tabs_, &TabStrip::close_requested, this,
+            [this](int index) { close_document(static_cast<std::size_t>(index)); });
+    connect(tabs_, &TabStrip::close_others_requested, this, [this](int index) {
+        close_documents_where(
+            [index](std::size_t i) { return i != static_cast<std::size_t>(index); });
+    });
+    connect(tabs_, &TabStrip::close_to_the_right_requested, this, [this](int index) {
+        close_documents_where(
+            [index](std::size_t i) { return i > static_cast<std::size_t>(index); });
+    });
+    connect(tabs_, &TabStrip::close_saved_requested, this, [this] {
+        close_documents_where(
+            [this](std::size_t i) { return !documents_[i].document->is_dirty(); });
+    });
+    connect(tabs_, &TabStrip::copy_path_requested, this, [this](int index) {
+        if (const auto path = documents_[static_cast<std::size_t>(index)].uri.file_path()) {
+            QApplication::clipboard()->setText(QString::fromStdString(path->string()));
         }
     });
-    connect(tabs_, &QTabBar::tabMoved, this, &MainWindow::move_document);
-    connect(tabs_, &QTabBar::tabCloseRequested, this,
-            [this](int index) { close_document(static_cast<std::size_t>(index)); });
     connect(view_, &EditorView::text_changed, this, &MainWindow::on_text_changed);
     connect(view_, &EditorView::selections_changed, this, &MainWindow::on_selections_changed);
 
@@ -298,10 +300,7 @@ void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Docum
     auto index = index_of(uri);
     if (!index) {
         documents_.push_back({uri, std::move(document)});
-        {
-            const QSignalBlocker blocker(tabs_);
-            tabs_->addTab(QString());
-        }
+        tabs_->add_tab({});
         index = documents_.size() - 1;
         update_tab(*index);
     }
@@ -310,10 +309,7 @@ void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Docum
 
 void MainWindow::activate(std::size_t index) {
     current_ = index;
-    {
-        const QSignalBlocker blocker(tabs_);
-        tabs_->setCurrentIndex(static_cast<int>(index));
-    }
+    tabs_->set_current_index(static_cast<int>(index));
     view_->set_document(documents_[index].document);
     bridge_.show(documents_[index].uri);
     update_title();
@@ -328,7 +324,7 @@ void MainWindow::move_document(int from, int to) {
     } else {
         std::rotate(first + to, first + from, first + from + 1);
     }
-    current_ = static_cast<std::size_t>(tabs_->currentIndex());
+    current_ = static_cast<std::size_t>(tabs_->current_index());
 }
 
 bool MainWindow::close_document(std::size_t index) {
@@ -344,16 +340,29 @@ bool MainWindow::close_document(std::size_t index) {
     }
     bridge_.remove_document(documents_[index].uri);
     documents_.erase(documents_.begin() + static_cast<std::ptrdiff_t>(index));
-    {
-        const QSignalBlocker blocker(tabs_);
-        tabs_->removeTab(static_cast<int>(index));
-    }
+    tabs_->remove_tab(static_cast<int>(index));
     if (index < current_) {
         --current_;
     } else if (index == current_) {
         activate(std::min(index, documents_.size() - 1));
     }
     return true;
+}
+
+void MainWindow::close_documents_where(const std::function<bool(std::size_t)>& wanted) {
+    // Closing asks about unsaved changes, and extensions can open and close documents meanwhile, so
+    // the documents are remembered by identity rather than by position.
+    std::vector<core::Uri> targets;
+    for (std::size_t i = 0; i < documents_.size(); ++i) {
+        if (wanted(i)) {
+            targets.push_back(documents_[i].uri);
+        }
+    }
+    for (const core::Uri& uri : targets) {
+        if (const auto index = index_of(uri); index && !close_document(*index)) {
+            return;
+        }
+    }
 }
 
 bool MainWindow::confirm_close(std::size_t index) {
@@ -377,18 +386,12 @@ void MainWindow::update_document(std::size_t index) {
 
 void MainWindow::update_tab(std::size_t index) {
     const auto& open = documents_[index];
-    const int tab = static_cast<int>(index);
-    const QString title = tab_title(open.uri, *open.document);
-    const QString tooltip = QString::fromStdString(
-        open.uri.file_path() ? open.uri.file_path()->string() : open.uri.to_string());
-    // Setting a tab property, even to its current value, makes Qt lay out the whole tab bar,
-    // which would make every keystroke cost time proportional to the number of tabs.
-    if (tabs_->tabText(tab) != title) {
-        tabs_->setTabText(tab, title);
-    }
-    if (tabs_->tabToolTip(tab) != tooltip) {
-        tabs_->setTabToolTip(tab, tooltip);
-    }
+    const auto path = open.uri.file_path();
+    tabs_->set_tab(static_cast<int>(index),
+                   {.title = display_name(open.uri),
+                    .tooltip = QString::fromStdString(path ? path->string() : open.uri.to_string()),
+                    .dirty = open.document->is_dirty(),
+                    .has_path = path.has_value()});
 }
 
 bool MainWindow::open_file(const QString& path) {
