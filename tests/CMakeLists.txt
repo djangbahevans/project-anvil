@@ -18,6 +18,7 @@ add_executable(anvil_core_tests
   core/text_file_test.cpp
   core/text_model_test.cpp
   core/text_test.cpp
+  core/token_theme_test.cpp
   core/uri_test.cpp
   core/utf_test.cpp
   core/when_expression_test.cpp
