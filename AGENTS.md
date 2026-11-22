@@ -71,7 +71,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, color themes, fuzzy matching, UTF-8/UTF-16, URIs, JSON with comments, settings, logging interface |
 | `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services |
-| `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, main window, extension host bridge |
+| `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
 | `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer and the token theme matcher, copying the color themes, formatting |
@@ -109,6 +109,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 - `GTEST` macros split on commas, so wrap braced initializers in parentheses. A raw string containing `)"` needs its own delimiter, such as `R"j(...)j"`.
 - Designated initializers need a default member initializer on every member, or `-Wmissing-field-initializers` fires.
 - Qt sizes are signed (`qsizetype`); cast them explicitly under `-Wconversion`. AUTOMOC only processes headers that are listed in the target's sources.
+- `QTest::mouseMove` sends nothing when the cursor is already at that position, which a previous test can leave it at, so a hover test that uses it passes or fails by test order. Send a `QMouseEvent` to the widget instead. `QToolTip::hideText()` hides the tip after a delay; wait for `QToolTip::isVisible()` to turn false.
 - Process tests that start `sh -c` must `exec` the real program, or killing the shell leaves an orphan holding ctest's output pipe open.
 - Benchmarks on WSL2 vary by several times between runs; compare orders of magnitude.
 
