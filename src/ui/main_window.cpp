@@ -70,6 +70,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     workbench_->set_status_bar(statusBar());
     setCentralWidget(workbench_);
     sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
+    panel_ = new Panel(*workbench_, view_containers_, colors_, this);
 
     position_label_ = new QLabel(this);
     host_label_ = new QLabel(this);
@@ -190,6 +191,8 @@ void MainWindow::register_commands() {
         [this] { workbench_->toggle(Part::panel); });
     add("workbench.action.toggleActivityBarVisibility", tr("Toggle Activity Bar Visibility"),
         [this] { workbench_->toggle(Part::activity_bar); });
+    add("workbench.action.toggleMaximizedPanel", tr("Toggle Maximized Panel"),
+        [this] { workbench_->set_maximized(Part::panel, !workbench_->is_maximized(Part::panel)); });
 }
 
 void MainWindow::share_commands_with_extensions() {

@@ -9,6 +9,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/find_bar.hpp
   include/anvil/ui/main_window.hpp
+  include/anvil/ui/panel.hpp
   include/anvil/ui/quick_pick.hpp
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
@@ -17,6 +18,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
   main_window.cpp
+  panel.cpp
   quick_pick.cpp
   settings_store.cpp
   sidebar.cpp

@@ -959,7 +959,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.showCommands",
                                           "workbench.action.toggleSidebarVisibility",
                                           "workbench.action.togglePanel",
-                                          "workbench.action.toggleActivityBarVisibility"};
+                                          "workbench.action.toggleActivityBarVisibility",
+                                          "workbench.action.toggleMaximizedPanel"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
         ASSERT_NE(command, nullptr) << id;
@@ -1462,4 +1463,37 @@ TEST_F(MainWindowTest, ARegisteredViewContainerShowsTheActivityBarAndOpensInTheS
     EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
     EXPECT_EQ(window_->sidebar()->active_container(), "workbench.view.explorer");
     EXPECT_EQ(created, 1);
+}
+
+TEST_F(MainWindowTest, APanelContainerOpensInThePanelAndTheCommandsMaximizeIt) {
+    create_window();
+    int created = 0;
+    ui::ViewContainer container;
+    container.id = "workbench.panel.output";
+    container.title = "Output";
+    container.location = ui::ViewContainerLocation::panel;
+    container.create = [&] {
+        ++created;
+        return new QLabel("log");
+    };
+    window_->view_containers().add(std::move(container));
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_EQ(created, 0);
+
+    window_->commands().execute("workbench.action.togglePanel");
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::panel));
+    EXPECT_EQ(window_->panel()->active_container(), "workbench.panel.output");
+    EXPECT_EQ(created, 1);
+
+    window_->commands().execute("workbench.action.toggleMaximizedPanel");
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->workbench()->is_maximized(ui::Part::panel));
+    EXPECT_FALSE(window_->view()->isVisible());
+    window_->commands().execute("workbench.action.toggleMaximizedPanel");
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->workbench()->is_maximized(ui::Part::panel));
+    EXPECT_TRUE(window_->view()->isVisible());
 }
