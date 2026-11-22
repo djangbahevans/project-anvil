@@ -15,6 +15,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
   include/anvil/ui/status_bar.hpp
+  include/anvil/ui/tab_strip.hpp
   include/anvil/ui/theme_store.hpp
   include/anvil/ui/view_container_registry.hpp
   include/anvil/ui/view_container_stack.hpp
@@ -27,6 +28,7 @@ add_library(anvil_ui STATIC
   settings_store.cpp
   sidebar.cpp
   status_bar.cpp
+  tab_strip.cpp
   theme_store.cpp
   view_container_registry.cpp
   view_container_stack.cpp

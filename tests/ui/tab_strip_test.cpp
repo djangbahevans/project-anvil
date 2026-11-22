@@ -1,0 +1,758 @@
+#include "anvil/ui/tab_strip.hpp"
+
+#include <QAction>
+#include <QApplication>
+#include <QHelpEvent>
+#include <QImage>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QSignalSpy>
+#include <QTest>
+#include <QToolTip>
+#include <QWheelEvent>
+#include <cstdlib>
+#include <gtest/gtest.h>
+#include <memory>
+
+using namespace anvil::ui;
+
+namespace {
+
+class PaintCounter : public QObject {
+public:
+    int count = 0;
+
+protected:
+    bool eventFilter(QObject*, QEvent* event) override {
+        if (event->type() == QEvent::Paint) {
+            ++count;
+        }
+        return false;
+    }
+};
+
+class TabStripTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#101010")},
+                            {"tab.activeBackground", QColor("#202020")},
+                            {"tab.inactiveBackground", QColor("#303030")},
+                            {"tab.hoverBackground", QColor("#404040")},
+                            {"tab.activeForeground", QColor("#ffffff")},
+                            {"tab.inactiveForeground", QColor("#aaaaaa")},
+                            {"tab.activeBorderTop", QColor("#3994bc")},
+                            {"tab.border", QColor("#0000ff")},
+                            {"toolbar.hoverBackground", QColor("#606060")}});
+        strip_ = std::make_unique<TabStrip>(colors_);
+        strip_->resize(600, TabStrip::height_pixels);
+        strip_->show();
+        QApplication::processEvents();
+    }
+
+    void add(const QString& title, bool dirty = false) {
+        strip_->add_tab(
+            {.title = title, .tooltip = "/path/" + title, .dirty = dirty, .has_path = true});
+    }
+    void add_many(int count) {
+        for (int i = 0; i < count; ++i) {
+            add("file" + QString::number(i) + ".txt");
+        }
+    }
+
+    void send(QEvent::Type type, const QPoint& position, Qt::MouseButton button,
+              Qt::MouseButtons buttons) {
+        QMouseEvent event(type, position, strip_->mapToGlobal(position), button, buttons, {});
+        QApplication::sendEvent(strip_.get(), &event);
+    }
+    void press(const QPoint& position, Qt::MouseButton button = Qt::LeftButton) {
+        send(QEvent::MouseButtonPress, position, button, button);
+    }
+    void release(const QPoint& position, Qt::MouseButton button = Qt::LeftButton) {
+        send(QEvent::MouseButtonRelease, position, button, Qt::NoButton);
+    }
+    void move(const QPoint& position, Qt::MouseButtons buttons = Qt::NoButton) {
+        send(QEvent::MouseMove, position, Qt::NoButton, buttons);
+    }
+    void click(const QPoint& position, Qt::MouseButton button = Qt::LeftButton) {
+        press(position, button);
+        release(position, button);
+    }
+
+    QPoint body(int index) const {
+        return strip_->tab_rect(index).center() - QPoint(10, 0);
+    }
+    QPoint button(int index) const {
+        return strip_->close_button_rect(index).center();
+    }
+
+    QImage grab() {
+        QApplication::processEvents();
+        return strip_->grab().toImage();
+    }
+    QColor pixel(const QImage& image, const QPoint& at) const {
+        return QColor(image.pixel(at));
+    }
+
+    std::vector<QString> titles() const {
+        std::vector<QString> result;
+        for (int i = 0; i < strip_->count(); ++i) {
+            result.push_back(strip_->tab(i).title);
+        }
+        return result;
+    }
+
+    WorkbenchColors colors_{QApplication::palette()};
+    std::unique_ptr<TabStrip> strip_;
+};
+
+} // namespace
+
+TEST_F(TabStripTest, IsAsHighAsVsCodesTabStripAndUsesItsFontSize) {
+    EXPECT_EQ(strip_->height(), 35);
+    EXPECT_EQ(strip_->font().pixelSize(), 13);
+    EXPECT_EQ(strip_->accessibleName(), "Tabs");
+}
+
+TEST_F(TabStripTest, ATabIsAtLeast120PixelsWideAndWideEnoughForItsTitle) {
+    add("a");
+    add("a title that is much longer than the minimum width of a tab");
+    EXPECT_EQ(strip_->tab_rect(0).width(), 120);
+    const int title = QFontMetrics(strip_->font()).horizontalAdvance(strip_->tab(1).title);
+    EXPECT_EQ(strip_->tab_rect(1).width(),
+              TabStrip::title_padding + title + 1 + TabStrip::action_width);
+    EXPECT_GT(strip_->tab_rect(1).width(), 120);
+    EXPECT_EQ(strip_->tab_rect(1).left(), strip_->tab_rect(0).right() + 1);
+    EXPECT_EQ(strip_->tab_rect(0).height(), 35);
+}
+
+TEST_F(TabStripTest, TheCloseButtonIsAtTheRightEndOfItsTab) {
+    add("a");
+    const QRect tab = strip_->tab_rect(0);
+    const QRect close = strip_->close_button_rect(0);
+    EXPECT_EQ(close.size(), QSize(16, 16));
+    EXPECT_TRUE(tab.contains(close));
+    EXPECT_GT(close.left(), tab.center().x());
+    EXPECT_NEAR(close.center().y(), tab.center().y(), 1);
+    EXPECT_TRUE(strip_->tab_rect(5).isEmpty());
+    EXPECT_TRUE(strip_->close_button_rect(-1).isEmpty());
+}
+
+TEST_F(TabStripTest, TheFirstTabIsSelectedAndAddingTabsDoesNotChangeTheSelection) {
+    EXPECT_EQ(strip_->current_index(), -1);
+    add("a");
+    EXPECT_EQ(strip_->current_index(), 0);
+    add("b");
+    add("c");
+    EXPECT_EQ(strip_->current_index(), 0);
+    EXPECT_EQ(strip_->count(), 3);
+}
+
+TEST_F(TabStripTest, ChangingTheModelEmitsNothing) {
+    QSignalSpy current(strip_.get(), &TabStrip::current_changed);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    add("a");
+    add("b");
+    add("c");
+    strip_->set_current_index(2);
+    strip_->move_tab(2, 0);
+    strip_->set_tab(0, {.title = "renamed"});
+    strip_->remove_tab(1);
+    EXPECT_EQ(current.count() + moved.count() + closed.count(), 0);
+    EXPECT_EQ(strip_->current_index(), 0);
+    EXPECT_EQ(titles(), (std::vector<QString>{"renamed", "b"}));
+}
+
+TEST_F(TabStripTest, ClickingATabSelectsItAndSaysSo) {
+    add_many(3);
+    QSignalSpy spy(strip_.get(), &TabStrip::current_changed);
+    click(body(2));
+    EXPECT_EQ(strip_->current_index(), 2);
+    ASSERT_EQ(spy.count(), 1);
+    EXPECT_EQ(spy.at(0).at(0).toInt(), 2);
+    click(body(2));
+    EXPECT_EQ(spy.count(), 1);
+}
+
+TEST_F(TabStripTest, TheTabIsSelectedWhenTheButtonGoesDownNotWhenItComesUp) {
+    add_many(2);
+    QSignalSpy spy(strip_.get(), &TabStrip::current_changed);
+    press(body(1));
+    EXPECT_EQ(spy.count(), 1);
+    release(body(1));
+    EXPECT_EQ(spy.count(), 1);
+}
+
+TEST_F(TabStripTest, ClickingOutsideAnyTabDoesNothing) {
+    add("a");
+    QSignalSpy spy(strip_.get(), &TabStrip::current_changed);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    click(QPoint(500, 10));
+    click(QPoint(500, 10), Qt::MiddleButton);
+    EXPECT_EQ(spy.count() + closed.count(), 0);
+}
+
+TEST_F(TabStripTest, RemovingATabKeepsTheSelectedTabSelected) {
+    add_many(4);
+    strip_->set_current_index(2);
+    strip_->remove_tab(0);
+    EXPECT_EQ(strip_->current_index(), 1);
+    EXPECT_EQ(strip_->tab(1).title, "file2.txt");
+    strip_->remove_tab(2);
+    EXPECT_EQ(strip_->current_index(), 1);
+}
+
+TEST_F(TabStripTest, RemovingTheSelectedTabSelectsTheOneThatTakesItsPlace) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->remove_tab(1);
+    EXPECT_EQ(strip_->current_index(), 1);
+    EXPECT_EQ(strip_->tab(1).title, "file2.txt");
+    strip_->remove_tab(1);
+    EXPECT_EQ(strip_->current_index(), 0);
+    strip_->remove_tab(0);
+    EXPECT_EQ(strip_->current_index(), -1);
+    EXPECT_EQ(strip_->count(), 0);
+}
+
+TEST_F(TabStripTest, MovingATabKeepsTheSelectionOnItsTab) {
+    add_many(4);
+    strip_->set_current_index(1);
+    strip_->move_tab(0, 3);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file1.txt", "file2.txt", "file3.txt", "file0.txt"}));
+    EXPECT_EQ(strip_->current_index(), 0);
+    strip_->move_tab(0, 2);
+    EXPECT_EQ(strip_->current_index(), 2);
+    strip_->move_tab(3, 0);
+    EXPECT_EQ(strip_->current_index(), 3);
+}
+
+TEST_F(TabStripTest, SettingATabToWhatItAlreadyIsDoesNotRepaintOrLayOut) {
+    add("a");
+    add("b", false);
+    QApplication::processEvents();
+    PaintCounter counter;
+    strip_->installEventFilter(&counter);
+    const QRect before = strip_->tab_rect(1);
+
+    for (int i = 0; i < 100; ++i) {
+        strip_->set_tab(1, {.title = "b", .tooltip = "/path/b", .dirty = false, .has_path = true});
+    }
+    QApplication::processEvents();
+    EXPECT_EQ(counter.count, 0);
+    EXPECT_EQ(strip_->tab_rect(1), before);
+
+    strip_->set_tab(1, {.title = "b", .tooltip = "/path/b", .dirty = true, .has_path = true});
+    QApplication::processEvents();
+    EXPECT_EQ(counter.count, 1);
+}
+
+TEST_F(TabStripTest, ALongerTitleMovesTheTabsAfterIt) {
+    add("a");
+    add("b");
+    const int before = strip_->tab_rect(1).left();
+    strip_->set_tab(0, {.title = "a title that is much longer than the minimum width of a tab",
+                        .tooltip = {},
+                        .dirty = false,
+                        .has_path = false});
+    EXPECT_GT(strip_->tab_rect(1).left(), before);
+}
+
+TEST_F(TabStripTest, TheSelectedTabHasItsOwnBackgroundAndALineOnTop) {
+    add_many(2);
+    const QImage image = grab();
+    const QRect active = strip_->tab_rect(0);
+    const QRect inactive = strip_->tab_rect(1);
+    EXPECT_EQ(pixel(image, active.topLeft() + QPoint(5, 10)), QColor("#202020"));
+    EXPECT_EQ(pixel(image, active.topLeft() + QPoint(5, 0)), QColor("#3994bc"));
+    EXPECT_EQ(pixel(image, active.topLeft() + QPoint(5, 1)), QColor("#202020"));
+    EXPECT_EQ(pixel(image, inactive.topLeft() + QPoint(5, 10)), QColor("#303030"));
+    EXPECT_EQ(pixel(image, inactive.topLeft() + QPoint(5, 0)), QColor("#303030"));
+}
+
+TEST_F(TabStripTest, TabsAreSeparatedByABorderAndTheStripHasItsOwnBackground) {
+    add_many(2);
+    const QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).right(), 10)), QColor("#0000ff"));
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).right() - 1, 10)), QColor("#202020"));
+    EXPECT_EQ(pixel(image, QPoint(550, 10)), QColor("#101010"));
+}
+
+TEST_F(TabStripTest, ATabUnderTheMouseHasTheHoverBackground) {
+    add_many(3);
+    move(body(1));
+    EXPECT_EQ(strip_->hovered_tab(), 1);
+    QImage image = grab();
+    EXPECT_EQ(pixel(image, strip_->tab_rect(1).topLeft() + QPoint(5, 10)), QColor("#404040"));
+    EXPECT_EQ(pixel(image, strip_->tab_rect(2).topLeft() + QPoint(5, 10)), QColor("#303030"));
+    EXPECT_EQ(pixel(image, strip_->tab_rect(0).topLeft() + QPoint(5, 10)), QColor("#202020"));
+    move(body(0));
+    EXPECT_EQ(strip_->hovered_tab(), 0);
+    move(QPoint(550, 10));
+    EXPECT_EQ(strip_->hovered_tab(), -1);
+}
+
+TEST_F(TabStripTest, AThemeWithoutAHoverColorShowsNoHoverEffect) {
+    colors_.set_colors({{"tab.activeBackground", QColor("#202020")},
+                        {"tab.inactiveBackground", QColor("#303030")}});
+    add_many(2);
+    move(body(1));
+    EXPECT_EQ(pixel(grab(), strip_->tab_rect(1).topLeft() + QPoint(5, 10)), QColor("#303030"));
+}
+
+TEST_F(TabStripTest, LeavingTheStripEndsTheHover) {
+    add_many(2);
+    move(body(1));
+    ASSERT_EQ(strip_->hovered_tab(), 1);
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(strip_.get(), &leave);
+    EXPECT_EQ(strip_->hovered_tab(), -1);
+}
+
+namespace {
+
+// Pixels that differ from `background` inside `area`.
+int lit_pixels(const QImage& image, const QRect& area, const QColor& background) {
+    int lit = 0;
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) {
+            lit += QColor(image.pixel(x, y)) != background;
+        }
+    }
+    return lit;
+}
+
+} // namespace
+
+TEST_F(TabStripTest, TheCloseButtonOfTheSelectedTabIsAlwaysThereAndAnotherTabsShowsOnHover) {
+    add_many(2);
+    EXPECT_GT(lit_pixels(grab(), strip_->close_button_rect(0), QColor("#202020")), 4);
+    EXPECT_EQ(lit_pixels(grab(), strip_->close_button_rect(1), QColor("#303030")), 0);
+    move(body(1));
+    EXPECT_GT(lit_pixels(grab(), strip_->close_button_rect(1), QColor("#404040")), 4);
+}
+
+TEST_F(TabStripTest, ADirtyTabShowsADotThatBecomesTheCloseButtonUnderTheMouse) {
+    add("clean");
+    add("dirty", true);
+    const QPoint beside = strip_->close_button_rect(1).center() + QPoint(3, 0);
+
+    QImage image = grab();
+    EXPECT_EQ(pixel(image, strip_->close_button_rect(1).center()), QColor("#aaaaaa"));
+    EXPECT_EQ(pixel(image, beside), QColor("#aaaaaa"));
+
+    move(body(1));
+    image = grab();
+    EXPECT_EQ(pixel(image, beside), QColor("#aaaaaa"));
+
+    move(button(1));
+    EXPECT_TRUE(strip_->hovered_tab() == 1);
+    image = grab();
+    EXPECT_NE(pixel(image, beside), QColor("#aaaaaa"));
+    EXPECT_EQ(pixel(image, strip_->close_button_rect(1).topLeft() + QPoint(1, 8)),
+              QColor("#606060"));
+
+    move(body(1));
+    image = grab();
+    EXPECT_EQ(pixel(image, beside), QColor("#aaaaaa"));
+}
+
+TEST_F(TabStripTest, TheDotOfADirtySelectedTabUsesTheSelectedForeground) {
+    add("dirty", true);
+    const QImage image = grab();
+    EXPECT_EQ(pixel(image, strip_->close_button_rect(0).center()), QColor("#ffffff"));
+}
+
+TEST_F(TabStripTest, ClickingTheCloseButtonRequestsClosingWithoutSelecting) {
+    add_many(3);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    QSignalSpy current(strip_.get(), &TabStrip::current_changed);
+    click(button(2));
+    ASSERT_EQ(closed.count(), 1);
+    EXPECT_EQ(closed.at(0).at(0).toInt(), 2);
+    EXPECT_EQ(current.count(), 0);
+    EXPECT_EQ(strip_->current_index(), 0);
+}
+
+TEST_F(TabStripTest, TheCloseButtonOfADirtyTabCloses) {
+    add("dirty", true);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    click(button(0));
+    EXPECT_EQ(closed.count(), 1);
+}
+
+TEST_F(TabStripTest, PressingTheCloseButtonAndReleasingElsewhereClosesNothing) {
+    add_many(2);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    press(button(1));
+    release(body(1));
+    press(button(1));
+    release(button(0));
+    EXPECT_EQ(closed.count(), 0);
+}
+
+TEST_F(TabStripTest, AMiddleClickClosesTheTabUnderTheMouseWithoutSelectingIt) {
+    add_many(3);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    QSignalSpy current(strip_.get(), &TabStrip::current_changed);
+    click(body(1), Qt::MiddleButton);
+    ASSERT_EQ(closed.count(), 1);
+    EXPECT_EQ(closed.at(0).at(0).toInt(), 1);
+    EXPECT_EQ(current.count(), 0);
+}
+
+TEST_F(TabStripTest, AMiddleClickPressedOnOneTabAndReleasedOnAnotherClosesNothing) {
+    add_many(2);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    press(body(0), Qt::MiddleButton);
+    release(body(1), Qt::MiddleButton);
+    EXPECT_EQ(closed.count(), 0);
+}
+
+TEST_F(TabStripTest, ARightClickSelectsNothingAndClosesNothing) {
+    add_many(2);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    QSignalSpy current(strip_.get(), &TabStrip::current_changed);
+    click(body(1), Qt::RightButton);
+    EXPECT_EQ(closed.count() + current.count(), 0);
+}
+
+TEST_F(TabStripTest, TheContextMenuOffersTheFiveCommands) {
+    add_many(3);
+    const auto menu = strip_->build_context_menu(1);
+    QStringList texts;
+    for (const QAction* action : menu->actions()) {
+        if (!action->isSeparator()) {
+            texts << action->text();
+        }
+    }
+    EXPECT_EQ(texts, (QStringList{"Close", "Close Others", "Close to the Right", "Close Saved",
+                                  "Copy Path"}));
+}
+
+TEST_F(TabStripTest, TheContextMenuActionsEmitTheirRequestsForTheTab) {
+    add_many(3);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    QSignalSpy others(strip_.get(), &TabStrip::close_others_requested);
+    QSignalSpy right(strip_.get(), &TabStrip::close_to_the_right_requested);
+    QSignalSpy saved(strip_.get(), &TabStrip::close_saved_requested);
+    QSignalSpy copy(strip_.get(), &TabStrip::copy_path_requested);
+    const auto menu = strip_->build_context_menu(1);
+    for (QAction* action : menu->actions()) {
+        action->trigger();
+    }
+    ASSERT_EQ(closed.count(), 1);
+    EXPECT_EQ(closed.at(0).at(0).toInt(), 1);
+    ASSERT_EQ(others.count(), 1);
+    EXPECT_EQ(others.at(0).at(0).toInt(), 1);
+    ASSERT_EQ(right.count(), 1);
+    EXPECT_EQ(right.at(0).at(0).toInt(), 1);
+    EXPECT_EQ(saved.count(), 1);
+    ASSERT_EQ(copy.count(), 1);
+    EXPECT_EQ(copy.at(0).at(0).toInt(), 1);
+}
+
+TEST_F(TabStripTest, MenuItemsThatHaveNothingToDoAreDisabled) {
+    strip_->add_tab({.title = "only", .tooltip = {}, .dirty = false, .has_path = false});
+    auto menu = strip_->build_context_menu(0);
+    const auto enabled = [&](const QString& text) {
+        for (const QAction* action : menu->actions()) {
+            if (action->text() == text) {
+                return action->isEnabled();
+            }
+        }
+        ADD_FAILURE() << text.toStdString();
+        return false;
+    };
+    EXPECT_TRUE(enabled("Close"));
+    EXPECT_FALSE(enabled("Close Others"));
+    EXPECT_FALSE(enabled("Close to the Right"));
+    EXPECT_FALSE(enabled("Copy Path"));
+
+    add("second");
+    menu = strip_->build_context_menu(0);
+    EXPECT_TRUE(enabled("Close Others"));
+    EXPECT_TRUE(enabled("Close to the Right"));
+    menu = strip_->build_context_menu(1);
+    EXPECT_FALSE(enabled("Close to the Right"));
+    EXPECT_TRUE(enabled("Copy Path"));
+}
+
+TEST_F(TabStripTest, AMenuActionFollowsItsTabWhenTheTabsChangeWhileTheMenuIsOpen) {
+    add_many(4);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    const auto menu = strip_->build_context_menu(2);
+    strip_->remove_tab(0);
+    menu->actions().at(0)->trigger();
+    ASSERT_EQ(closed.count(), 1);
+    EXPECT_EQ(closed.at(0).at(0).toInt(), 1);
+}
+
+TEST_F(TabStripTest, AMenuActionOfATabThatIsGoneDoesNothing) {
+    add_many(3);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    QSignalSpy saved(strip_.get(), &TabStrip::close_saved_requested);
+    const auto menu = strip_->build_context_menu(2);
+    strip_->remove_tab(2);
+    for (QAction* action : menu->actions()) {
+        action->trigger();
+    }
+    EXPECT_EQ(closed.count() + saved.count(), 0);
+}
+
+TEST_F(TabStripTest, DraggingATabPastItsNeighborMovesIt) {
+    add_many(3);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    const QPoint start = body(0);
+    press(start);
+    move(start + QPoint(5, 0), Qt::LeftButton);
+    EXPECT_FALSE(strip_->is_dragging());
+    EXPECT_EQ(moved.count(), 0);
+
+    move(start + QPoint(100, 0), Qt::LeftButton);
+    EXPECT_TRUE(strip_->is_dragging());
+    EXPECT_EQ(moved.count(), 0);
+    move(start + QPoint(140, 0), Qt::LeftButton);
+    ASSERT_EQ(moved.count(), 1);
+    EXPECT_EQ(moved.at(0).at(0).toInt(), 0);
+    EXPECT_EQ(moved.at(0).at(1).toInt(), 1);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file1.txt", "file0.txt", "file2.txt"}));
+    EXPECT_EQ(strip_->current_index(), 1);
+
+    release(start + QPoint(140, 0));
+    EXPECT_FALSE(strip_->is_dragging());
+}
+
+TEST_F(TabStripTest, DraggingFarMovesATabPastSeveralNeighborsOneStepAtATime) {
+    add_many(4);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    const QPoint start = body(0);
+    press(start);
+    move(start + QPoint(12, 0), Qt::LeftButton);
+    move(start + QPoint(390, 0), Qt::LeftButton);
+    ASSERT_EQ(moved.count(), 3);
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_EQ(moved.at(i).at(0).toInt(), i);
+        EXPECT_EQ(moved.at(i).at(1).toInt(), i + 1);
+    }
+    EXPECT_EQ(titles(), (std::vector<QString>{"file1.txt", "file2.txt", "file3.txt", "file0.txt"}));
+    EXPECT_EQ(strip_->current_index(), 3);
+}
+
+TEST_F(TabStripTest, DraggingBackMovesTheTabBack) {
+    add_many(3);
+    click(body(2));
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    const QPoint start = body(2);
+    press(start);
+    move(start - QPoint(12, 0), Qt::LeftButton);
+    move(start - QPoint(140, 0), Qt::LeftButton);
+    ASSERT_EQ(moved.count(), 1);
+    EXPECT_EQ(moved.at(0).at(0).toInt(), 2);
+    EXPECT_EQ(moved.at(0).at(1).toInt(), 1);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file0.txt", "file2.txt", "file1.txt"}));
+    EXPECT_EQ(strip_->current_index(), 1);
+}
+
+TEST_F(TabStripTest, ADraggedTabIsDrawnWhereTheMouseHoldsIt) {
+    add_many(3);
+    const QPoint start = body(0);
+    press(start);
+    move(start + QPoint(12, 0), Qt::LeftButton);
+    move(start + QPoint(40, 0), Qt::LeftButton);
+    ASSERT_TRUE(strip_->is_dragging());
+    const QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).left() + 40 + 5, 10)), QColor("#202020"));
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).left() + 3, 10)), QColor("#101010"));
+    release(start + QPoint(40, 0));
+    EXPECT_EQ(pixel(grab(), QPoint(strip_->tab_rect(0).left() + 3, 10)), QColor("#202020"));
+}
+
+TEST_F(TabStripTest, ADragCannotMoveATabOutsideTheStrip) {
+    add_many(3);
+    const QPoint start = body(0);
+    press(start);
+    move(start + QPoint(12, 0), Qt::LeftButton);
+    move(QPoint(5000, 10), Qt::LeftButton);
+    EXPECT_EQ(strip_->current_index(), 2);
+    move(QPoint(-5000, 10), Qt::LeftButton);
+    EXPECT_EQ(strip_->current_index(), 0);
+    release(QPoint(10, 10));
+}
+
+TEST_F(TabStripTest, MovingTheMouseWithoutAButtonDoesNotDrag) {
+    add_many(3);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    move(body(0));
+    move(body(2));
+    EXPECT_FALSE(strip_->is_dragging());
+    EXPECT_EQ(moved.count(), 0);
+}
+
+TEST_F(TabStripTest, ACloseButtonIsNotDraggable) {
+    add_many(3);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    press(button(0));
+    move(button(0) + QPoint(15, 0), Qt::LeftButton);
+    move(button(0) + QPoint(200, 0), Qt::LeftButton);
+    EXPECT_FALSE(strip_->is_dragging());
+    EXPECT_EQ(moved.count(), 0);
+    release(button(0) + QPoint(200, 0));
+}
+
+TEST_F(TabStripTest, TabsThatDoNotFitScrollAndTheSelectedTabStaysInView) {
+    add_many(12);
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+    strip_->set_current_index(11);
+    const QRect last = strip_->tab_rect(11);
+    EXPECT_GT(strip_->scroll_offset(), 0);
+    EXPECT_GE(last.left(), 0);
+    EXPECT_LE(last.right(), strip_->width() - 1);
+
+    strip_->set_current_index(0);
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+    EXPECT_EQ(strip_->tab_rect(0).left(), 0);
+}
+
+TEST_F(TabStripTest, TheWheelScrollsTheTabsAndStopsAtTheEnds) {
+    add_many(12);
+    const auto wheel = [&](int dx, int dy) {
+        QWheelEvent event(QPointF(100, 10), QPointF(100, 10), QPoint(), QPoint(dx, dy),
+                          Qt::NoButton, {}, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(strip_.get(), &event);
+        return event.isAccepted();
+    };
+    EXPECT_TRUE(wheel(0, -120));
+    EXPECT_EQ(strip_->scroll_offset(), 120);
+    EXPECT_TRUE(wheel(0, -240));
+    EXPECT_EQ(strip_->scroll_offset(), 360);
+    EXPECT_TRUE(wheel(0, 120));
+    EXPECT_EQ(strip_->scroll_offset(), 240);
+    EXPECT_TRUE(wheel(-120, 0));
+    EXPECT_EQ(strip_->scroll_offset(), 360);
+    wheel(0, 100000);
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+    wheel(0, -100000);
+    const int end = strip_->scroll_offset();
+    EXPECT_EQ(strip_->tab_rect(11).right(), strip_->width() - 1) << end;
+}
+
+TEST_F(TabStripTest, TheWheelDoesNothingWhenEveryTabFits) {
+    add_many(2);
+    QWheelEvent event(QPointF(100, 10), QPointF(100, 10), QPoint(), QPoint(0, -120), Qt::NoButton,
+                      {}, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(strip_.get(), &event);
+    EXPECT_FALSE(event.isAccepted());
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+}
+
+TEST_F(TabStripTest, ClickingATabThatIsPartlyHiddenBringsItIntoView) {
+    strip_->resize(500, TabStrip::height_pixels);
+    add_many(12);
+    strip_->set_current_index(0);
+    const QRect partial = strip_->tab_rect(4);
+    ASSERT_GT(partial.right(), strip_->width() - 1);
+    ASSERT_LT(partial.left(), strip_->width() - 10);
+    click(QPoint(partial.left() + 5, 10));
+    EXPECT_EQ(strip_->current_index(), 4);
+    EXPECT_LE(strip_->tab_rect(4).right(), strip_->width() - 1);
+    EXPECT_GE(strip_->tab_rect(4).left(), 0);
+}
+
+TEST_F(TabStripTest, ClicksLandOnTheTabsThatAreShownWhileScrolled) {
+    add_many(12);
+    strip_->set_current_index(11);
+    QSignalSpy spy(strip_.get(), &TabStrip::current_changed);
+    click(body(10));
+    ASSERT_EQ(spy.count(), 1);
+    EXPECT_EQ(spy.at(0).at(0).toInt(), 10);
+}
+
+TEST_F(TabStripTest, WideningTheStripKeepsTheSelectedTabVisibleAndDropsUnneededScroll) {
+    add_many(12);
+    strip_->set_current_index(11);
+    ASSERT_GT(strip_->scroll_offset(), 0);
+    strip_->resize(5000, TabStrip::height_pixels);
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+
+    strip_->resize(300, TabStrip::height_pixels);
+    EXPECT_GE(strip_->tab_rect(11).left(), 0);
+    EXPECT_LE(strip_->tab_rect(11).right(), 299);
+}
+
+TEST_F(TabStripTest, RemovingTabsClampsTheScroll) {
+    add_many(12);
+    strip_->set_current_index(11);
+    for (int i = 0; i < 10; ++i) {
+        strip_->remove_tab(0);
+    }
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+}
+
+TEST_F(TabStripTest, ATabShowsItsPathAsAToolTip) {
+    add_many(2);
+    const QRect area = strip_->tab_rect(1);
+    QHelpEvent help(QEvent::ToolTip, area.center(), strip_->mapToGlobal(area.center()));
+    QApplication::sendEvent(strip_.get(), &help);
+    EXPECT_TRUE(QToolTip::isVisible());
+    EXPECT_EQ(QToolTip::text(), "/path/file1.txt");
+
+    QHelpEvent none(QEvent::ToolTip, QPoint(580, 10), strip_->mapToGlobal(QPoint(580, 10)));
+    QApplication::sendEvent(strip_.get(), &none);
+    EXPECT_TRUE(QTest::qWaitFor([] { return !QToolTip::isVisible(); }, 2000));
+}
+
+TEST_F(TabStripTest, TheStripRepaintsWithTheColorsOfANewTheme) {
+    add_many(2);
+    EXPECT_EQ(pixel(grab(), strip_->tab_rect(0).topLeft() + QPoint(5, 10)), QColor("#202020"));
+    colors_.set_colors({{"tab.activeBackground", QColor("#112233")},
+                        {"tab.inactiveBackground", QColor("#445566")}});
+    const QImage image = grab();
+    EXPECT_EQ(pixel(image, strip_->tab_rect(0).topLeft() + QPoint(5, 10)), QColor("#112233"));
+    EXPECT_EQ(pixel(image, strip_->tab_rect(1).topLeft() + QPoint(5, 10)), QColor("#445566"));
+}
+
+TEST_F(TabStripTest, TheBordersBelowTheStripAndTheSelectedTabShowOnlyWhenTheThemeHasThem) {
+    add_many(2);
+    const int bottom = TabStrip::height_pixels - 1;
+    QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(550, bottom)), QColor("#101010"));
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).left() + 5, bottom)), QColor("#202020"));
+
+    colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#101010")},
+                        {"editorGroupHeader.tabsBorder", QColor("#00ff00")},
+                        {"tab.activeBorder", QColor("#ff0000")},
+                        {"tab.activeBackground", QColor("#202020")},
+                        {"tab.inactiveBackground", QColor("#303030")}});
+    image = grab();
+    EXPECT_EQ(pixel(image, QPoint(550, bottom)), QColor("#00ff00"));
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(1).left() + 5, bottom)), QColor("#303030"));
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(0).left() + 5, bottom)), QColor("#ff0000"));
+}
+
+TEST_F(TabStripTest, RendersAStripForReview) {
+    colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#191A1B")},
+                        {"editorGroupHeader.tabsBorder", QColor("#2A2B2C")},
+                        {"tab.activeBackground", QColor("#121314")},
+                        {"tab.inactiveBackground", QColor("#191A1B")},
+                        {"tab.hoverBackground", QColor("#121314")},
+                        {"tab.activeForeground", QColor("#bfbfbf")},
+                        {"tab.inactiveForeground", QColor("#8C8C8C")},
+                        {"tab.activeBorderTop", QColor("#3994BC")},
+                        {"tab.activeBorder", QColor("#121314")},
+                        {"tab.border", QColor("#2A2B2C")},
+                        {"toolbar.hoverBackground", QColor("#5A5D5E50")}});
+    strip_->resize(720, TabStrip::height_pixels);
+    add("main_window.cpp", true);
+    add("README.md");
+    add("tab_strip.hpp", true);
+    add("CMakeLists.txt");
+    add("a_considerably_longer_file_name.cpp");
+    strip_->set_current_index(1);
+    move(button(3));
+    const QImage image = grab();
+    ASSERT_FALSE(image.isNull());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/tab_strip.png");
+    }
+}
