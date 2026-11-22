@@ -73,6 +73,13 @@ public:
     // Selects the tab and scrolls it into view.
     void set_current_index(int index);
 
+    // Whether the group the strip belongs to has the focus. A strip that does not have it is
+    // painted with the `tab.unfocused...` colors. A strip starts focused.
+    void set_focused(bool focused);
+    bool focused() const {
+        return focused_;
+    }
+
     // The area of the tab, or of its close button, in the coordinates of the widget; empty when
     // the index is out of range. The area can be partly outside the widget while it is scrolled.
     QRect tab_rect(int index) const;
@@ -142,6 +149,7 @@ private:
     mutable bool layout_valid_ = false;
     int current_ = -1;
     int scroll_ = 0;
+    bool focused_ = true;
 
     int hovered_ = -1;
     bool hovered_button_ = false;
