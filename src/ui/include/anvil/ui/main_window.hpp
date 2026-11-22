@@ -11,6 +11,7 @@
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
 #include "anvil/ui/sidebar.hpp"
+#include "anvil/ui/theme_store.hpp"
 #include "anvil/ui/view_container_registry.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
@@ -35,6 +36,8 @@ struct MainWindowOptions {
     // The user settings file, read at startup and whenever it changes. A missing file means the
     // defaults; empty means no settings file at all.
     std::filesystem::path settings_file;
+    // The directory with the color themes; the application's own when unset.
+    std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
     bool confirm_unsaved_changes = true;
 };
@@ -85,6 +88,10 @@ public:
     }
     Panel* panel() {
         return panel_;
+    }
+    // The color themes and the one that is applied.
+    ThemeStore& themes() {
+        return *themes_;
     }
     // The colors of the window's parts; a color theme replaces them.
     WorkbenchColors& colors() {
@@ -172,6 +179,7 @@ private:
     // The commands run from the palette, the latest first.
     std::vector<std::string> recent_commands_;
     SettingsStore* settings_ = nullptr;
+    ThemeStore* themes_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;
     // Parallel to the tabs: documents_[i] is shown by tab i.
