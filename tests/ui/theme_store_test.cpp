@@ -265,9 +265,33 @@ TEST_F(ThemeStoreTest, EveryThemeSetsEveryKeyOfTheTable) {
     for (const auto& theme : store_->themes()) {
         ASSERT_TRUE(store_->select(theme.id));
         for (const ui::WorkbenchColorKey& key : WorkbenchColors::known_keys()) {
-            EXPECT_TRUE(colors_.is_themed(key.key)) << theme.id << " does not set " << key.key;
+            if (!key.optional) {
+                EXPECT_TRUE(colors_.is_themed(key.key)) << theme.id << " does not set " << key.key;
+            }
         }
     }
+}
+
+TEST_F(ThemeStoreTest, AKeyWithoutADefaultStaysUnsetWhenTheThemeLeavesItOut) {
+    open_shipped();
+    ASSERT_TRUE(store_->select("Dark 2026"));
+    EXPECT_TRUE(colors_.is_themed("statusBar.border"));
+    EXPECT_TRUE(colors_.is_themed("tab.activeBorder"));
+    ASSERT_TRUE(store_->select("Dark+"));
+    EXPECT_FALSE(colors_.is_themed("statusBar.border"));
+    EXPECT_FALSE(colors_.is_themed("tab.activeBorder"));
+    EXPECT_FALSE(colors_.is_themed("tab.hoverBackground"));
+}
+
+TEST_F(ThemeStoreTest,
+       AKeyThatTheDefaultThemesLeaveOutHasTheRegistrysDefaultForDarkAndLightThemes) {
+    open_shipped();
+    ASSERT_TRUE(store_->select("Dark+"));
+    EXPECT_EQ(colors_.color("toolbar.hoverBackground"), QColor(0x5a, 0x5d, 0x5e, 0x50));
+    ASSERT_TRUE(store_->select("Light+"));
+    EXPECT_EQ(colors_.color("toolbar.hoverBackground"), QColor(0xb8, 0xb8, 0xb8, 0x50));
+    ASSERT_TRUE(store_->select("Dark High Contrast"));
+    EXPECT_FALSE(colors_.is_themed("toolbar.hoverBackground"));
 }
 
 TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {
