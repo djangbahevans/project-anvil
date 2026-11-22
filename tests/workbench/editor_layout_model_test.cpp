@@ -81,6 +81,24 @@ struct Reference {
         }
     }
 
+    void replace(const Uri& from, const Uri& to) {
+        if (from == to) {
+            return;
+        }
+        for (const GroupId group : std::vector<GroupId>(order)) {
+            const auto old_index = find(group, from);
+            if (!old_index) {
+                continue;
+            }
+            if (find(group, to)) {
+                drop(group, *old_index);
+                close_if_empty(group);
+            } else {
+                groups.at(group).tabs[*old_index] = to;
+            }
+        }
+    }
+
     void close_tab(GroupId group, std::size_t index) {
         drop(group, index);
         close_if_empty(group);
@@ -167,7 +185,7 @@ void run(unsigned seed, bool close_empty) {
         const RefGroup& g = reference.groups.at(group);
         const Uri uri = doc(random.below(documents));
         std::string what;
-        const std::size_t kind = random.below(13);
+        const std::size_t kind = random.below(14);
         switch (kind) {
         case 0:
         case 1:
@@ -255,6 +273,13 @@ void run(unsigned seed, bool close_empty) {
                 reference.focused =
                     reference.order[static_cast<std::size_t>((at + count - 1) % count)];
             }
+            break;
+        }
+        case 12: {
+            what = "replace_document";
+            const Uri to = doc(random.below(documents));
+            layout.replace_document(uri, to);
+            reference.replace(uri, to);
             break;
         }
         default: {
