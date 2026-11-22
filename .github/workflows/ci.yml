@@ -56,6 +56,9 @@ jobs:
       - name: Check the generated proxy identifiers
         run: node scripts/generate-proxy-ids.mjs --check
 
+      - name: Check the Codicons font and its table
+        run: node scripts/generate-codicons.mjs --check
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build

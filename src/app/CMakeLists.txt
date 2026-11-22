@@ -11,4 +11,5 @@ endif()
 install(TARGETS anvil RUNTIME DESTINATION bin)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/resources/themes/ DESTINATION share/anvil/themes)
 install(FILES ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
+              ${CMAKE_SOURCE_DIR}/resources/codicons/LICENSE-codicons.txt
         DESTINATION share/doc/anvil)
