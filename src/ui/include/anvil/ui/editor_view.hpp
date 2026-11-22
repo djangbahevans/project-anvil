@@ -118,6 +118,8 @@ protected:
     void inputMethodEvent(QInputMethodEvent* event) override;
     QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
     void changeEvent(QEvent* event) override;
+    // Tab is a key of the editor, not a request to move the focus to the next widget.
+    bool focusNextPrevChild(bool next) override;
 
 private:
     struct LineLayout;

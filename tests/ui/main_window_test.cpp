@@ -1685,6 +1685,38 @@ TEST_F(MainWindowTest, ARegisteredViewContainerShowsTheActivityBarAndOpensInTheS
     EXPECT_EQ(created, 1);
 }
 
+TEST_F(MainWindowTest, TheTabKeyInsertsATabWhileTheSidebarAndThePanelAreOpen) {
+    create_window();
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::black);
+    ui::ViewContainer explorer;
+    explorer.id = "workbench.view.explorer";
+    explorer.title = "Explorer";
+    explorer.icon = QIcon(pixmap);
+    explorer.create = [] { return new QLabel("files"); };
+    window_->view_containers().add(std::move(explorer));
+    ui::ViewContainer output;
+    output.id = "workbench.panel.output";
+    output.title = "Output";
+    output.location = ui::ViewContainerLocation::panel;
+    output.create = [] { return new QLabel("log"); };
+    window_->view_containers().add(std::move(output));
+    window_->show();
+    window_->sidebar()->activate("workbench.view.explorer");
+    window_->commands().execute("workbench.action.togglePanel");
+    QApplication::processEvents();
+    ASSERT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    ASSERT_TRUE(window_->workbench()->is_visible(ui::Part::panel));
+
+    window_->view()->setFocus();
+    ASSERT_TRUE(window_->view()->hasFocus());
+    QTest::keyClick(window_->view(), Qt::Key_Tab);
+    EXPECT_NE(current_text(), "");
+    EXPECT_TRUE(window_->view()->hasFocus());
+    QTest::keyClick(window_->view(), Qt::Key_Backtab, Qt::ShiftModifier);
+    EXPECT_TRUE(window_->view()->hasFocus());
+}
+
 TEST_F(MainWindowTest, APanelContainerOpensInThePanelAndTheCommandsMaximizeIt) {
     create_window();
     int created = 0;
