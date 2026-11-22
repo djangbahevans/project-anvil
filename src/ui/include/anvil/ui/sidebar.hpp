@@ -1,16 +1,13 @@
 #pragma once
 
 #include "anvil/ui/view_container_registry.hpp"
+#include "anvil/ui/view_container_stack.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QObject>
-#include <QPointer>
+#include <memory>
 #include <string>
-#include <unordered_map>
-#include <vector>
-
-class QStackedWidget;
 
 namespace anvil::ui {
 
@@ -63,16 +60,14 @@ private:
     void refresh();
     void choose(const std::string& id);
     void update_buttons();
-    void forget(const std::string& id);
 
     Workbench& workbench_;
     ViewContainerRegistry& registry_;
     ActivityBar* activity_bar_ = nullptr;
     Title* title_ = nullptr;
     QWidget* title_actions_ = nullptr;
-    QStackedWidget* stack_ = nullptr;
+    std::unique_ptr<ViewContainerStack> stack_;
     std::string active_;
-    std::unordered_map<std::string, QPointer<QWidget>> widgets_;
 };
 
 } // namespace anvil::ui

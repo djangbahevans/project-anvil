@@ -315,3 +315,13 @@ TEST_F(SidebarTest, RendersTheActivityBarAndTheSidebar) {
         image.save(QString::fromUtf8(directory) + "/sidebar.png");
     }
 }
+
+TEST_F(SidebarTest, AContainerOfAnotherLocationIsNotShown) {
+    add("terminal", 0, ViewContainerLocation::panel);
+    sidebar_->activate("terminal");
+    QApplication::processEvents();
+    EXPECT_EQ(sidebar_->active_container(), "");
+    EXPECT_EQ(sidebar_->container_widget("terminal"), nullptr);
+    EXPECT_EQ(created_["terminal"], 0);
+    EXPECT_FALSE(workbench_->is_visible(Part::sidebar));
+}
