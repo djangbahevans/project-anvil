@@ -77,7 +77,7 @@ The tab size and `insertSpaces` are also what extensions see in `TextEditor.opti
 | `src/platform` | Per-OS code behind portable interfaces |
 | `src/ui` | Qt Widgets user interface: main window, editor view, extension host bridge |
 | `src/app` | The `anvil` executable |
-| `resources` | Files the editor ships with: the color themes of VS Code |
+| `resources` | Files the editor ships with: the color themes and the icon font of VS Code |
 | `tests` | Unit tests, mirroring `src` |
 
 ## License
@@ -85,3 +85,5 @@ The tab size and `insertSpaces` are also what extensions see in `TextEditor.opti
 Anvil is released under the [MIT License](LICENSE). The extension host it runs comes from the VS Code repository (also MIT) and is fetched at build time by `scripts/fetch-vscode.sh`; it is not part of this repository.
 
 The color themes in `resources/themes` are VS Code's default themes, copied unchanged from its `theme-defaults` extension under the VS Code MIT license (`resources/themes/LICENSE-vscode.txt`); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The default theme is the `workbench.colorTheme` setting's default, `Dark 2026`, VS Code's default in the pinned release.
+
+The icons are from VS Code's [Codicons](https://github.com/microsoft/vscode-codicons), Copyright (c) Microsoft Corporation, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The font is embedded unchanged; the license text is `resources/codicons/LICENSE-codicons.txt`.
