@@ -15,6 +15,11 @@ constexpr WorkbenchColorKey chained(std::string_view key, std::string_view descr
     return {key, description, fallback_key, role, 0};
 }
 
+constexpr WorkbenchColorKey optional_color(std::string_view key, std::string_view description,
+                                           QPalette::ColorRole role) {
+    return {key, description, {}, role, 0, true};
+}
+
 constexpr WorkbenchColorKey fixed_color(std::string_view key, std::string_view description,
                                         QRgb color) {
     return {key, description, {}, QPalette::NoRole, color};
@@ -50,6 +55,8 @@ constexpr WorkbenchColorKey table[] = {
     from_palette("editorCursor.foreground", "The caret of the editor.", QPalette::Text),
     from_palette("editorGroupHeader.tabsBackground",
                  "Background of the strip of tabs above an editor.", QPalette::Window),
+    optional_color("editorGroupHeader.tabsBorder", "Border below the strip of tabs.",
+                   QPalette::Mid),
     chained("editorGutter.background", "Background of the gutter with the line numbers.",
             "editor.background", QPalette::Window),
     from_palette("editorLineNumber.activeForeground", "Line number of the line the caret is on.",
@@ -90,21 +97,27 @@ constexpr WorkbenchColorKey table[] = {
     from_palette("sideBarTitle.foreground", "Title at the top of the sidebar.",
                  QPalette::WindowText),
     from_palette("statusBar.background", "Background of the status bar.", QPalette::Window),
-    from_palette("statusBar.border", "Border above the status bar.", QPalette::Mid),
+    optional_color("statusBar.border", "Border above the status bar.", QPalette::Mid),
     from_palette("statusBar.foreground", "Text of the status bar.", QPalette::WindowText),
     from_palette("statusBarItem.activeBackground",
                  "Background of a status bar item while the mouse button is down.", QPalette::Mid),
     from_palette("statusBarItem.hoverBackground",
                  "Background of a status bar item under the mouse.", QPalette::Midlight),
     from_palette("tab.activeBackground", "Background of the selected tab.", QPalette::Base),
+    optional_color("tab.activeBorder", "Line below the selected tab.", QPalette::Highlight),
     from_palette("tab.activeBorderTop", "Line on top of the selected tab.", QPalette::Highlight),
     from_palette("tab.activeForeground", "Title of the selected tab.", QPalette::Text),
     from_palette("tab.border", "Border between tabs.", QPalette::Mid),
-    from_palette("tab.hoverBackground", "Background of a tab under the mouse.", QPalette::Midlight),
+    optional_color("tab.hoverBackground", "Background of a tab under the mouse.",
+                   QPalette::Midlight),
     from_palette("tab.inactiveBackground", "Background of the tabs that are not selected.",
                  QPalette::Window),
     from_palette("tab.inactiveForeground", "Titles of the tabs that are not selected.",
                  QPalette::WindowText),
+    optional_color(
+        "toolbar.hoverBackground",
+        "Background of a small button, such as the close button of a tab, under the mouse.",
+        QPalette::Midlight),
     from_palette("widget.border", "Border of popups such as the quick pick.", QPalette::WindowText),
 };
 

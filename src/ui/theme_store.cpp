@@ -70,11 +70,27 @@ std::optional<core::Rgba> own_color(const core::ColorTheme& theme, const Workben
     return std::nullopt;
 }
 
+// Defaults of VS Code's registry for keys that the default themes do not set either, by kind of
+// theme. The high contrast themes have none for these.
+std::optional<core::Rgba> registry_default(std::string_view key, core::ThemeKind kind) {
+    if (key == "toolbar.hoverBackground") {
+        if (kind == core::ThemeKind::dark) {
+            return core::Rgba{.red = 0x5a, .green = 0x5d, .blue = 0x5e, .alpha = 0x50};
+        }
+        if (kind == core::ThemeKind::light) {
+            return core::Rgba{.red = 0xb8, .green = 0xb8, .blue = 0xb8, .alpha = 0x50};
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 // Where a theme does not set a key, VS Code's color registry has a default for the kind of theme,
 // which the editor does not have. The default theme of the same kind stands in for it: Dark 2026
-// for dark themes and Light 2026 for light ones, high contrast included.
+// for dark themes and Light 2026 for light ones, high contrast included. A key that VS Code gives
+// no default (`WorkbenchColorKey::optional`) stays unset unless the theme sets it, and a few keys
+// that the default themes leave out have the registry's own default.
 WorkbenchColors::Colors ThemeStore::compose(const Entry& entry, const core::ColorTheme& theme) {
     const bool light =
         entry.kind == core::ThemeKind::light || entry.kind == core::ThemeKind::high_contrast_light;
@@ -97,8 +113,11 @@ WorkbenchColors::Colors ThemeStore::compose(const Entry& entry, const core::Colo
     WorkbenchColors::Colors table;
     for (const WorkbenchColorKey& key : WorkbenchColors::known_keys()) {
         auto color = own_color(theme, key);
-        if (!color && base_theme) {
+        if (!color && base_theme && !key.optional) {
             color = own_color(*base_theme, key);
+        }
+        if (!color) {
+            color = registry_default(key.key, entry.kind);
         }
         if (color) {
             table.emplace(std::string(key.key), to_qcolor(*color));
