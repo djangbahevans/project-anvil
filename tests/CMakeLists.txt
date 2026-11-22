@@ -7,6 +7,7 @@ add_executable(anvil_core_tests
   core/document_test.cpp
   core/editing_test.cpp
   core/editor_settings_test.cpp
+  core/fuzzy_test.cpp
   core/jsonc_test.cpp
   core/search_test.cpp
   core/selection_test.cpp
@@ -21,6 +22,7 @@ add_executable(anvil_core_tests
 )
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)
 target_include_directories(anvil_core_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+target_compile_definitions(anvil_core_tests PRIVATE ANVIL_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/data")
 gtest_discover_tests(anvil_core_tests)
 
 if(UNIX)
