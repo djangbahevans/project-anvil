@@ -11,6 +11,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/main_window.hpp
   include/anvil/ui/panel.hpp
   include/anvil/ui/quick_pick.hpp
+  include/anvil/ui/resources.hpp
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
   include/anvil/ui/view_container_registry.hpp
@@ -20,6 +21,7 @@ add_library(anvil_ui STATIC
   main_window.cpp
   panel.cpp
   quick_pick.cpp
+  resources.cpp
   settings_store.cpp
   sidebar.cpp
   view_container_registry.cpp
@@ -35,3 +37,4 @@ target_link_libraries(anvil_ui
   PUBLIC Qt6::Widgets anvil::core anvil::exthost
   PRIVATE anvil::platform anvil_compile_options
 )
+target_compile_definitions(anvil_ui PRIVATE ANVIL_THEMES_SOURCE_DIR="${CMAKE_SOURCE_DIR}/resources/themes")
