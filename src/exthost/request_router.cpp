@@ -59,7 +59,11 @@ std::span<const Bytes> object_buffers(const Request& request, std::size_t index)
 }
 
 std::string error_json(std::string_view message) {
-    return nlohmann::json{{"$isError", true}, {"name", "Error"}, {"message", message}}.dump();
+    return error_json("Error", message);
+}
+
+std::string error_json(std::string_view name, std::string_view message) {
+    return nlohmann::json{{"$isError", true}, {"name", name}, {"message", message}}.dump();
 }
 
 void RequestRouter::on(ProxyId service, std::string method, Handler handler) {

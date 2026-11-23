@@ -1,0 +1,21 @@
+{
+  "name": "filesystem",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "commands": [
+      { "command": "anvil.fs.stat", "title": "Anvil: Stat" },
+      { "command": "anvil.fs.statUri", "title": "Anvil: Stat Uri" },
+      { "command": "anvil.fs.readDirectory", "title": "Anvil: Read Directory" },
+      { "command": "anvil.fs.readFile", "title": "Anvil: Read File" },
+      { "command": "anvil.fs.writeFile", "title": "Anvil: Write File" },
+      { "command": "anvil.fs.createDirectory", "title": "Anvil: Create Directory" },
+      { "command": "anvil.fs.delete", "title": "Anvil: Delete" },
+      { "command": "anvil.fs.rename", "title": "Anvil: Rename" },
+      { "command": "anvil.fs.copy", "title": "Anvil: Copy" }
+    ]
+  }
+}
