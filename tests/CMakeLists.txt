@@ -104,6 +104,7 @@ if(TARGET anvil_ui)
     ui/find_bar_test.cpp
     ui/key_translation_test.cpp
     ui/keybinding_service_test.cpp
+    ui/keybindings_store_test.cpp
     ui/main_window_test.cpp
     ui/panel_test.cpp
     ui/quick_pick_test.cpp

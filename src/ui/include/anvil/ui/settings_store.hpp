@@ -3,11 +3,10 @@
 #include "anvil/core/editor_settings.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/settings.hpp"
+#include "anvil/ui/watched_file.hpp"
 
-#include <QFileSystemWatcher>
 #include <QObject>
 #include <QString>
-#include <QTimer>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -56,15 +55,13 @@ signals:
 
 private:
     void reload(bool notify);
-    void watch();
     void report(const std::string& problem);
 
     Options options_;
     core::Settings settings_;
     core::EditorSettings editor_;
     std::string last_problem_;
-    QFileSystemWatcher watcher_;
-    QTimer debounce_;
+    WatchedFile file_;
 };
 
 } // namespace anvil::ui

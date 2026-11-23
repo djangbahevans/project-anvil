@@ -27,7 +27,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 build/linux-clang-debug/bin/anvil [file...]
 ```
 
-The editor opens the given files in one window with menus for files, editing and extension commands (Ctrl+Shift+P runs a command). Ctrl+F opens a find bar above the editor, with the selected text or the word at the caret already in its field: matches are highlighted and counted as the pattern is typed, Enter and Shift+Enter (or F3 and Shift+F3) step through them and wrap around, and the options match case, whole word and regular expression are toggles (Alt+C, Alt+W and Alt+R, Cmd+Alt on macOS, while the bar is open), and Escape closes the bar from the editor as well as from its fields. With nothing selected, Ctrl+C and Ctrl+X copy and cut the caret's line, and pasting that text inserts it above the line of the caret. Ctrl+H adds a replace field with Replace and Replace All, where regular expressions can use `$1`-style groups. Keys run commands through VS Code's default key bindings for the platform (Ctrl+S, Ctrl+W, Ctrl+B, Ctrl+J, Ctrl+\, Ctrl+Z and Ctrl+Y, F1 and the rest), including chords, and the menus show the key of each command; a chord in progress is shown in the status bar. Reading a `keybindings.json` of the user is not implemented yet. It uses the extension host when a Node.js binary and the checkout from `scripts/fetch-vscode.sh` are found, and reads these environment variables:
+The editor opens the given files in one window with menus for files, editing and extension commands (Ctrl+Shift+P runs a command). Ctrl+F opens a find bar above the editor, with the selected text or the word at the caret already in its field: matches are highlighted and counted as the pattern is typed, Enter and Shift+Enter (or F3 and Shift+F3) step through them and wrap around, and the options match case, whole word and regular expression are toggles (Alt+C, Alt+W and Alt+R, Cmd+Alt on macOS, while the bar is open), and Escape closes the bar from the editor as well as from its fields. With nothing selected, Ctrl+C and Ctrl+X copy and cut the caret's line, and pasting that text inserts it above the line of the caret. Ctrl+H adds a replace field with Replace and Replace All, where regular expressions can use `$1`-style groups. Keys run commands through VS Code's default key bindings for the platform (Ctrl+S, Ctrl+W, Ctrl+B, Ctrl+J, Ctrl+\, Ctrl+Z and Ctrl+Y, F1 and the rest), including chords, and the menus show the key of each command; a chord in progress is shown in the status bar. Your own bindings go in `keybindings.json` (see Key bindings). It uses the extension host when a Node.js binary and the checkout from `scripts/fetch-vscode.sh` are found, and reads these environment variables:
 
 View > Split Editor Right (Ctrl+\) and Split Editor Down add an empty editor group next to the focused one, each group with its own tabs; Focus Next Group, Focus Previous Group and Close Editor Group move between groups and remove one. Opening a file that is open in another group focuses its tab there, because a document is shown in one group at a time. Dragging a tab onto the tabs of another group moves it there, onto the middle of a group moves it to the end, and onto the nearest quarter of a group's edge splits the group and puts the tab in the new half; Escape cancels the drag.
 
@@ -63,6 +63,20 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `files.eol` | Line ending of new documents: `"\n"`, `"\r\n"` or `"auto"` (CRLF on Windows, LF elsewhere). Opened files keep their own | `"auto"` |
 
 The tab size and `insertSpaces` are also what extensions see in `TextEditor.options`. A file with a syntax error, or a value of the wrong type, leaves the previous settings in force; the problem is shown once in the status bar with its line and column or key name, and is written to standard error.
+
+## Key bindings
+
+The editor reads `keybindings.json` from the same directory as `settings.json` at startup and again whenever it changes. The file is JSON with comments and trailing commas, and an array of entries as in VS Code:
+
+```jsonc
+[
+  { "key": "ctrl+alt+p", "command": "workbench.action.showCommands" },
+  { "key": "ctrl+k ctrl+t", "command": "workbench.action.togglePanel", "when": "editorTextFocus" },
+  { "key": "ctrl+b", "command": "-workbench.action.toggleSidebarVisibility" }
+]
+```
+
+A key is one to four steps (`ctrl+k ctrl+c`), a `when` is VS Code's context key expression, and a command that starts with `-` removes the default bindings of that command. Your bindings win over the default ones, and among them the later entry wins. A missing file means the default bindings; the editor never creates it. A file with a syntax error leaves the previous bindings in force, and an entry that cannot be used is skipped while the others apply; each problem is shown once in the status bar and written to standard error. Only the key spelling of the platform you run on is read, and the `mac`, `win` and `linux` fields of an entry are not.
 
 ## Extension host tests
 

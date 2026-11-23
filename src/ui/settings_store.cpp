@@ -2,48 +2,14 @@
 
 #include "anvil/platform/file.hpp"
 
-#include <QDir>
-#include <QStringList>
-
 namespace anvil::ui {
-namespace {
-
-QString to_qstring(const std::filesystem::path& path) {
-    return QString::fromStdString(path.string());
-}
-
-// The deepest directory that exists on the way to `file`, which is where a file that does not
-// exist yet will first show up.
-std::filesystem::path nearest_existing_directory(const std::filesystem::path& file) {
-    std::error_code ignored;
-    std::filesystem::path directory = file.parent_path();
-    while (!directory.empty() && !std::filesystem::is_directory(directory, ignored)) {
-        const std::filesystem::path parent = directory.parent_path();
-        if (parent == directory) {
-            break;
-        }
-        directory = parent;
-    }
-    return directory;
-}
-
-} // namespace
-
 SettingsStore::SettingsStore(Options options, QObject* parent)
-    : QObject(parent), options_(std::move(options)), watcher_(this), debounce_(this) {
+    : QObject(parent), options_(std::move(options)), file_(options_.file, options_.debounce, this) {
     if (!options_.logger) {
         options_.logger = std::make_shared<core::NullLogger>();
     }
     editor_ = *core::EditorSettings::from_settings(settings_, options_.defaults);
-    debounce_.setSingleShot(true);
-    debounce_.setInterval(static_cast<int>(options_.debounce.count()));
-    connect(&debounce_, &QTimer::timeout, this, [this] {
-        watch();
-        reload(true);
-    });
-    const auto schedule = [this] { debounce_.start(); };
-    connect(&watcher_, &QFileSystemWatcher::fileChanged, this, schedule);
-    connect(&watcher_, &QFileSystemWatcher::directoryChanged, this, schedule);
+    connect(&file_, &WatchedFile::modified, this, [this] { reload(true); });
 }
 
 void SettingsStore::start() {
@@ -51,28 +17,7 @@ void SettingsStore::start() {
         return;
     }
     reload(false);
-    watch();
-}
-
-// An editor that saves by writing a temporary file and renaming it over the original leaves the
-// watch on the replaced file, so the watched paths are set again after every change.
-void SettingsStore::watch() {
-    QStringList wanted;
-    std::error_code ignored;
-    if (std::filesystem::exists(options_.file, ignored)) {
-        wanted << to_qstring(options_.file);
-    }
-    if (const auto directory = nearest_existing_directory(options_.file); !directory.empty()) {
-        wanted << to_qstring(directory);
-    }
-    QStringList current = watcher_.files();
-    current << watcher_.directories();
-    if (!current.isEmpty()) {
-        watcher_.removePaths(current);
-    }
-    if (!wanted.isEmpty()) {
-        watcher_.addPaths(wanted);
-    }
+    file_.start();
 }
 
 void SettingsStore::reload(bool notify) {

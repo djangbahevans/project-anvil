@@ -9,6 +9,7 @@
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
 #include "anvil/ui/keybinding_service.hpp"
+#include "anvil/ui/keybindings_store.hpp"
 #include "anvil/ui/panel.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
@@ -41,6 +42,9 @@ struct MainWindowOptions {
     // The user settings file, read at startup and whenever it changes. A missing file means the
     // defaults; empty means no settings file at all.
     std::filesystem::path settings_file;
+    // The user key bindings file, read at startup and whenever it changes. A missing file means
+    // the default bindings alone; empty means no such file at all.
+    std::filesystem::path keybindings_file;
     // The directory with the color themes; the application's own when unset.
     std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
@@ -164,6 +168,8 @@ private:
     void share_commands_with_extensions();
     void build_menus();
     void apply_settings();
+    // Gives the key bindings the default ones followed by the user's.
+    void apply_keybindings();
     // Adds an untitled document and shows it in `group`, or in the focused group.
     void add_untitled_document(std::optional<workbench::GroupId> group = std::nullopt);
     // Makes the document the shown one of the focused group, or of the group that has it already,
@@ -224,6 +230,7 @@ private:
     // The commands run from the palette, the latest first.
     std::vector<std::string> recent_commands_;
     SettingsStore* settings_ = nullptr;
+    KeybindingsStore* user_keybindings_ = nullptr;
     ThemeStore* themes_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;
