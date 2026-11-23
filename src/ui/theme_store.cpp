@@ -73,6 +73,14 @@ std::optional<core::Rgba> own_color(const core::ColorTheme& theme, const Workben
 // Defaults of VS Code's registry for keys that the default themes do not set either, by kind of
 // theme. The high contrast themes have none for these.
 std::optional<core::Rgba> registry_default(std::string_view key, core::ThemeKind kind) {
+    if (key == "editorGroup.border") {
+        if (kind == core::ThemeKind::dark) {
+            return core::Rgba{.red = 0x44, .green = 0x44, .blue = 0x44, .alpha = 0xff};
+        }
+        if (kind == core::ThemeKind::light) {
+            return core::Rgba{.red = 0xe7, .green = 0xe7, .blue = 0xe7, .alpha = 0xff};
+        }
+    }
     if (key == "toolbar.hoverBackground") {
         if (kind == core::ThemeKind::dark) {
             return core::Rgba{.red = 0x5a, .green = 0x5d, .blue = 0x5e, .alpha = 0x50};

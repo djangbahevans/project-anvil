@@ -88,7 +88,6 @@ protected:
 
 private:
     class PartWidget;
-    class Splitter;
 
     void apply_sizes();
 

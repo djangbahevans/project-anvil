@@ -3,12 +3,14 @@ add_library(anvil_ui STATIC
   codicon_table.hpp
   codicons.cpp
   command_registry.cpp
+  editor_area.cpp
   editor_view.cpp
   extension_host_bridge.cpp
   find_bar.cpp
   include/anvil/ui/activity_bar.hpp
   include/anvil/ui/codicons.hpp
   include/anvil/ui/command_registry.hpp
+  include/anvil/ui/editor_area.hpp
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/find_bar.hpp
   include/anvil/ui/main_window.hpp
@@ -17,6 +19,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/resources.hpp
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
+  include/anvil/ui/splitter.hpp
   include/anvil/ui/status_bar.hpp
   include/anvil/ui/tab_strip.hpp
   include/anvil/ui/theme_store.hpp
@@ -30,6 +33,7 @@ add_library(anvil_ui STATIC
   resources.cpp
   settings_store.cpp
   sidebar.cpp
+  splitter.cpp
   status_bar.cpp
   tab_strip.cpp
   theme_store.cpp

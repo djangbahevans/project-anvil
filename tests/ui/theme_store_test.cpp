@@ -292,6 +292,12 @@ TEST_F(ThemeStoreTest,
     EXPECT_EQ(colors_.color("toolbar.hoverBackground"), QColor(0xb8, 0xb8, 0xb8, 0x50));
     ASSERT_TRUE(store_->select("Dark High Contrast"));
     EXPECT_FALSE(colors_.is_themed("toolbar.hoverBackground"));
+    EXPECT_FALSE(colors_.is_themed("editorGroup.border"));
+
+    ASSERT_TRUE(store_->select("Dark+"));
+    EXPECT_EQ(colors_.color("editorGroup.border"), QColor("#444444"));
+    ASSERT_TRUE(store_->select("Light+"));
+    EXPECT_EQ(colors_.color("editorGroup.border"), QColor("#e7e7e7"));
 }
 
 TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {

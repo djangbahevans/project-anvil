@@ -123,6 +123,7 @@ EditorView::EditorView(QWidget* parent) : QAbstractScrollArea(parent) {
     viewport()->setAttribute(Qt::WA_InputMethodEnabled);
     setAttribute(Qt::WA_InputMethodEnabled);
     setFocusPolicy(Qt::StrongFocus);
+    setFrameShape(QFrame::NoFrame);
     verticalScrollBar()->setSingleStep(line_height_);
     horizontalScrollBar()->setSingleStep(char_width_ * 4);
 

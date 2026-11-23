@@ -95,6 +95,7 @@ if(TARGET anvil_ui)
   add_executable(anvil_ui_tests
     ui/codicons_test.cpp
     ui/command_registry_test.cpp
+    ui/editor_area_test.cpp
     ui/editor_view_test.cpp
     ui/find_bar_test.cpp
     ui/main_window_test.cpp
@@ -103,6 +104,7 @@ if(TARGET anvil_ui)
     ui/resources_test.cpp
     ui/settings_store_test.cpp
     ui/sidebar_test.cpp
+    ui/splitter_test.cpp
     ui/status_bar_test.cpp
     ui/tab_strip_test.cpp
     ui/theme_store_test.cpp
