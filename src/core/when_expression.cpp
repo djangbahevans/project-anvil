@@ -1307,6 +1307,60 @@ bool WhenExpression::evaluate(const ContextKeys& keys) const {
     return detail::evaluate(*impl_->root, keys);
 }
 
+namespace detail {
+namespace {
+
+// Whether every term of `p` is among those of `q`; both are sorted.
+bool all_included(const std::vector<NodePtr>& p, const std::vector<NodePtr>& q) {
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < p.size() && j < q.size()) {
+        const int order = compare(*p[i], *q[j]);
+        if (order < 0) {
+            return false;
+        }
+        if (order == 0) {
+            ++i;
+        }
+        ++j;
+    }
+    return i == p.size();
+}
+
+// The way VS Code proves it, on the normalized expressions: a proof that is not found does not mean
+// that there is none.
+bool implies_node(const NodePtr& p, const NodePtr& q) {
+    if (p->kind == Kind::False || q->kind == Kind::True) {
+        return true;
+    }
+    if (p->kind == Kind::Or) {
+        return q->kind == Kind::Or && all_included(p->terms, q->terms);
+    }
+    if (q->kind == Kind::Or) {
+        return std::ranges::any_of(q->terms,
+                                   [&](const NodePtr& term) { return implies_node(p, term); });
+    }
+    if (p->kind == Kind::And) {
+        if (q->kind == Kind::And) {
+            return all_included(q->terms, p->terms);
+        }
+        return std::ranges::any_of(p->terms,
+                                   [&](const NodePtr& term) { return implies_node(term, q); });
+    }
+    return node_equal(p, q);
+}
+
+} // namespace
+} // namespace detail
+
+bool WhenExpression::implies(const WhenExpression& other) const {
+    return detail::implies_node(impl_->root, other.impl_->root);
+}
+
+bool WhenExpression::is_false() const {
+    return impl_->root->kind == detail::Kind::False;
+}
+
 const std::string& WhenExpression::canonical() const {
     return impl_->canonical;
 }

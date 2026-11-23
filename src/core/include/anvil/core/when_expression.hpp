@@ -75,6 +75,15 @@ public:
 
     bool evaluate(const ContextKeys& keys) const;
 
+    // Whether this expression provably implies `other`: whenever this one is true, so is the
+    // other. The proof is VS Code's, which is on the normalized expressions and finds less than
+    // there is to find: `(a || b) && c` does not imply `c || a`. `false` implies everything, and
+    // everything implies `true`.
+    bool implies(const WhenExpression& other) const;
+
+    // Whether the expression is `false` and so never applies.
+    bool is_false() const;
+
     // The normalized expression, which parses to an equal expression.
     const std::string& canonical() const;
 
