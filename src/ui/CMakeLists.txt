@@ -31,9 +31,11 @@ add_library(anvil_ui STATIC
   include/anvil/ui/status_bar.hpp
   include/anvil/ui/tab_strip.hpp
   include/anvil/ui/theme_store.hpp
+  include/anvil/ui/title_bar.hpp
   include/anvil/ui/view_container_registry.hpp
   include/anvil/ui/view_container_stack.hpp
   include/anvil/ui/watched_file.hpp
+  include/anvil/ui/window_frame.hpp
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
   main_window.cpp
@@ -46,9 +48,11 @@ add_library(anvil_ui STATIC
   status_bar.cpp
   tab_strip.cpp
   theme_store.cpp
+  title_bar.cpp
   view_container_registry.cpp
   view_container_stack.cpp
   watched_file.cpp
+  window_frame.cpp
   workbench.cpp
   workbench_colors.cpp
 )
