@@ -1,5 +1,7 @@
+#include "accessibility_recorder.hpp"
 #include "anvil/ui/tab_strip.hpp"
 
+#include <QAccessible>
 #include <QAction>
 #include <QApplication>
 #include <QHelpEvent>
@@ -111,6 +113,158 @@ TEST_F(TabStripTest, IsAsHighAsVsCodesTabStripAndUsesItsFontSize) {
     EXPECT_EQ(strip_->height(), 35);
     EXPECT_EQ(strip_->font().pixelSize(), 13);
     EXPECT_EQ(strip_->accessibleName(), "Tabs");
+}
+
+// --- accessibility ---
+
+namespace {
+
+class TabStripAccessibilityTest : public TabStripTest {
+protected:
+    void SetUp() override {
+        TabStripTest::SetUp();
+        recorder_ = std::make_unique<AccessibilityRecorder>();
+    }
+    void TearDown() override {
+        recorder_.reset();
+    }
+
+    QAccessibleInterface* strip_interface() {
+        return QAccessible::queryAccessibleInterface(strip_.get());
+    }
+
+    std::vector<QString> names() {
+        std::vector<QString> result;
+        QAccessibleInterface* strip = strip_interface();
+        for (int i = 0; i < strip->childCount(); ++i) {
+            result.push_back(strip->child(i)->text(QAccessible::Name));
+        }
+        return result;
+    }
+
+    std::unique_ptr<AccessibilityRecorder> recorder_;
+};
+
+} // namespace
+
+TEST_F(TabStripAccessibilityTest, TheStripIsAPageTabListWithAPageTabForEachTab) {
+    add("a.txt");
+    add("b.txt");
+    QAccessibleInterface* strip = strip_interface();
+    ASSERT_NE(strip, nullptr);
+    EXPECT_EQ(strip->role(), QAccessible::PageTabList);
+    EXPECT_EQ(strip->text(QAccessible::Name), "Tabs");
+    ASSERT_EQ(strip->childCount(), 2);
+    for (int i = 0; i < 2; ++i) {
+        QAccessibleInterface* tab = strip->child(i);
+        EXPECT_EQ(tab->role(), QAccessible::PageTab);
+        EXPECT_EQ(tab->parent(), strip);
+        EXPECT_EQ(strip->indexOfChild(tab), i);
+    }
+    EXPECT_EQ(names(), (std::vector<QString>{"a.txt", "b.txt"}));
+    EXPECT_EQ(strip->child(1)->text(QAccessible::Description), "/path/b.txt");
+}
+
+TEST_F(TabStripAccessibilityTest, TheCurrentTabIsSelectedAndTheStateFollowsTheSelection) {
+    add("a");
+    add("b");
+    QAccessibleInterface* strip = strip_interface();
+    EXPECT_TRUE(strip->child(0)->state().selected);
+    EXPECT_FALSE(strip->child(1)->state().selected);
+    EXPECT_TRUE(strip->child(1)->state().selectable);
+    strip_->set_current_index(1);
+    EXPECT_FALSE(strip->child(0)->state().selected);
+    EXPECT_TRUE(strip->child(1)->state().selected);
+}
+
+TEST_F(TabStripAccessibilityTest, ADirtyTabSaysSoInItsDescription) {
+    add("a", true);
+    strip_->add_tab({.title = "b", .tooltip = {}, .dirty = true});
+    const auto* strip = strip_interface();
+    EXPECT_EQ(strip->child(0)->text(QAccessible::Description), "/path/a\nUnsaved changes");
+    EXPECT_EQ(strip->child(1)->text(QAccessible::Description), "Unsaved changes");
+}
+
+TEST_F(TabStripAccessibilityTest, ATabsRectangleIsWhereItIsPainted) {
+    add("a");
+    add("b");
+    const QRect painted = strip_->tab_rect(1);
+    QAccessibleInterface* tab = strip_interface()->child(1);
+    EXPECT_EQ(tab->rect().size(), painted.size());
+    EXPECT_EQ(tab->rect().topLeft(), strip_->mapToGlobal(painted.topLeft()));
+    EXPECT_EQ(strip_interface()->childAt(tab->rect().center().x(), tab->rect().center().y()), tab);
+}
+
+TEST_F(TabStripAccessibilityTest, PressingATabSelectsItAndClosingAsksToCloseIt) {
+    add("a");
+    add("b");
+    QSignalSpy selected(strip_.get(), &TabStrip::current_changed);
+    QSignalSpy closes(strip_.get(), &TabStrip::close_requested);
+    QAccessibleActionInterface* actions = strip_interface()->child(1)->actionInterface();
+    ASSERT_NE(actions, nullptr);
+    EXPECT_EQ(actions->actionNames(),
+              (QStringList{QAccessibleActionInterface::pressAction(), TabStrip::close_action()}));
+
+    actions->doAction(QAccessibleActionInterface::pressAction());
+    EXPECT_EQ(strip_->current_index(), 1);
+    ASSERT_EQ(selected.count(), 1);
+    EXPECT_EQ(selected.at(0).at(0).toInt(), 1);
+    actions->doAction(QAccessibleActionInterface::pressAction());
+    EXPECT_EQ(selected.count(), 1);
+
+    actions->doAction(TabStrip::close_action());
+    ASSERT_EQ(closes.count(), 1);
+    EXPECT_EQ(closes.at(0).at(0).toInt(), 1);
+    EXPECT_EQ(strip_->count(), 2);
+}
+
+TEST_F(TabStripAccessibilityTest, ATabKeepsItsInterfaceWhenTheOthersMove) {
+    add("a");
+    add("b");
+    add("c");
+    QAccessibleInterface* b = strip_interface()->child(1);
+    const QAccessible::Id id = QAccessible::uniqueId(b);
+    strip_->move_tab(0, 2);
+    EXPECT_EQ(names(), (std::vector<QString>{"b", "c", "a"}));
+    EXPECT_EQ(QAccessible::accessibleInterface(id), strip_interface()->child(0));
+    EXPECT_EQ(strip_interface()->child(0)->text(QAccessible::Name), "b");
+}
+
+TEST_F(TabStripAccessibilityTest, TheInterfaceOfAClosedTabIsDropped) {
+    add("a");
+    add("b");
+    const QAccessible::Id id = QAccessible::uniqueId(strip_interface()->child(1));
+    strip_->remove_tab(1);
+    EXPECT_EQ(names(), (std::vector<QString>{"a"}));
+    EXPECT_EQ(QAccessible::accessibleInterface(id), nullptr);
+}
+
+TEST_F(TabStripAccessibilityTest, RetitlingATabSignalsANameChangeAndOnlyThat) {
+    add("a");
+    add("b");
+    recorder_->clear();
+    strip_->set_tab(1,
+                    {.title = "renamed", .tooltip = "/path/b", .dirty = false, .has_path = true});
+    EXPECT_TRUE(recorder_->contains(QAccessible::NameChanged, strip_.get(), 1));
+    EXPECT_EQ(recorder_->events().size(), 1U);
+
+    recorder_->clear();
+    strip_->set_tab(1,
+                    {.title = "renamed", .tooltip = "/path/b", .dirty = false, .has_path = true});
+    strip_->set_tab(1, {.title = "renamed", .tooltip = "/path/b", .dirty = true, .has_path = true});
+    EXPECT_TRUE(recorder_->events().empty());
+}
+
+TEST_F(TabStripAccessibilityTest, ChangingTheSelectionSignalsAStateChangeForBothTabs) {
+    add("a");
+    add("b");
+    recorder_->clear();
+    strip_->set_current_index(1);
+    EXPECT_TRUE(recorder_->contains(QAccessible::StateChanged, strip_.get(), 0));
+    EXPECT_TRUE(recorder_->contains(QAccessible::StateChanged, strip_.get(), 1));
+    recorder_->clear();
+    strip_->set_current_index(1);
+    EXPECT_TRUE(recorder_->events().empty());
 }
 
 TEST_F(TabStripTest, ATabIsAtLeast120PixelsWideAndWideEnoughForItsTitle) {

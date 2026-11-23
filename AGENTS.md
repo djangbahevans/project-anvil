@@ -115,6 +115,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 - A key that the editor view uses, such as Tab, also moves the focus between widgets, and Qt does that first when another widget can take the focus. `EditorView` refuses to hand the focus on; test its keys in a shown `MainWindow` with the sidebar and the panel open, because with the editor alone nothing else can take the focus and the bug does not show.
 - Deleting a widget from a slot of one of its own signals, such as dropping a group whose tab strip menu asked for it, crashes when the signal returns. Rebuild the tree of the editor area and delete what is no longer used with `deleteLater`; moving a widget that has the keyboard focus between splitters also moves the focus, which `EditorArea` has to expect.
 - Process tests that start `sh -c` must `exec` the real program, or killing the shell leaves an orphan holding ctest's output pipe open.
+- `ctest` runs every test in a process of its own, while the test binary run as a whole lets an earlier test change what a later one sees (an installed accessibility factory, an application setting, a clipboard). Run a new UI test alone with `--gtest_filter` before it counts as passing.
 - Benchmarks on WSL2 vary by several times between runs; compare orders of magnitude.
 
 ## How-to guides

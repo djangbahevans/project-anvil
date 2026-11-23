@@ -33,6 +33,8 @@ TabStrip::TabStrip(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
     setFixedHeight(height_pixels);
     setMouseTracking(true);
+    // Before the name is set, which makes Qt look for the interface of the widget and keep it.
+    install_painted_accessibility();
     setAccessibleName(tr("Tabs"));
     QFont strip_font = font();
     strip_font.setPixelSize(font_pixels);
@@ -101,6 +103,9 @@ void TabStrip::set_tab(int index, Tab tab) {
         layout_valid_ = false;
     }
     update();
+    if (retitled) {
+        notify_accessible_item(this, QAccessible::NameChanged, index);
+    }
 }
 
 void TabStrip::move_tab(int from, int to) {
@@ -135,10 +140,57 @@ void TabStrip::set_current_index(int index) {
         return;
     }
     if (index != current_) {
+        const int previous = current_;
         current_ = index;
         update();
+        if (accessible_events_wanted()) {
+            QAccessible::State selected;
+            selected.selected = true;
+            if (previous >= 0) {
+                notify_accessible_item_state(this, selected, previous);
+            }
+            notify_accessible_item_state(this, selected, index);
+        }
     }
     scroll_into_view(index);
+}
+
+std::vector<AccessibleItem> TabStrip::accessible_items() const {
+    ensure_layout();
+    std::vector<AccessibleItem> items;
+    items.reserve(entries_.size());
+    for (std::size_t i = 0; i < entries_.size(); ++i) {
+        const Entry& entry = entries_[i];
+        QAccessible::State state;
+        state.selectable = true;
+        state.selected = static_cast<int>(i) == current_;
+        items.push_back(
+            {.key = QString::number(entry.id),
+             .name = entry.tab.title,
+             .description = entry.tab.dirty && !entry.tab.tooltip.isEmpty()
+                                ? entry.tab.tooltip + QStringLiteral("\n") + tr("Unsaved changes")
+                                : (entry.tab.dirty ? tr("Unsaved changes") : entry.tab.tooltip),
+             .role = QAccessible::PageTab,
+             .state = state,
+             .rect = tab_rect(static_cast<int>(i)),
+             .actions = {QAccessibleActionInterface::pressAction(), close_action()}});
+    }
+    return items;
+}
+
+void TabStrip::do_accessible_action(const QString& key, const QString& action) {
+    const std::uint64_t id = key.toULongLong();
+    const auto found = std::ranges::find(entries_, id, &Entry::id);
+    if (found == entries_.end()) {
+        return;
+    }
+    const int index = static_cast<int>(found - entries_.begin());
+    if (action == close_action()) {
+        emit close_requested(index);
+    } else if (action == QAccessibleActionInterface::pressAction() && index != current_) {
+        set_current_index(index);
+        emit current_changed(index);
+    }
 }
 
 void TabStrip::ensure_layout() const {

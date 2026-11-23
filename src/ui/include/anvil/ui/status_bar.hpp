@@ -1,5 +1,6 @@
 #pragma once
 
+#include "anvil/ui/painted_accessibility.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QColor>
@@ -45,7 +46,7 @@ enum class StatusBarSide { left, right };
 //
 // A transient message replaces the left group until it times out or is cleared; the right group
 // stays.
-class StatusBar : public QWidget {
+class StatusBar : public QWidget, public AccessibleItems {
     Q_OBJECT
 
 public:
@@ -85,6 +86,13 @@ public:
         return message_;
     }
 
+    // The items as assistive technology reads them, in display order, left group then right group,
+    // without those that a message hides: static text, or a button when the item has a command,
+    // named by its text and described by its tooltip. A button can be pressed, which asks for its
+    // command like a click does.
+    std::vector<AccessibleItem> accessible_items() const override;
+    void do_accessible_action(const QString& key, const QString& action) override;
+
 signals:
     // The user clicked an item that has this command.
     void command_requested(const QString& command);
@@ -113,6 +121,8 @@ private:
     bool shown(const Entry& entry) const;
     QColor resolve(const StatusBarColor& color, std::string_view fallback_key) const;
     void set_hovered(const std::string& id);
+    // The position of the item among the accessible items, or -1.
+    int accessible_index(const std::string& id) const;
 
     const WorkbenchColors& colors_;
     std::vector<Entry> entries_;

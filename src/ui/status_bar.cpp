@@ -13,6 +13,8 @@ StatusBar::StatusBar(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
     setFixedHeight(height_pixels);
     setMouseTracking(true);
+    // Before the name is set, which makes Qt look for the interface of the widget and keep it.
+    install_painted_accessibility();
     setAccessibleName(tr("Status Bar"));
     QFont bar_font = font();
     bar_font.setPixelSize(font_pixels);
@@ -34,6 +36,8 @@ void StatusBar::set_item(const std::string& id, StatusBarSide side, StatusBarIte
     if (found->side == side && found->item == item) {
         return;
     }
+    const bool retexted = found->item.text != item.text;
+    const bool retipped = found->item.tooltip != item.tooltip;
     const bool moves = found->side != side || found->item.text != item.text ||
                        found->item.priority != item.priority;
     found->side = side;
@@ -45,6 +49,17 @@ void StatusBar::set_item(const std::string& id, StatusBarSide side, StatusBarIte
         layout_valid_ = false;
     }
     update();
+    if (accessible_events_wanted() && (retexted || retipped)) {
+        const int index = accessible_index(id);
+        if (index >= 0) {
+            if (retexted) {
+                notify_accessible_item(this, QAccessible::NameChanged, index);
+            }
+            if (retipped) {
+                notify_accessible_item(this, QAccessible::DescriptionChanged, index);
+            }
+        }
+    }
 }
 
 bool StatusBar::remove_item(const std::string& id) {
@@ -97,6 +112,46 @@ QRect StatusBar::item_rect(const std::string& id) const {
     }
     ensure_layout();
     return found->rect;
+}
+
+std::vector<AccessibleItem> StatusBar::accessible_items() const {
+    ensure_layout();
+    std::vector<AccessibleItem> items;
+    for (const StatusBarSide side : {StatusBarSide::left, StatusBarSide::right}) {
+        for (const Entry* entry : ordered(side)) {
+            if (!shown(*entry)) {
+                continue;
+            }
+            const bool has_command = !entry->item.command.empty();
+            items.push_back({.key = QString::fromStdString(entry->id),
+                             .name = entry->item.text,
+                             .description = entry->item.tooltip,
+                             .role = has_command ? QAccessible::Button : QAccessible::StaticText,
+                             .state = {},
+                             .rect = entry->rect,
+                             .actions = has_command
+                                            ? QStringList{QAccessibleActionInterface::pressAction()}
+                                            : QStringList()});
+        }
+    }
+    return items;
+}
+
+void StatusBar::do_accessible_action(const QString& key, const QString& action) {
+    if (action != QAccessibleActionInterface::pressAction()) {
+        return;
+    }
+    const std::string id = key.toStdString();
+    const auto found = std::ranges::find(entries_, id, &Entry::id);
+    if (found != entries_.end() && shown(*found) && !found->item.command.empty()) {
+        emit command_requested(QString::fromStdString(found->item.command));
+    }
+}
+
+int StatusBar::accessible_index(const std::string& id) const {
+    const auto items = accessible_items();
+    const auto found = std::ranges::find(items, QString::fromStdString(id), &AccessibleItem::key);
+    return found == items.end() ? -1 : static_cast<int>(found - items.begin());
 }
 
 bool StatusBar::shown(const Entry& entry) const {
