@@ -48,6 +48,14 @@ node scripts/generate-keybinding-cases.mjs
 
 The key table (`src/core/include/anvil/core/key_table.hpp`) lists VS Code's `KeyCode` values with the names key bindings use for them, so a new key in the release is a new row. CI checks the three key scripts with `--check`.
 
+The menu bar is generated too (`src/workbench/include/anvil/workbench/menu_table.hpp`). `generate-menus.mjs` loads the compiled workbench in Node, creates its workbench contributions and views service against inert services, and reads the menus back from `MenuRegistry`. It stops with a message when a menu it expects (File to Help, and a few items that stand for registrations the script must reach) is missing, and when the menus of Linux and Windows differ. CI checks it with `--check`.
+
+```sh
+node scripts/generate-menus.mjs
+```
+
+Review the diff for items that VS Code added, moved or renamed. A new item shows disabled until a command with its id is registered.
+
 ## 6. Refresh the color themes
 
 The default color themes are copied from the checkout into `resources/themes`, and a test fails when the copies differ from it. Refresh them, review the diff, and check that the default theme (`EditorDefaults::color_theme`, VS Code's `ThemeSettingDefaults.COLOR_THEME_DARK` in `workbenchThemeService.ts`) is still in the list:
