@@ -22,10 +22,14 @@ struct Ok {};
 struct OkJson {
     std::string json;
 };
+// A reply that is a buffer, such as the contents of a file.
+struct OkBuffer {
+    Bytes data;
+};
 struct Failed {
     std::string error_json;
 };
-using HandlerResult = std::variant<Ok, OkJson, Failed>;
+using HandlerResult = std::variant<Ok, OkJson, OkBuffer, Failed>;
 
 // Outcome of a call to the extension host: the reply's JSON text (std::nullopt for an undefined
 // result), or the serialized error.

@@ -95,6 +95,8 @@ After the handshake every payload is an RPC message (`src/vs/workbench/services/
 - The receiver of a request sends `Acknowledged` for it immediately, then a reply with the same `REQ` when the handler completes. A sender that receives no `Acknowledged` within 3 seconds marks the peer unresponsive.
 - `Cancel` aborts an in-flight request that was sent with a cancellation variant.
 - Method names are the method names of the target service shape and all begin with `$`, for example `$registerCommand`.
+- A request that carries binary data uses `RequestMixedArgs`, whose arguments are each a JSON string, a buffer, an object with buffers (its JSON text and its buffers) or undefined. In an object with buffers every buffer is replaced in the JSON by a placeholder `{"$$ref$$": n}`, where `n` is the position of the buffer among the buffers that follow (`stringifyJsonWithBufferRefs` and `parseJsonAndRestoreBufferRefs` in `rpcProtocol.ts`). The editor passes the arguments to a handler as a JSON array in which a buffer and an undefined argument are `null` and an object with buffers is its JSON with the placeholders; the bytes are read from the request (`buffer_argument`, `object_buffers`), so `MainThreadFileSystem.$writeFile(resource, content)` receives its content as a buffer.
+- A handler replies with bytes as `ReplyOKVSBuffer`, for example `$readFile`. An empty buffer is a reply of that type with no bytes, which the extension host revives as an empty buffer; `ReplyOKEmpty` is `undefined`, a different result.
 
 ### Proxy identifiers
 

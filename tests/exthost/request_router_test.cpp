@@ -30,11 +30,49 @@ TEST(ParseArguments, ParsesMixedArgumentsAndTurnsUndefinedIntoNull) {
     EXPECT_EQ(*args, json::parse(R"(["text",null,{"a":1}])"));
 }
 
-TEST(ParseArguments, RejectsBinaryArguments) {
-    Request buffer{1, 1, "$x", MixedArgs{BufferArg{anvil::to_bytes("x")}}};
-    EXPECT_FALSE(parse_arguments(buffer).has_value());
-    Request with_buffers{1, 1, "$x", MixedArgs{ObjectWithBuffersArg{"{}", {anvil::to_bytes("x")}}}};
-    EXPECT_FALSE(parse_arguments(with_buffers).has_value());
+TEST(ParseArguments, ABufferArgumentIsNullAndAnObjectWithBuffersKeepsItsPlaceholders) {
+    Request request{
+        1, 1, "$x",
+        MixedArgs{JsonArg{"\"path\""}, BufferArg{anvil::to_bytes("bytes")},
+                  ObjectWithBuffersArg{R"({"a":{"$$ref$$":1},"b":{"$$ref$$":0}})",
+                                       {anvil::to_bytes("first"), anvil::to_bytes("second")}},
+                  UndefinedArg{}}};
+    const auto args = parse_arguments(request);
+    ASSERT_TRUE(args.has_value());
+    EXPECT_EQ(*args, json::parse(R"(["path",null,{"a":{"$$ref$$":1},"b":{"$$ref$$":0}},null])"));
+}
+
+TEST(BufferArgument, GivesTheBytesOfABufferAndNothingForAnythingElse) {
+    Request request{1, 1, "$x",
+                    MixedArgs{JsonArg{"1"}, BufferArg{anvil::to_bytes("bytes")},
+                              ObjectWithBuffersArg{"{}", {anvil::to_bytes("o")}}, UndefinedArg{},
+                              BufferArg{{}}}};
+    EXPECT_EQ(buffer_argument(request, 0), nullptr);
+    ASSERT_NE(buffer_argument(request, 1), nullptr);
+    EXPECT_EQ(anvil::as_text(*buffer_argument(request, 1)), "bytes");
+    EXPECT_EQ(buffer_argument(request, 2), nullptr);
+    EXPECT_EQ(buffer_argument(request, 3), nullptr);
+    ASSERT_NE(buffer_argument(request, 4), nullptr);
+    EXPECT_TRUE(buffer_argument(request, 4)->empty());
+    EXPECT_EQ(buffer_argument(request, 5), nullptr);
+
+    const Request json_only = json_request(ProxyId::MainThreadCommands, "$x", "[1]");
+    EXPECT_EQ(buffer_argument(json_only, 0), nullptr);
+}
+
+TEST(ObjectBuffers, GivesTheBuffersOfAnObjectInTheOrderOfTheirPlaceholders) {
+    Request request{
+        1, 1, "$x",
+        MixedArgs{BufferArg{anvil::to_bytes("lone")},
+                  ObjectWithBuffersArg{"{}", {anvil::to_bytes("a"), anvil::to_bytes("bc")}},
+                  ObjectWithBuffersArg{"{}", {}}}};
+    EXPECT_TRUE(object_buffers(request, 0).empty());
+    const auto buffers = object_buffers(request, 1);
+    ASSERT_EQ(buffers.size(), 2U);
+    EXPECT_EQ(anvil::as_text(buffers[0]), "a");
+    EXPECT_EQ(anvil::as_text(buffers[1]), "bc");
+    EXPECT_TRUE(object_buffers(request, 2).empty());
+    EXPECT_TRUE(object_buffers(request, 3).empty());
 }
 
 TEST(ParseArguments, RejectsInvalidJson) {

@@ -47,6 +47,7 @@ if(UNIX)
 endif()
 
 add_executable(anvil_exthost_tests
+  exthost/binary_arguments_test.cpp
   exthost/commands_service_test.cpp
   exthost/contributions_test.cpp
   exthost/documents_service_test.cpp
