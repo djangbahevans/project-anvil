@@ -61,6 +61,8 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `editor.insertSpaces` | Tab inserts spaces up to the next tab stop when `true`, a tab character when `false` | `true` |
 | `workbench.colorTheme` | The color theme, by id or label: one of the ten that ship with the editor, or one that an extension contributes in `contributes.themes` (the `uiTheme` of the manifest decides its kind) | `"Dark 2026"` |
 | `workbench.editor.focusRecentEditorAfterClose` | Closing the active tab shows the tab that was shown before it when `true`, its right neighbor (the left one for the last tab) when `false` | `true` |
+| `window.commandCenter` | Shows the box in the middle of the title bar that shows the workspace name and opens the command palette (custom title bar only) | `true` |
+| `workbench.layoutControl.enabled` | Shows the buttons in the title bar that show and hide the side bar and the panel (custom title bar only) | `true` |
 | `window.titleBarStyle` | `"custom"`: on Linux and Windows the window has no frame and draws its own title bar, with the menus and the window buttons in it; `"native"`: the window has the system's frame and the menus below it. macOS always has the system's frame. Read when the window opens, so a change applies after a restart | `"custom"` |
 | `files.eol` | Line ending of new documents: `"\n"`, `"\r\n"` or `"auto"` (CRLF on Windows, LF elsewhere). Opened files keep their own | `"auto"` |
 
