@@ -1,6 +1,7 @@
 #include "anvil/ui/editor_area.hpp"
 
 #include <QApplication>
+#include <QMouseEvent>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QSplitter>
@@ -24,6 +25,53 @@ Uri doc(const std::string& name) {
 
 class EditorAreaTest : public ::testing::Test {
 protected:
+    // Two groups side by side; the first has the tabs a, b and c, the second has d and e.
+    void two_groups() {
+        first_ = layout_.focused();
+        for (const char* name : {"a", "b", "c"}) {
+            layout_.open(first_, doc(name));
+        }
+        second_ = *layout_.split(first_, Direction::right);
+        for (const char* name : {"d", "e"}) {
+            layout_.open(second_, doc(name));
+        }
+        QApplication::processEvents();
+    }
+
+    void send(TabStrip* strip, QEvent::Type type, const QPoint& global, Qt::MouseButton button,
+              Qt::MouseButtons buttons) {
+        const QPoint local = strip->mapFromGlobal(global);
+        QMouseEvent event(type, local, global, button, buttons, {});
+        QApplication::sendEvent(strip, &event);
+    }
+    // The start of a drag of tab `index` of the group, without moving yet.
+    void press_tab(GroupId group, int index) {
+        TabStrip* strip = area_->group(group)->tabs();
+        send(strip, QEvent::MouseButtonPress,
+             strip->mapToGlobal(strip->tab_rect(index).center() - QPoint(10, 0)), Qt::LeftButton,
+             Qt::LeftButton);
+    }
+    void drag_to(GroupId from, const QPoint& global) {
+        send(area_->group(from)->tabs(), QEvent::MouseMove, global, Qt::NoButton, Qt::LeftButton);
+    }
+    void release_at(GroupId from, const QPoint& global) {
+        send(area_->group(from)->tabs(), QEvent::MouseButtonRelease, global, Qt::LeftButton,
+             Qt::NoButton);
+    }
+    // A point of the group's editor, as a fraction of its width and height.
+    QPoint point_in_editor(GroupId group, double fx, double fy) {
+        EditorGroupWidget* widget = area_->group(group);
+        const int top = widget->tabs()->geometry().bottom() + 1;
+        return widget->mapToGlobal(QPoint(static_cast<int>(widget->width() * fx),
+                                          top + static_cast<int>((widget->height() - top) * fy)));
+    }
+    QPoint point_in_strip(GroupId group, int x) {
+        return area_->group(group)->tabs()->mapToGlobal(QPoint(x, 10));
+    }
+
+    GroupId first_{};
+    GroupId second_{};
+
     void SetUp() override {
         area_ = std::make_unique<EditorArea>(
             layout_, colors_,
@@ -74,6 +122,15 @@ TEST_F(EditorAreaTest, StartsWithOneEmptyGroupAndNoSplitter) {
     EXPECT_TRUE(area_->groups()[0]->is_empty());
     EXPECT_FALSE(area_->groups()[0]->view()->isVisible());
     EXPECT_TRUE(area_->groups()[0]->tabs()->isVisible());
+}
+
+TEST_F(EditorAreaTest, TheStripOfAnEmptyGroupStaysAtTheTop) {
+    layout_.split(layout_.focused(), Direction::right);
+    QApplication::processEvents();
+    for (EditorGroupWidget* group : area_->groups()) {
+        EXPECT_EQ(group->tabs()->geometry().top(), 0);
+        EXPECT_GT(group->height(), 100);
+    }
 }
 
 TEST_F(EditorAreaTest, TheTabsOfAGroupFollowTheLayout) {
@@ -314,4 +371,191 @@ TEST_F(EditorAreaTest, ADocumentThatIsEmptyForAGroupOnlyThroughTheLookupIsShownA
     documents_.clear();
     layout_.activate(g, 0);
     EXPECT_FALSE(area_->group(g)->is_empty());
+}
+
+TEST_F(EditorAreaTest, ATabDraggedOverAnotherStripShowsWhereItWouldGo) {
+    two_groups();
+    press_tab(first_, 1);
+    drag_to(first_, point_in_strip(second_, 130));
+    EXPECT_TRUE(area_->drag_picture_visible());
+    EXPECT_EQ(area_->group(second_)->tabs()->insertion_index_at(130), 1);
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+    EXPECT_EQ(area_->group(first_)->tabs()->count(), 3);
+    release_at(first_, point_in_strip(second_, 130));
+}
+
+TEST_F(EditorAreaTest, DroppingOnAnotherStripReportsThePositionAmongItsTabs) {
+    two_groups();
+    QSignalSpy strip(area_.get(), &EditorArea::tab_dropped_on_strip);
+    QSignalSpy group(area_.get(), &EditorArea::tab_dropped_on_group);
+    QSignalSpy edge(area_.get(), &EditorArea::tab_dropped_on_edge);
+    press_tab(first_, 1);
+    drag_to(first_, point_in_strip(second_, 130));
+    release_at(first_, point_in_strip(second_, 130));
+    ASSERT_EQ(strip.count(), 1);
+    EXPECT_EQ(strip.at(0).at(0).value<GroupId>(), first_);
+    EXPECT_EQ(strip.at(0).at(1).toInt(), 1);
+    EXPECT_EQ(strip.at(0).at(2).value<GroupId>(), second_);
+    EXPECT_EQ(strip.at(0).at(3).toInt(), 1);
+    EXPECT_EQ(group.count() + edge.count(), 0);
+    EXPECT_FALSE(area_->drag_picture_visible());
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+}
+
+TEST_F(EditorAreaTest, DroppingAfterTheLastTabOfAnotherStripReportsTheEnd) {
+    two_groups();
+    QSignalSpy strip(area_.get(), &EditorArea::tab_dropped_on_strip);
+    press_tab(first_, 0);
+    drag_to(first_, point_in_strip(second_, 380));
+    release_at(first_, point_in_strip(second_, 380));
+    ASSERT_EQ(strip.count(), 1);
+    EXPECT_EQ(strip.at(0).at(3).toInt(), 2);
+}
+
+TEST_F(EditorAreaTest, OverTheMiddleOfAnotherGroupTheWholeGroupIsShadedAndADropMovesTheTabToIt) {
+    two_groups();
+    QSignalSpy group(area_.get(), &EditorArea::tab_dropped_on_group);
+    press_tab(first_, 2);
+    drag_to(first_, point_in_editor(second_, 0.5, 0.5));
+    const QRect shade = area_->drop_shade();
+    ASSERT_FALSE(shade.isEmpty());
+    EditorGroupWidget* target = area_->group(second_);
+    EXPECT_EQ(shade.left(), target->mapTo(area_.get(), QPoint(0, 0)).x());
+    EXPECT_EQ(shade.width(), target->width());
+    EXPECT_GT(shade.height(), target->height() - 60);
+    release_at(first_, point_in_editor(second_, 0.5, 0.5));
+    ASSERT_EQ(group.count(), 1);
+    EXPECT_EQ(group.at(0).at(0).value<GroupId>(), first_);
+    EXPECT_EQ(group.at(0).at(1).toInt(), 2);
+    EXPECT_EQ(group.at(0).at(2).value<GroupId>(), second_);
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+}
+
+TEST_F(EditorAreaTest, NearAnEdgeOfAGroupHalfOfItIsShadedAndADropAsksForASplit) {
+    two_groups();
+    struct Case {
+        double fx;
+        double fy;
+        Direction direction;
+    };
+    for (const Case& c : {Case{0.1, 0.5, Direction::left}, Case{0.9, 0.5, Direction::right},
+                          Case{0.5, 0.1, Direction::up}, Case{0.5, 0.9, Direction::down}}) {
+        QSignalSpy edge(area_.get(), &EditorArea::tab_dropped_on_edge);
+        press_tab(first_, 0);
+        drag_to(first_, point_in_editor(second_, c.fx, c.fy));
+        const QRect shade = area_->drop_shade();
+        ASSERT_FALSE(shade.isEmpty());
+        const QRect group = QRect(area_->group(second_)->mapTo(area_.get(), QPoint(0, 0)),
+                                  area_->group(second_)->size());
+        switch (c.direction) {
+        case Direction::left:
+            EXPECT_EQ(shade.left(), group.left());
+            EXPECT_NEAR(shade.width(), group.width() / 2, 1);
+            break;
+        case Direction::right:
+            EXPECT_EQ(shade.right(), group.right());
+            EXPECT_NEAR(shade.width(), group.width() / 2, 1);
+            break;
+        case Direction::up:
+            EXPECT_NEAR(shade.height(), (group.height() - 35) / 2, 2);
+            EXPECT_EQ(shade.width(), group.width());
+            EXPECT_LT(shade.top(), group.top() + 40);
+            break;
+        case Direction::down:
+            EXPECT_EQ(shade.bottom(), group.bottom());
+            EXPECT_NEAR(shade.height(), (group.height() - 35) / 2, 2);
+            break;
+        }
+        release_at(first_, point_in_editor(second_, c.fx, c.fy));
+        ASSERT_EQ(edge.count(), 1) << static_cast<int>(c.direction);
+        EXPECT_EQ(edge.at(0).at(2).value<GroupId>(), second_);
+        EXPECT_EQ(edge.at(0).at(3).value<Direction>(), c.direction);
+    }
+}
+
+TEST_F(EditorAreaTest, AGroupThatHasOnlyTheDraggedTabCannotBeSplitByIt) {
+    const GroupId only = layout_.focused();
+    layout_.open(only, doc("a"));
+    const GroupId other = *layout_.split(only, Direction::right);
+    layout_.open(other, doc("b"));
+    QApplication::processEvents();
+    QSignalSpy edge(area_.get(), &EditorArea::tab_dropped_on_edge);
+    press_tab(only, 0);
+    drag_to(only, point_in_editor(only, 0.9, 0.5));
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+    release_at(only, point_in_editor(only, 0.9, 0.5));
+    EXPECT_EQ(edge.count(), 0);
+}
+
+TEST_F(EditorAreaTest, AGroupWithSeveralTabsCanBeSplitByItsOwnTab) {
+    two_groups();
+    QSignalSpy edge(area_.get(), &EditorArea::tab_dropped_on_edge);
+    press_tab(first_, 1);
+    drag_to(first_, point_in_editor(first_, 0.9, 0.5));
+    EXPECT_FALSE(area_->drop_shade().isEmpty());
+    release_at(first_, point_in_editor(first_, 0.9, 0.5));
+    ASSERT_EQ(edge.count(), 1);
+    EXPECT_EQ(edge.at(0).at(2).value<GroupId>(), first_);
+}
+
+TEST_F(EditorAreaTest, OverTheMiddleOfItsOwnGroupNothingWouldHappen) {
+    two_groups();
+    QSignalSpy any(area_.get(), &EditorArea::tab_dropped_on_group);
+    QSignalSpy strip(area_.get(), &EditorArea::tab_dropped_on_strip);
+    press_tab(first_, 1);
+    drag_to(first_, point_in_editor(first_, 0.5, 0.5));
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+    release_at(first_, point_in_editor(first_, 0.5, 0.5));
+    EXPECT_EQ(any.count() + strip.count(), 0);
+}
+
+TEST_F(EditorAreaTest, DroppingOutsideEveryGroupDoesNothing) {
+    two_groups();
+    QSignalSpy strip(area_.get(), &EditorArea::tab_dropped_on_strip);
+    QSignalSpy group(area_.get(), &EditorArea::tab_dropped_on_group);
+    QSignalSpy edge(area_.get(), &EditorArea::tab_dropped_on_edge);
+    press_tab(first_, 1);
+    const QPoint far = area_->mapToGlobal(QPoint(5000, 5000));
+    drag_to(first_, far);
+    EXPECT_TRUE(area_->drag_picture_visible());
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+    release_at(first_, far);
+    EXPECT_EQ(strip.count() + group.count() + edge.count(), 0);
+    EXPECT_FALSE(area_->drag_picture_visible());
+}
+
+TEST_F(EditorAreaTest, EscapeEndsTheDragAndHidesWhatItShowed) {
+    two_groups();
+    QSignalSpy group(area_.get(), &EditorArea::tab_dropped_on_group);
+    press_tab(first_, 1);
+    drag_to(first_, point_in_editor(second_, 0.5, 0.5));
+    ASSERT_FALSE(area_->drop_shade().isEmpty());
+    QTest::keyClick(area_->group(first_)->tabs(), Qt::Key_Escape);
+    EXPECT_FALSE(area_->drag_picture_visible());
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+    release_at(first_, point_in_editor(second_, 0.5, 0.5));
+    EXPECT_EQ(group.count(), 0);
+}
+
+TEST_F(EditorAreaTest, TheIndicatorOfAStripGoesWhenTheTabLeavesIt) {
+    two_groups();
+    press_tab(first_, 0);
+    drag_to(first_, point_in_strip(second_, 130));
+    drag_to(first_, point_in_editor(second_, 0.5, 0.5));
+    EXPECT_FALSE(area_->drop_shade().isEmpty());
+    drag_to(first_, point_in_strip(second_, 130));
+    EXPECT_TRUE(area_->drop_shade().isEmpty());
+    release_at(first_, point_in_strip(second_, 130));
+}
+
+TEST_F(EditorAreaTest, ADragWithinTheStripReordersAndShowsNoPicture) {
+    two_groups();
+    QSignalSpy moved(area_.get(), &EditorArea::tab_moved);
+    press_tab(first_, 0);
+    TabStrip* strip = area_->group(first_)->tabs();
+    drag_to(first_, strip->mapToGlobal(strip->tab_rect(0).center() + QPoint(12, 0)));
+    drag_to(first_, strip->mapToGlobal(strip->tab_rect(1).center() + QPoint(20, 0)));
+    EXPECT_FALSE(area_->drag_picture_visible());
+    EXPECT_GE(moved.count(), 1);
+    release_at(first_, strip->mapToGlobal(QPoint(150, 10)));
 }

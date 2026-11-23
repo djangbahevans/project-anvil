@@ -296,8 +296,12 @@ TEST_F(ThemeStoreTest,
 
     ASSERT_TRUE(store_->select("Dark+"));
     EXPECT_EQ(colors_.color("editorGroup.border"), QColor("#444444"));
+    EXPECT_EQ(colors_.color("editorGroup.dropBackground"), QColor(0x53, 0x59, 0x5d, 0x80));
     ASSERT_TRUE(store_->select("Light+"));
     EXPECT_EQ(colors_.color("editorGroup.border"), QColor("#e7e7e7"));
+    EXPECT_EQ(colors_.color("editorGroup.dropBackground"), QColor(0x26, 0x77, 0xcb, 0x2e));
+    ASSERT_TRUE(store_->select("Dark High Contrast"));
+    EXPECT_FALSE(colors_.is_themed("editorGroup.dropBackground"));
 }
 
 TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {

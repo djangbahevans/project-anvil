@@ -5,6 +5,7 @@
 #include <QContextMenuEvent>
 #include <QFontMetrics>
 #include <QHelpEvent>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -211,6 +212,26 @@ int TabStrip::tab_at(int x) const {
     return static_cast<int>(found - entries_.begin());
 }
 
+int TabStrip::insertion_index_at(int x) const {
+    ensure_layout();
+    const int content_x = x + scroll_;
+    for (int i = 0; i < count(); ++i) {
+        const Entry& entry = entries_[static_cast<std::size_t>(i)];
+        if (content_x < entry.x + entry.width / 2) {
+            return i;
+        }
+    }
+    return count();
+}
+
+void TabStrip::set_drop_indicator(int position) {
+    const int clamped = position < 0 ? -1 : std::min(position, count());
+    if (drop_indicator_ != clamped) {
+        drop_indicator_ = clamped;
+        update();
+    }
+}
+
 void TabStrip::set_focused(bool focused) {
     if (focused_ != focused) {
         focused_ = focused;
@@ -297,16 +318,25 @@ void TabStrip::paintEvent(QPaintEvent*) {
                          colors_.color("editorGroupHeader.tabsBorder"));
     }
 
-    const int dragged = dragging_ ? pressed_ : -1;
+    const int dragged = dragging_ && !dragging_out_ ? pressed_ : -1;
     for (int i = 0; i < count(); ++i) {
         const QRect area = tab_rect(i);
         if (i == dragged || area.right() < 0 || area.left() > width()) {
             continue;
         }
+        // A tab that is dragged out stays where it is, dimmed, until it is dropped.
+        painter.setOpacity(dragging_out_ && i == pressed_ ? 0.5 : 1.0);
         paint_tab(painter, i, area.left());
+        painter.setOpacity(1.0);
     }
     if (dragged >= 0) {
         paint_tab(painter, dragged, drag_left_);
+    }
+    if (drop_indicator_ >= 0) {
+        const int x = drop_indicator_ < count() ? tab_rect(drop_indicator_).left()
+                                                : tab_rect(count() - 1).right() + 1;
+        painter.fillRect(QRect(std::max(0, x - 1), 0, 2, height_pixels),
+                         colors_.color("tab.dragAndDropBorder"));
     }
 }
 
@@ -369,13 +399,46 @@ void TabStrip::mouseMoveEvent(QMouseEvent* event) {
 
     if (pressed_ >= 0 && !pressed_button_ && pressed_with_ == Qt::LeftButton &&
         (event->buttons() & Qt::LeftButton)) {
-        if (!dragging_ && std::abs(position.x() - press_x_) >= QApplication::startDragDistance()) {
+        if (!dragging_ &&
+            (position - press_).manhattanLength() >= QApplication::startDragDistance()) {
             dragging_ = true;
         }
-        if (dragging_) {
-            drag_to(position.x());
+        if (!dragging_) {
+            return;
         }
+        if (!rect().contains(position)) {
+            if (!dragging_out_) {
+                dragging_out_ = true;
+                grabKeyboard();
+                update();
+            }
+            emit drag_out_moved(pressed_, event->globalPosition().toPoint());
+            return;
+        }
+        if (dragging_out_) {
+            end_drag_out();
+            emit drag_out_cancelled();
+        }
+        drag_to(position.x());
     }
+}
+
+void TabStrip::end_drag_out() {
+    dragging_out_ = false;
+    releaseKeyboard();
+    update();
+}
+
+void TabStrip::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape && dragging_out_) {
+        pressed_ = -1;
+        pressed_with_ = Qt::NoButton;
+        dragging_ = false;
+        end_drag_out();
+        emit drag_out_cancelled();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void TabStrip::mousePressEvent(QMouseEvent* event) {
@@ -396,7 +459,7 @@ void TabStrip::mousePressEvent(QMouseEvent* event) {
         pressed_button_ = true;
         return;
     }
-    press_x_ = position.x();
+    press_ = position;
     grab_offset_ = position.x() - tab_rect(over).left();
     scroll_into_view(over);
     if (over != current_) {
@@ -411,11 +474,17 @@ void TabStrip::mouseReleaseEvent(QMouseEvent* event) {
     const int target = pressed_;
     const bool on_button = pressed_button_;
     const bool was_dragging = dragging_;
+    const bool was_out = dragging_out_;
     const Qt::MouseButton button = pressed_with_;
     pressed_ = -1;
     pressed_button_ = false;
     dragging_ = false;
     pressed_with_ = Qt::NoButton;
+    if (was_out) {
+        end_drag_out();
+        emit drag_out_dropped(target, event->globalPosition().toPoint());
+        return;
+    }
     if (was_dragging) {
         update();
         return;

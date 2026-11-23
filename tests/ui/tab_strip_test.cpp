@@ -568,14 +568,14 @@ TEST_F(TabStripTest, ADraggedTabIsDrawnWhereTheMouseHoldsIt) {
     EXPECT_EQ(pixel(grab(), QPoint(strip_->tab_rect(0).left() + 3, 10)), QColor("#202020"));
 }
 
-TEST_F(TabStripTest, ADragCannotMoveATabOutsideTheStrip) {
+TEST_F(TabStripTest, ADragToTheEndsOfTheStripMovesTheTabToTheFirstAndLastPlaces) {
     add_many(3);
     const QPoint start = body(0);
     press(start);
     move(start + QPoint(12, 0), Qt::LeftButton);
-    move(QPoint(5000, 10), Qt::LeftButton);
+    move(QPoint(strip_->width() - 1, 10), Qt::LeftButton);
     EXPECT_EQ(strip_->current_index(), 2);
-    move(QPoint(-5000, 10), Qt::LeftButton);
+    move(QPoint(0, 10), Qt::LeftButton);
     EXPECT_EQ(strip_->current_index(), 0);
     release(QPoint(10, 10));
 }
@@ -598,6 +598,157 @@ TEST_F(TabStripTest, ACloseButtonIsNotDraggable) {
     EXPECT_FALSE(strip_->is_dragging());
     EXPECT_EQ(moved.count(), 0);
     release(button(0) + QPoint(200, 0));
+}
+
+TEST_F(TabStripTest, ADragThatLeavesTheStripReportsThePointerAndMovesNoTab) {
+    add_many(3);
+    QSignalSpy out(strip_.get(), &TabStrip::drag_out_moved);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    press(body(1));
+    move(body(1) + QPoint(0, 5), Qt::LeftButton);
+    EXPECT_FALSE(strip_->is_dragging_out());
+    move(QPoint(200, 120), Qt::LeftButton);
+    EXPECT_TRUE(strip_->is_dragging());
+    EXPECT_TRUE(strip_->is_dragging_out());
+    ASSERT_EQ(out.count(), 1);
+    EXPECT_EQ(out.at(0).at(0).toInt(), 1);
+    EXPECT_EQ(out.at(0).at(1).toPoint(), strip_->mapToGlobal(QPoint(200, 120)));
+    move(QPoint(900, 300), Qt::LeftButton);
+    EXPECT_EQ(out.count(), 2);
+    EXPECT_EQ(moved.count(), 0);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file0.txt", "file1.txt", "file2.txt"}));
+    release(QPoint(900, 300));
+}
+
+TEST_F(TabStripTest, ADragThatStartsDownwardsAlsoLeavesTheStrip) {
+    add_many(2);
+    QSignalSpy out(strip_.get(), &TabStrip::drag_out_moved);
+    press(body(0));
+    move(body(0) + QPoint(0, 80), Qt::LeftButton);
+    EXPECT_TRUE(strip_->is_dragging_out());
+    EXPECT_EQ(out.count(), 1);
+    release(body(0) + QPoint(0, 80));
+}
+
+TEST_F(TabStripTest, ReleasingOutsideTheStripDropsTheTabThereAndSelectsNothing) {
+    add_many(3);
+    QSignalSpy dropped(strip_.get(), &TabStrip::drag_out_dropped);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    press(body(2));
+    move(QPoint(100, 150), Qt::LeftButton);
+    release(QPoint(100, 150));
+    ASSERT_EQ(dropped.count(), 1);
+    EXPECT_EQ(dropped.at(0).at(0).toInt(), 2);
+    EXPECT_EQ(dropped.at(0).at(1).toPoint(), strip_->mapToGlobal(QPoint(100, 150)));
+    EXPECT_FALSE(strip_->is_dragging_out());
+    EXPECT_FALSE(strip_->is_dragging());
+    EXPECT_EQ(closed.count(), 0);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file0.txt", "file1.txt", "file2.txt"}));
+}
+
+TEST_F(TabStripTest, BringingTheTabBackOverTheStripEndsTheDragOutAndReordersAgain) {
+    add_many(3);
+    QSignalSpy cancelled(strip_.get(), &TabStrip::drag_out_cancelled);
+    QSignalSpy dropped(strip_.get(), &TabStrip::drag_out_dropped);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    press(body(0));
+    move(QPoint(100, 120), Qt::LeftButton);
+    ASSERT_TRUE(strip_->is_dragging_out());
+    move(body(0) + QPoint(140, 0), Qt::LeftButton);
+    EXPECT_FALSE(strip_->is_dragging_out());
+    EXPECT_EQ(cancelled.count(), 1);
+    EXPECT_EQ(moved.count(), 1);
+    release(body(0) + QPoint(140, 0));
+    EXPECT_EQ(dropped.count(), 0);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file1.txt", "file0.txt", "file2.txt"}));
+}
+
+TEST_F(TabStripTest, EscapeCancelsADragOutAndTheReleaseThatFollowsDropsNothing) {
+    add_many(2);
+    QSignalSpy cancelled(strip_.get(), &TabStrip::drag_out_cancelled);
+    QSignalSpy dropped(strip_.get(), &TabStrip::drag_out_dropped);
+    press(body(0));
+    move(QPoint(100, 120), Qt::LeftButton);
+    ASSERT_TRUE(strip_->is_dragging_out());
+    QTest::keyClick(strip_.get(), Qt::Key_Escape);
+    EXPECT_FALSE(strip_->is_dragging_out());
+    EXPECT_FALSE(strip_->is_dragging());
+    EXPECT_EQ(cancelled.count(), 1);
+    move(QPoint(100, 130), Qt::LeftButton);
+    release(QPoint(100, 130));
+    EXPECT_EQ(dropped.count(), 0);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file0.txt", "file1.txt"}));
+}
+
+TEST_F(TabStripTest, EscapeDoesNothingWhenNoTabIsDraggedOut) {
+    add_many(2);
+    QSignalSpy cancelled(strip_.get(), &TabStrip::drag_out_cancelled);
+    QTest::keyClick(strip_.get(), Qt::Key_Escape);
+    EXPECT_EQ(cancelled.count(), 0);
+}
+
+TEST_F(TabStripTest, ATabThatIsDraggedOutIsShownDimmedWhereItIs) {
+    add_many(2);
+    const QPoint inside = strip_->tab_rect(0).topLeft() + QPoint(5, 10);
+    EXPECT_EQ(pixel(grab(), inside), QColor("#202020"));
+    press(body(0));
+    move(QPoint(100, 120), Qt::LeftButton);
+    EXPECT_NE(pixel(grab(), inside), QColor("#202020"));
+    EXPECT_EQ(strip_->tab_rect(0), QRect(0, 0, 120, 35));
+    release(QPoint(100, 120));
+    EXPECT_EQ(pixel(grab(), inside), QColor("#202020"));
+}
+
+TEST_F(TabStripTest, TheInsertionIndexIsTheNearestGapBetweenTabs) {
+    add_many(3);
+    EXPECT_EQ(strip_->insertion_index_at(0), 0);
+    EXPECT_EQ(strip_->insertion_index_at(59), 0);
+    EXPECT_EQ(strip_->insertion_index_at(61), 1);
+    EXPECT_EQ(strip_->insertion_index_at(179), 1);
+    EXPECT_EQ(strip_->insertion_index_at(181), 2);
+    EXPECT_EQ(strip_->insertion_index_at(301), 3);
+    EXPECT_EQ(strip_->insertion_index_at(590), 3);
+}
+
+TEST_F(TabStripTest, TheInsertionIndexCountsTheScroll) {
+    add_many(12);
+    strip_->set_current_index(11);
+    const int scroll = strip_->scroll_offset();
+    ASSERT_GT(scroll, 0);
+    EXPECT_EQ(strip_->insertion_index_at(0), (scroll + 60) / 120);
+}
+
+TEST_F(TabStripTest, ADropIndicatorShowsALineWhereATabWouldGo) {
+    colors_.set_colors({{"tab.activeBackground", QColor("#202020")},
+                        {"tab.inactiveBackground", QColor("#303030")},
+                        {"tab.dragAndDropBorder", QColor("#ff00ff")}});
+    add_many(3);
+    strip_->set_drop_indicator(1);
+    QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(120, 10)), QColor("#ff00ff"));
+    EXPECT_EQ(pixel(image, QPoint(119, 10)), QColor("#ff00ff"));
+    EXPECT_NE(pixel(image, QPoint(130, 10)), QColor("#ff00ff"));
+
+    strip_->set_drop_indicator(3);
+    image = grab();
+    EXPECT_EQ(pixel(image, QPoint(strip_->tab_rect(2).right(), 10)), QColor("#ff00ff"));
+    EXPECT_NE(pixel(image, QPoint(120, 10)), QColor("#ff00ff"));
+
+    strip_->set_drop_indicator(-1);
+    image = grab();
+    EXPECT_NE(pixel(image, QPoint(strip_->tab_rect(2).right(), 10)), QColor("#ff00ff"));
+}
+
+TEST_F(TabStripTest, SettingTheDropIndicatorToWhatItIsDoesNotRepaint) {
+    add_many(2);
+    strip_->set_drop_indicator(1);
+    QApplication::processEvents();
+    PaintCounter counter;
+    strip_->installEventFilter(&counter);
+    strip_->set_drop_indicator(1);
+    strip_->set_drop_indicator(99);
+    QApplication::processEvents();
+    EXPECT_EQ(counter.count, 1);
 }
 
 TEST_F(TabStripTest, TabsThatDoNotFitScrollAndTheSelectedTabStaysInView) {

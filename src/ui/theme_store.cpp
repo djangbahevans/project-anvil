@@ -81,6 +81,14 @@ std::optional<core::Rgba> registry_default(std::string_view key, core::ThemeKind
             return core::Rgba{.red = 0xe7, .green = 0xe7, .blue = 0xe7, .alpha = 0xff};
         }
     }
+    if (key == "editorGroup.dropBackground") {
+        if (kind == core::ThemeKind::dark) {
+            return core::Rgba{.red = 0x53, .green = 0x59, .blue = 0x5d, .alpha = 0x80};
+        }
+        if (kind == core::ThemeKind::light) {
+            return core::Rgba{.red = 0x26, .green = 0x77, .blue = 0xcb, .alpha = 0x2e};
+        }
+    }
     if (key == "toolbar.hoverBackground") {
         if (kind == core::ThemeKind::dark) {
             return core::Rgba{.red = 0x5a, .green = 0x5d, .blue = 0x5e, .alpha = 0x50};

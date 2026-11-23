@@ -987,6 +987,189 @@ TEST_F(MainWindowTest, ClickingInAnotherGroupFocusesIt) {
     EXPECT_EQ(current_text(), "A");
 }
 
+namespace {
+
+// Everything the user does to drag a tab out of a group's strip.
+struct TabDrag {
+    TabStrip* strip;
+    QPoint global(const QPoint& local) const {
+        return strip->mapToGlobal(local);
+    }
+    void send(QEvent::Type type, const QPoint& global_position, Qt::MouseButton button,
+              Qt::MouseButtons buttons) const {
+        const QPoint local = strip->mapFromGlobal(global_position);
+        QMouseEvent event(type, local, global_position, button, buttons, {});
+        QApplication::sendEvent(strip, &event);
+    }
+    void begin(int index) const {
+        send(QEvent::MouseButtonPress, global(strip->tab_rect(index).center() - QPoint(10, 0)),
+             Qt::LeftButton, Qt::LeftButton);
+    }
+    void move_to(const QPoint& global_position) const {
+        send(QEvent::MouseMove, global_position, Qt::NoButton, Qt::LeftButton);
+    }
+    void drop_at(const QPoint& global_position) const {
+        move_to(global_position);
+        send(QEvent::MouseButtonRelease, global_position, Qt::LeftButton, Qt::NoButton);
+    }
+};
+
+} // namespace
+
+TEST_F(MainWindowTest, DraggingATabOntoAnotherGroupsStripMovesItThereAtThatPosition) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    const auto groups = window_->editor_area()->groups();
+    const TabDrag drag{groups[0]->tabs()};
+    drag.begin(1);
+    drag.drop_at(groups[1]->tabs()->mapToGlobal(QPoint(130, 10)));
+
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1"}));
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt", "a.txt", "c.txt"}));
+    EXPECT_EQ(window_->editor_layout().focused(), groups[1]->id());
+    EXPECT_EQ(current_text(), "A");
+    EXPECT_EQ(groups[1]->tabs()->current_index(), 1);
+    EXPECT_EQ(window_->open_document_count(), 4U);
+}
+
+TEST_F(MainWindowTest, DraggingATabOntoTheMiddleOfAnotherGroupAddsItAtTheEnd) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    const auto groups = window_->editor_area()->groups();
+    const TabDrag drag{groups[0]->tabs()};
+    drag.begin(0);
+    drag.drop_at(groups[1]->mapToGlobal(QPoint(groups[1]->width() / 2, groups[1]->height() / 2)));
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"a.txt"}));
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt", "Untitled-1"}));
+}
+
+TEST_F(MainWindowTest, DraggingATabToTheEdgeOfAGroupSplitsItAndPutsTheTabInTheNewGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    const auto before = window_->editor_area()->groups();
+    const TabDrag drag{before[0]->tabs()};
+    drag.begin(1);
+    EditorGroupWidget* target = before[1];
+    drag.drop_at(target->mapToGlobal(QPoint(target->width() - 10, target->height() / 2)));
+
+    const auto groups = window_->editor_area()->groups();
+    ASSERT_EQ(groups.size(), 3U);
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1"}));
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt", "c.txt"}));
+    EXPECT_EQ(titles_of(groups[2]), (std::vector<QString>{"a.txt"}));
+    EXPECT_EQ(window_->editor_layout().focused(), groups[2]->id());
+    EXPECT_EQ(current_text(), "A");
+    QApplication::processEvents();
+    EXPECT_LT(groups[1]->geometry().right(), groups[2]->geometry().left() + 4);
+}
+
+TEST_F(MainWindowTest, DraggingATabToTheBottomEdgeOfItsOwnGroupSplitsThatGroupDown) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    EditorGroupWidget* group = window_->editor_area()->groups()[0];
+    const TabDrag drag{group->tabs()};
+    drag.begin(1);
+    drag.drop_at(group->mapToGlobal(QPoint(group->width() / 2, group->height() - 10)));
+    const auto groups = window_->editor_area()->groups();
+    ASSERT_EQ(groups.size(), 2U);
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1"}));
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"a.txt"}));
+    QApplication::processEvents();
+    EXPECT_EQ(window_->editor_area()->root_splitter()->orientation(), Qt::Vertical);
+}
+
+TEST_F(MainWindowTest, DraggingTheLastTabOfAGroupToAnotherClosesTheGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    const auto groups = window_->editor_area()->groups();
+    const TabDrag drag{groups[1]->tabs()};
+    drag.begin(0);
+    drag.drop_at(groups[0]->tabs()->mapToGlobal(QPoint(10, 10)));
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1U);
+    EXPECT_EQ(titles_of(window_->editor_area()->groups()[0]),
+              (std::vector<QString>{"b.txt", "Untitled-1", "a.txt"}));
+    EXPECT_EQ(current_text(), "B");
+}
+
+TEST_F(MainWindowTest, ADraggedTabKeepsItsDocumentAndNothingIsAsked) {
+    create_window(false, true);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    type("!");
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    const auto groups = window_->editor_area()->groups();
+    answer_next_prompt(QMessageBox::Cancel);
+    const TabDrag drag{groups[0]->tabs()};
+    drag.begin(1);
+    drag.drop_at(groups[1]->tabs()->mapToGlobal(QPoint(300, 10)));
+    EXPECT_FALSE(prompt_shown_);
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt", "a.txt"}));
+    EXPECT_EQ(current_text(), "!A");
+    EXPECT_TRUE(window_->current_document()->is_dirty());
+    EXPECT_TRUE(groups[1]->tabs()->tab(1).dirty);
+}
+
+TEST_F(MainWindowTest, EscapeKeepsADraggedTabWhereItWas) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    const auto groups = window_->editor_area()->groups();
+    const TabDrag drag{groups[0]->tabs()};
+    drag.begin(1);
+    drag.move_to(groups[1]->mapToGlobal(QPoint(groups[1]->width() / 2, groups[1]->height() / 2)));
+    EXPECT_FALSE(window_->editor_area()->drop_shade().isEmpty());
+    QTest::keyClick(groups[0]->tabs(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->editor_area()->drop_shade().isEmpty());
+    drag.send(QEvent::MouseButtonRelease,
+              groups[1]->mapToGlobal(QPoint(groups[1]->width() / 2, groups[1]->height() / 2)),
+              Qt::LeftButton, Qt::NoButton);
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_TRUE(titles_of(groups[1]).empty());
+}
+
+TEST_F(MainWindowTest, DroppingATabOutsideTheWindowChangesNothing) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    const auto groups = window_->editor_area()->groups();
+    const TabDrag drag{groups[0]->tabs()};
+    drag.begin(1);
+    drag.drop_at(window_->mapToGlobal(QPoint(window_->width() + 400, window_->height() + 400)));
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_EQ(window_->editor_area()->groups().size(), 2U);
+}
+
+TEST_F(MainWindowTest, ADragAcrossGroupsRendersForReview) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(
+        QString::fromStdString(write("first.txt", "hello, world\nsecond line\n").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("other.txt", "other\n").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("right.txt", "right\n").string())));
+    const auto groups = window_->editor_area()->groups();
+    const TabDrag drag{groups[0]->tabs()};
+    drag.begin(2);
+    drag.move_to(groups[1]->mapToGlobal(QPoint(groups[1]->width() - 20, groups[1]->height() / 2)));
+    QApplication::processEvents();
+    const QImage image = window_->grab().toImage();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/drag_tab_edge.png");
+    }
+    QTest::keyClick(groups[0]->tabs(), Qt::Key_Escape);
+}
+
 TEST_F(MainWindowTest, SelectingATabOfAnotherGroupFocusesThatGroup) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));

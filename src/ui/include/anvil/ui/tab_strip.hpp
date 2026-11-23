@@ -88,12 +88,24 @@ public:
     int scroll_offset() const {
         return scroll_;
     }
+    // Where a tab dragged over the strip from another one would go: the position among the tabs
+    // that the horizontal coordinate `x`, in the coordinates of the widget, is nearest to, from 0
+    // to the number of tabs.
+    int insertion_index_at(int x) const;
+    // Shows a line at the position, which is what `insertion_index_at` gives, where a dragged tab
+    // would go, or none for -1.
+    void set_drop_indicator(int position);
     // The tab under the mouse, or -1.
     int hovered_tab() const {
         return hovered_;
     }
     bool is_dragging() const {
         return dragging_;
+    }
+    // True while the tab that is dragged is outside the strip, where a group or the window decides
+    // what the drop does.
+    bool is_dragging_out() const {
+        return dragging_out_;
     }
     // The menu for a right click on the tab. The caller owns it.
     std::unique_ptr<QMenu> build_context_menu(int index);
@@ -109,11 +121,20 @@ signals:
     void close_to_the_right_requested(int index);
     void close_saved_requested();
     void copy_path_requested(int index);
+    // The tab that is dragged is outside the strip, at this position of the screen. It is emitted
+    // for every move, and the strip changes nothing about its tabs.
+    void drag_out_moved(int index, const QPoint& global_position);
+    // The mouse button was released outside the strip.
+    void drag_out_dropped(int index, const QPoint& global_position);
+    // The drag outside the strip ended without a drop: the tab came back over the strip, or
+    // Escape was pressed.
+    void drag_out_cancelled();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void changeEvent(QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -142,6 +163,7 @@ private:
     int tab_at(int x) const;
     void set_hovered(int tab, bool button);
     void drag_to(int x);
+    void end_drag_out();
     void paint_tab(QPainter& painter, int index, int x) const;
 
     const WorkbenchColors& colors_;
@@ -157,9 +179,11 @@ private:
     int pressed_ = -1;
     bool pressed_button_ = false;
     Qt::MouseButton pressed_with_ = Qt::NoButton;
-    int press_x_ = 0;
+    QPoint press_;
     int grab_offset_ = 0;
     bool dragging_ = false;
+    bool dragging_out_ = false;
+    int drop_indicator_ = -1;
     int drag_left_ = 0;
 };
 
