@@ -37,6 +37,7 @@ View > Split Editor Right (Ctrl+\) and Split Editor Down add an empty editor gro
 | `ANVIL_NODE` | the Node.js binary (default: `node` on `PATH`) |
 | `ANVIL_VSCODE_DIR` | the VS Code checkout (default: `.deps/vscode` of the source tree) |
 | `ANVIL_EXTENSION_HOST=off` | run the editor without the extension host |
+| `ANVIL_NATIVE_FRAME=1` | give the window the system's frame and menu bar instead of its own title bar (Linux and Windows) |
 
 Extension host messages are printed to standard error. Under WSLg the window appears through Wayland or X11; `QT_QPA_PLATFORM=xcb` forces X11.
 

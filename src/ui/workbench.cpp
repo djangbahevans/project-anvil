@@ -12,6 +12,8 @@ namespace anvil::ui {
 
 std::string_view part_id(Part part) {
     switch (part) {
+    case Part::title_bar:
+        return "workbench.parts.titlebar";
     case Part::activity_bar:
         return "workbench.parts.activitybar";
     case Part::sidebar:
@@ -27,8 +29,8 @@ std::string_view part_id(Part part) {
 }
 
 std::optional<Part> part_from_id(std::string_view id) {
-    for (const Part part :
-         {Part::activity_bar, Part::sidebar, Part::editor, Part::panel, Part::status_bar}) {
+    for (const Part part : {Part::title_bar, Part::activity_bar, Part::sidebar, Part::editor,
+                            Part::panel, Part::status_bar}) {
         if (part_id(part) == id) {
             return part;
         }
@@ -118,6 +120,11 @@ void Workbench::set_status_bar(QWidget* status_bar) {
     root_layout_->addWidget(status_bar);
 }
 
+void Workbench::set_title_bar(QWidget* title_bar) {
+    title_bar_ = title_bar;
+    root_layout_->insertWidget(0, title_bar);
+}
+
 QWidget* Workbench::activity_bar() const {
     return activity_bar_;
 }
@@ -132,6 +139,8 @@ QWidget* Workbench::panel() const {
 
 bool Workbench::is_visible(Part part) const {
     switch (part) {
+    case Part::title_bar:
+        return title_bar_ && !title_bar_->isHidden();
     case Part::activity_bar:
         return !activity_bar_->isHidden();
     case Part::sidebar:
@@ -150,7 +159,13 @@ void Workbench::set_visible(Part part, bool visible) {
     if (part == Part::editor || is_visible(part) == visible) {
         return;
     }
+    if (part == Part::title_bar && !title_bar_) {
+        return;
+    }
     switch (part) {
+    case Part::title_bar:
+        title_bar_->setVisible(visible);
+        break;
     case Part::activity_bar:
         activity_bar_->setVisible(visible);
         break;
@@ -215,6 +230,8 @@ void Workbench::toggle(Part part) {
 
 int Workbench::size(Part part) const {
     switch (part) {
+    case Part::title_bar:
+        return title_bar_ ? title_bar_->height() : 0;
     case Part::activity_bar:
         return activity_bar_->isHidden() ? 0 : activity_bar_width;
     case Part::sidebar:

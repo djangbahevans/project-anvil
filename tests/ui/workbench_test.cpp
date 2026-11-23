@@ -55,16 +55,47 @@ protected:
 } // namespace
 
 TEST(WorkbenchPartsTest, EveryPartHasVsCodesId) {
+    EXPECT_EQ(anvil::ui::part_id(Part::title_bar), "workbench.parts.titlebar");
     EXPECT_EQ(anvil::ui::part_id(Part::activity_bar), "workbench.parts.activitybar");
     EXPECT_EQ(anvil::ui::part_id(Part::sidebar), "workbench.parts.sidebar");
     EXPECT_EQ(anvil::ui::part_id(Part::editor), "workbench.parts.editor");
     EXPECT_EQ(anvil::ui::part_id(Part::panel), "workbench.parts.panel");
     EXPECT_EQ(anvil::ui::part_id(Part::status_bar), "workbench.parts.statusbar");
-    for (const Part part :
-         {Part::activity_bar, Part::sidebar, Part::editor, Part::panel, Part::status_bar}) {
+    for (const Part part : {Part::title_bar, Part::activity_bar, Part::sidebar, Part::editor,
+                            Part::panel, Part::status_bar}) {
         EXPECT_EQ(anvil::ui::part_from_id(anvil::ui::part_id(part)), part);
     }
-    EXPECT_FALSE(anvil::ui::part_from_id("workbench.parts.titlebar").has_value());
+    EXPECT_FALSE(anvil::ui::part_from_id("workbench.parts.nothing").has_value());
+}
+
+TEST_F(WorkbenchTest, WithoutATitleBarThePartIsHiddenAndHasNoSize) {
+    EXPECT_FALSE(workbench_->is_visible(Part::title_bar));
+    EXPECT_EQ(workbench_->size(Part::title_bar), 0);
+    workbench_->set_visible(Part::title_bar, true);
+    EXPECT_FALSE(workbench_->is_visible(Part::title_bar));
+}
+
+TEST_F(WorkbenchTest, TheTitleBarIsTheTopRowAndHidingItGivesItsSpaceToTheEditorArea) {
+    auto* title_bar = new QLabel("title");
+    title_bar->setFixedHeight(35);
+    workbench_->set_title_bar(title_bar);
+    QApplication::processEvents();
+
+    EXPECT_TRUE(workbench_->is_visible(Part::title_bar));
+    EXPECT_EQ(workbench_->size(Part::title_bar), 35);
+    EXPECT_EQ(at(title_bar), QPoint(0, 0));
+    EXPECT_EQ(title_bar->width(), workbench_->width());
+    EXPECT_EQ(at(editor_).y(), 35);
+
+    const int height = editor_height();
+    QSignalSpy spy(workbench_.get(), &Workbench::visibility_changed);
+    workbench_->set_visible(Part::title_bar, false);
+    QApplication::processEvents();
+    ASSERT_EQ(spy.count(), 1);
+    EXPECT_EQ(spy.at(0).at(0).value<Part>(), Part::title_bar);
+    EXPECT_FALSE(spy.at(0).at(1).toBool());
+    EXPECT_EQ(at(editor_).y(), 0);
+    EXPECT_EQ(editor_height(), height + 35);
 }
 
 TEST_F(WorkbenchTest, TheSidebarThePanelAndTheActivityBarStartHidden) {

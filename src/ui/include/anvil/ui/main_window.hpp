@@ -17,7 +17,9 @@
 #include "anvil/ui/status_bar.hpp"
 #include "anvil/ui/tab_strip.hpp"
 #include "anvil/ui/theme_store.hpp"
+#include "anvil/ui/title_bar.hpp"
 #include "anvil/ui/view_container_registry.hpp"
+#include "anvil/ui/window_frame.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/workbench/editor_layout.hpp"
@@ -32,6 +34,7 @@
 #include <vector>
 
 class QMenu;
+class QMenuBar;
 
 namespace anvil::ui {
 
@@ -50,6 +53,10 @@ struct MainWindowOptions {
     std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
     bool confirm_unsaved_changes = true;
+    // Whether the window has no frame of its own and draws the title bar, with the menu bar and the
+    // window buttons in it (ADR 0015). Without it, and always on macOS, the window has the
+    // system's frame. The environment variable ANVIL_NATIVE_FRAME also turns it off.
+    bool custom_title_bar = true;
 };
 
 // The application window: the editor area with one or more groups, each with a tab strip of its
@@ -97,6 +104,18 @@ public:
     // around it.
     Workbench* workbench() {
         return workbench_;
+    }
+    // The menu bar: in the title bar of a window that draws its own, otherwise the window's menu
+    // bar.
+    QMenuBar* menu_bar() const {
+        return menu_bar_;
+    }
+    // Null while the window has the system's frame.
+    TitleBar* title_bar() const {
+        return title_bar_;
+    }
+    bool has_custom_title_bar() const {
+        return title_bar_ != nullptr && custom_title_bar_;
     }
     // The view containers that fill the sidebar and the panel: the explorer, search, extension
     // views. Registering one for the sidebar shows the activity bar.
@@ -231,9 +250,21 @@ private:
     bool confirm_close(const std::shared_ptr<core::Document>& document);
     bool resolve_unsaved_changes();
 
+    // Gives the window the system's frame and puts the menu bar back in it, when the window system
+    // cannot move or resize a window that has none.
+    void use_native_frame();
+    void set_up_title_bar();
+    void update_chrome();
+    QString title_text() const;
+
     Options options_;
     WorkbenchColors colors_;
     Workbench* workbench_ = nullptr;
+    TitleBar* title_bar_ = nullptr;
+    WindowFrame* window_frame_ = nullptr;
+    FrameBorder* frame_border_ = nullptr;
+    QMenuBar* menu_bar_ = nullptr;
+    bool custom_title_bar_ = false;
     ViewContainerRegistry view_containers_;
     Sidebar* sidebar_ = nullptr;
     Panel* panel_ = nullptr;

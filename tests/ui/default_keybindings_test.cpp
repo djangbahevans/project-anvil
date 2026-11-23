@@ -105,6 +105,7 @@ TEST(DefaultKeybindingsTest, TheStandardShortcutsAreVsCodes) {
                       "editor.action.addSelectionToNextFindMatch"),
               chords({"cmd+d"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.togglePanel"), chords({"ctrl+j"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.toggleFullScreen"), chords({"f11"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.splitEditor"), chords({"ctrl+\\"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.closeActiveEditor"), chords({"ctrl+w"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.quit"), chords({"ctrl+q"}));
@@ -133,6 +134,7 @@ TEST(DefaultKeybindingsTest, MacUsesCommandWhereVsCodeUsesCtrlCmdAndControlForEm
     EXPECT_EQ(keys_of(mac, "deleteLeft"),
               chords({"backspace", "shift+backspace", "ctrl+h", "ctrl+backspace"}));
     EXPECT_EQ(keys_of(mac, "editor.action.startFindReplaceAction"), chords({"cmd+alt+f"}));
+    EXPECT_EQ(keys_of(mac, "workbench.action.toggleFullScreen"), chords({"ctrl+cmd+f"}));
     EXPECT_EQ(keys_of(mac, "editor.action.nextMatchFindAction"), chords({"cmd+g", "f3"}));
     EXPECT_EQ(keys_of(mac, "workbench.action.quit"), chords({"cmd+q"}));
 }
@@ -185,7 +187,10 @@ TEST(DefaultKeybindingsTest, NoTwoBindingsHaveTheSameKeyCommandAndCondition) {
 TEST(DefaultKeybindingsTest, ABindingOnMacNeverUsesTheWindowsKeyAndControlIsOnlyForEmacsKeys) {
     for (const Keybinding& binding : default_keybindings(KeyPlatform::macos)) {
         for (const KeyStep& step : binding.chord.steps) {
-            EXPECT_FALSE(step.modifiers.meta && step.modifiers.ctrl) << binding.command;
+            // VS Code binds full screen to Control and Command together.
+            if (binding.command != "workbench.action.toggleFullScreen") {
+                EXPECT_FALSE(step.modifiers.meta && step.modifiers.ctrl) << binding.command;
+            }
             if (step.modifiers.ctrl) {
                 EXPECT_TRUE(step.key == Key::key_b || step.key == Key::key_f ||
                             step.key == Key::key_p || step.key == Key::key_n ||

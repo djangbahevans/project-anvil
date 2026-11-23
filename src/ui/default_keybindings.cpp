@@ -104,6 +104,7 @@ const Row rows[] = {
      {"cmd+shift+p", "f1"}},
     {"workbench.action.toggleSidebarVisibility", "", {"ctrl+b"}, {"ctrl+b"}, {"cmd+b"}},
     {"workbench.action.togglePanel", "", {"ctrl+j"}, {"ctrl+j"}, {"cmd+j"}},
+    {"workbench.action.toggleFullScreen", "", {"f11"}, {"f11"}, {"ctrl+cmd+f"}},
 };
 
 } // namespace
