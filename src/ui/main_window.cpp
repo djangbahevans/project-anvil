@@ -1,5 +1,6 @@
 #include "anvil/ui/main_window.hpp"
 
+#include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/default_keybindings.hpp"
@@ -19,6 +20,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
+#include <set>
 
 namespace anvil::ui {
 namespace {
@@ -35,6 +37,31 @@ core::KeyPlatform key_platform() {
 #else
     return core::KeyPlatform::linux;
 #endif
+}
+
+// Whether a `when` expression of a manifest holds; an empty one holds, and so does one that
+// cannot be read, so that a typo in an extension does not take its command away.
+bool holds(const std::string& expression, const core::ContextKeys& context) {
+    if (expression.empty()) {
+        return true;
+    }
+    const auto parsed = core::WhenExpression::parse(expression);
+    return !parsed || parsed->evaluate(context);
+}
+
+// A command is in the palette unless it has rules for it and none of them holds.
+bool shown_in_palette(const exthost::Contributions& contributions, const std::string& command,
+                      const core::ContextKeys& context) {
+    bool has_rule = false;
+    for (const exthost::PaletteRule& rule : contributions.palette_rules) {
+        if (rule.command == command) {
+            has_rule = true;
+            if (holds(rule.when, context)) {
+                return true;
+            }
+        }
+    }
+    return !has_rule;
 }
 
 QString display_name(const core::Uri& uri) {
@@ -247,6 +274,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                                       15000);
         } else {
             share_commands_with_extensions();
+            read_extension_keybindings(*logger);
         }
     }
 
@@ -259,8 +287,19 @@ MainWindow::~MainWindow() {
     delete area_;
 }
 
+void MainWindow::read_extension_keybindings(core::Logger& logger) {
+    core::KeybindingFile file =
+        exthost::extension_keybindings(bridge_.contributions(), key_platform());
+    for (const std::string& problem : file.problems) {
+        logger.log(core::LogLevel::warning, "extensions", problem);
+    }
+    extension_keybindings_ = std::move(file.bindings);
+    apply_keybindings();
+}
+
 void MainWindow::apply_keybindings() {
     std::vector<core::Keybinding> bindings = default_keybindings(key_platform());
+    bindings.insert(bindings.end(), extension_keybindings_.begin(), extension_keybindings_.end());
     const auto& user = user_keybindings_->bindings();
     bindings.insert(bindings.end(), user.begin(), user.end());
     keys_->set_bindings(std::move(bindings));
@@ -782,6 +821,7 @@ void MainWindow::show_command_palette() {
     struct Entry {
         std::string id;
         QString title;
+        bool disabled = false;
     };
     std::vector<Entry> entries;
     for (const CommandRegistry::Command& command : commands_.commands()) {
@@ -790,10 +830,16 @@ void MainWindow::show_command_palette() {
         }
     }
     if (bridge_.running()) {
-        for (const std::string& id : bridge_.host()->commands().extension_commands()) {
-            if (!id.starts_with("_") && !commands_.find(id)) {
-                entries.push_back({id, QString::fromStdString(id)});
+        const core::ContextKeys context = keys_->context();
+        const exthost::Contributions& contributions = bridge_.contributions();
+        std::set<std::string> listed;
+        for (const exthost::ContributedCommand& command : contributions.commands) {
+            if (commands_.find(command.command) || !listed.insert(command.command).second ||
+                !shown_in_palette(contributions, command.command, context)) {
+                continue;
             }
+            entries.push_back({command.command, QString::fromStdString(command.label()),
+                               !holds(command.enablement, context)});
         }
     }
     std::ranges::sort(entries, [](const Entry& a, const Entry& b) {
@@ -810,11 +856,23 @@ void MainWindow::show_command_palette() {
     std::vector<QuickPickItem> items;
     for (Entry& entry : entries) {
         palette_ids_.push_back(std::move(entry.id));
-        items.push_back({entry.title, {}, {}, {}});
+        items.push_back({entry.title, {}, {}, {}, entry.disabled});
     }
     palette_->set_items(std::move(items));
     palette_->set_top_offset(menuBar()->height());
     palette_->open(">");
+}
+
+bool MainWindow::command_enabled(const std::string& id) const {
+    if (!bridge_.running() || commands_.find(id)) {
+        return true;
+    }
+    for (const exthost::ContributedCommand& command : bridge_.contributions().commands) {
+        if (command.command == id) {
+            return holds(command.enablement, keys_->context());
+        }
+    }
+    return true;
 }
 
 void MainWindow::run_palette_command(const std::string& id) {
@@ -831,6 +889,9 @@ void MainWindow::run_palette_command(const std::string& id) {
 }
 
 void MainWindow::execute_command(const std::string& id) {
+    if (!command_enabled(id)) {
+        return;
+    }
     if (bridge_.running()) {
         bridge_.host()->commands().execute(id, "[]", [this, id](exthost::CallResult result) {
             if (!result) {

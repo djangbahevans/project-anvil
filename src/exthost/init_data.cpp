@@ -28,6 +28,32 @@ Error manifest_error(const std::filesystem::path& dir, const std::string& what) 
     return Error{ErrorCode::io_error, "extension at " + dir.string() + ": " + what};
 }
 
+// VS Code activates an extension for `onCommand:<id>` of every command it contributes, whether or
+// not its manifest lists the event. The extension host only knows the events it is given.
+void add_implicit_activation_events(const json& manifest, json& events) {
+    if (!events.is_array()) {
+        return;
+    }
+    const auto contributes = manifest.find("contributes");
+    if (contributes == manifest.end() || !contributes->is_object()) {
+        return;
+    }
+    const auto commands = contributes->find("commands");
+    if (commands == contributes->end() || !commands->is_array()) {
+        return;
+    }
+    for (const json& command : *commands) {
+        if (!command.is_object() || !command.contains("command") ||
+            !command["command"].is_string()) {
+            continue;
+        }
+        const json event = "onCommand:" + command["command"].get<std::string>();
+        if (std::ranges::find(events, event) == events.end()) {
+            events.push_back(event);
+        }
+    }
+}
+
 struct LoadedExtension {
     std::string id;
     json description;
@@ -48,6 +74,7 @@ std::expected<LoadedExtension, Error> load_extension(const std::filesystem::path
     extension.id =
         manifest["publisher"].get<std::string>() + "." + manifest["name"].get<std::string>();
     extension.activation_events = manifest.value("activationEvents", json::array());
+    add_implicit_activation_events(manifest, extension.activation_events);
     extension.description = std::move(manifest);
     extension.description["identifier"] = extension_identifier(extension.id);
     extension.description["extensionLocation"] = file_uri(dir);

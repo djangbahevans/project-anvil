@@ -24,6 +24,8 @@ struct QuickPickItem {
     QString detail;
     // Right-aligned, for the key binding of a command.
     QString keybinding;
+    // Shown dimmed; choosing it does nothing and the popup stays open.
+    bool disabled = false;
 };
 
 // A popup list with a filter field, over the top center of a window: VS Code's quick pick, used

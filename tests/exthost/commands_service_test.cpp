@@ -167,16 +167,50 @@ TEST_F(CommandsServiceTest, ExecuteRunsExtensionCommandsInTheExtensionHost) {
     EXPECT_EQ(**result, "10");
 }
 
-TEST_F(CommandsServiceTest, ExecuteReportsUnknownCommandsAndBadArguments) {
+TEST_F(CommandsServiceTest, ExecuteRejectsArgumentsThatAreNotAnArray) {
     std::optional<CallResult> result;
-    commands_.execute("no.such", "[]", [&](CallResult r) { result = std::move(r); });
-    ASSERT_TRUE(result.has_value());
-    EXPECT_FALSE(result->has_value());
-
-    result.reset();
     commands_.execute("no.such", "{", [&](CallResult r) { result = std::move(r); });
     ASSERT_TRUE(result.has_value());
     EXPECT_FALSE(result->has_value());
+    EXPECT_TRUE(host_.drain_rpc().empty());
+}
+
+TEST_F(CommandsServiceTest, ExecuteReportsUnknownCommandsAfterTryingToActivateThem) {
+    std::optional<CallResult> result;
+    commands_.execute("no.such", "[]", [&](CallResult r) { result = std::move(r); });
+    EXPECT_FALSE(result.has_value());
+
+    const auto out = host_.drain_rpc();
+    ASSERT_EQ(out.size(), 1u);
+    const auto& activation = std::get<Request>(out[0]);
+    EXPECT_EQ(activation.proxy_id, static_cast<std::uint8_t>(ProxyId::ExtHostExtensionService));
+    EXPECT_EQ(activation.method, "$activateByEvent");
+    EXPECT_EQ(json::parse(std::get<JsonArgs>(activation.args).json),
+              json::parse(R"(["onCommand:no.such",0])"));
+
+    ASSERT_TRUE(host_.send_rpc(EmptyReply{activation.req}).has_value());
+    ASSERT_TRUE(result.has_value());
+    ASSERT_FALSE(result->has_value());
+    EXPECT_NE(result->error().find("no.such"), std::string::npos);
+}
+
+TEST_F(CommandsServiceTest, ExecuteRunsACommandThatActivationRegisters) {
+    std::optional<CallResult> result;
+    commands_.execute("lazy.cmd", "[7]", [&](CallResult r) { result = std::move(r); });
+    const auto activation = std::get<Request>(host_.drain_rpc().at(0));
+
+    request("$registerCommand", R"(["lazy.cmd"])");
+    ASSERT_TRUE(host_.send_rpc(EmptyReply{activation.req}).has_value());
+    EXPECT_FALSE(result.has_value());
+
+    const auto out = host_.drain_rpc();
+    ASSERT_EQ(out.size(), 1u);
+    const auto& call = std::get<Request>(out[0]);
+    EXPECT_EQ(call.method, "$executeContributedCommand");
+    EXPECT_EQ(json::parse(std::get<JsonArgs>(call.args).json), json::parse(R"(["lazy.cmd",7])"));
+    ASSERT_TRUE(host_.send_rpc(JsonReply{call.req, "\"done\""}).has_value());
+    ASSERT_TRUE(result.has_value() && result->has_value());
+    EXPECT_EQ(**result, "\"done\"");
 }
 
 TEST_F(CommandsServiceTest, MalformedExecuteCommandArgumentsFail) {

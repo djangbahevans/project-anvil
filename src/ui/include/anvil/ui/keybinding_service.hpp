@@ -50,6 +50,9 @@ public:
     // press has. Setting a value of `null` removes the key.
     void set_extension_context(const std::string& key, const nlohmann::json& value);
 
+    // The context keys as a press sees them now.
+    core::ContextKeys context() const;
+
     // How a menu shows the primary key binding of a command, such as `Ctrl+S`, or nothing.
     QString shortcut_label(const std::string& command) const;
 
@@ -68,7 +71,6 @@ signals:
 
 private:
     void apply(const core::KeyDispatch& result);
-    core::ContextKeys context() const;
 
     Hooks hooks_;
     core::KeyPlatform platform_;

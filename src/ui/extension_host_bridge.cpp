@@ -13,6 +13,9 @@ std::expected<void, Error> ExtensionHostBridge::start(const Config& config,
                                                       std::shared_ptr<core::Logger> logger,
                                                       Callbacks callbacks) {
     callbacks_ = std::move(callbacks);
+    core::NullLogger discarded;
+    exthost::Contributions contributions =
+        exthost::read_contributions(config.extension_dirs, logger ? *logger : discarded);
     auto started = exthost::ExtensionHost::start(exthost::ExtensionHostOptions{
         .node_executable = config.node_executable,
         .vscode_dir = config.vscode_dir,
@@ -24,6 +27,7 @@ std::expected<void, Error> ExtensionHostBridge::start(const Config& config,
         return std::unexpected(std::move(started.error()));
     }
     host_ = std::move(*started);
+    contributions_ = std::move(contributions);
 
     exthost::DocumentsService::Observer observer;
     observer.edited = [this](const core::Uri& uri, const core::DocumentChange& change) {

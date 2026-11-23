@@ -1,0 +1,32 @@
+{
+  "name": "contributions",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "anvil.contrib.lazy", "title": "%lazy.title%", "category": "Fixtures" },
+      { "command": "anvil.contrib.hidden", "title": "Hidden" },
+      { "command": "anvil.contrib.gated", "title": "Gated", "enablement": "contrib.armed" },
+      { "command": "anvil.contrib.keyed", "title": "Keyed" },
+      { "command": "anvil.contrib.keyed", "title": "Keyed Again" },
+      { "command": "anvil.contrib.typo", "title": "Typo", "enablement": "contrib.armed &&" }
+    ],
+    "keybindings": [
+      {
+        "command": "anvil.contrib.keyed",
+        "key": "ctrl+alt+9",
+        "linux": "ctrl+alt+8",
+        "mac": "cmd+alt+8",
+        "win": "ctrl+alt+8",
+        "when": "editorTextFocus"
+      },
+      { "command": "anvil.contrib.gated", "key": "ctrl+alt+7" }
+    ],
+    "menus": {
+      "commandPalette": [{ "command": "anvil.contrib.hidden", "when": "contrib.showHidden" }]
+    }
+  }
+}

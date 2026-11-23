@@ -203,6 +203,28 @@ TEST_F(QuickPickTest, EnterChoosesTheSelectedItemAndClosesThePopup) {
     EXPECT_TRUE(pick_->isHidden());
 }
 
+TEST_F(QuickPickTest, ADisabledItemCannotBeChosenAndThePopupStaysOpen) {
+    auto items = items_of({"Alpha", "Beta"});
+    items[0].disabled = true;
+    pick_->set_items(std::move(items));
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    pick_->open();
+
+    press(Qt::Key_Return);
+    EXPECT_EQ(accepted.count(), 0);
+    EXPECT_TRUE(pick_->isVisible());
+
+    const QRect row = pick_->list()->visualRect(pick_->list()->model()->index(0, 0));
+    QTest::mouseClick(pick_->list()->viewport(), Qt::LeftButton, Qt::NoModifier, row.center());
+    EXPECT_EQ(accepted.count(), 0);
+    EXPECT_TRUE(pick_->isVisible());
+
+    press(Qt::Key_Down);
+    press(Qt::Key_Return);
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.front().front().value<std::size_t>(), 1U);
+}
+
 TEST_F(QuickPickTest, EscapeClosesThePopupWithoutAChoice) {
     QSignalSpy accepted(pick_, &QuickPick::accepted);
     QSignalSpy cancelled(pick_, &QuickPick::cancelled);
