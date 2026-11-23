@@ -11,6 +11,8 @@ add_executable(anvil_core_tests
   core/fuzzy_test.cpp
   core/jsonc_test.cpp
   core/key_chord_test.cpp
+  core/key_dispatcher_test.cpp
+  core/keybindings_test.cpp
   core/search_test.cpp
   core/theme_resources_test.cpp
   core/selection_test.cpp

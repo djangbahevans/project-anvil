@@ -7,6 +7,8 @@ add_library(anvil_core STATIC
   fuzzy.cpp
   jsonc.cpp
   key_chord.cpp
+  key_dispatcher.cpp
+  keybindings.cpp
   log.cpp
   rope.cpp
   search.cpp

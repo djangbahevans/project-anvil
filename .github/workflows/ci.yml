@@ -63,6 +63,7 @@ jobs:
         run: |
           node scripts/generate-key-table.mjs --check
           node scripts/generate-key-chord-cases.mjs --check
+          node scripts/generate-keybinding-cases.mjs --check
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
