@@ -183,7 +183,7 @@ protected:
     void choose_from_tab_menu(int index, const QString& text) {
         const auto menu = window_->tab_strip()->build_context_menu(index);
         for (QAction* action : menu->actions()) {
-            if (action->text() == text) {
+            if (action->property("anvil.title").toString() == text || action->text() == text) {
                 ASSERT_TRUE(action->isEnabled()) << text.toStdString();
                 action->trigger();
                 return;
@@ -1889,7 +1889,9 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.splitEditorDown",
                                           "workbench.action.focusNextGroup",
                                           "workbench.action.focusPreviousGroup",
-                                          "workbench.action.closeGroup"};
+                                          "workbench.action.closeGroup",
+                                          "workbench.action.quit",
+                                          "setContext"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
         ASSERT_NE(command, nullptr) << id;
@@ -2019,7 +2021,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
                 continue;
             }
             for (QAction* action : top->menu()->actions()) {
-                if (action->text() == text) {
+                if (action->property("anvil.title").toString() == text || action->text() == text) {
                     found = action;
                 }
             }
@@ -2058,7 +2060,8 @@ TEST_F(MainWindowTest, TheCommandPaletteListsTheEditorsCommandsByTitle) {
     ui::QuickPick* palette = window_->command_palette();
     EXPECT_TRUE(palette->isVisible());
     EXPECT_EQ(palette->filter_field()->text(), ">");
-    EXPECT_EQ(palette->shown_items().size(), window_->commands().commands().size());
+    // `setContext` is the commands of extensions' business and not on offer.
+    EXPECT_EQ(palette->shown_items().size(), window_->commands().commands().size() - 1);
 
     std::vector<QString> titles;
     for (std::size_t i = 0; i < palette->shown_items().size(); ++i) {
@@ -2106,7 +2109,7 @@ TEST_F(MainWindowTest, TheShortcutsAndTheMenuOpenThePalette) {
     for (QAction* top : window_->menuBar()->actions()) {
         if (top->menu()) {
             for (QAction* action : top->menu()->actions()) {
-                if (action->text() == "&Show All Commands…") {
+                if (action->property("anvil.title").toString() == "&Show All Commands…") {
                     menu_item = action;
                 }
             }
@@ -2281,7 +2284,8 @@ TEST_F(MainWindowTest, TheViewMenuTogglesTheSidebarAndThePanel) {
         for (QAction* top : window_->menuBar()->actions()) {
             if (top->menu() && top->text() == "&View") {
                 for (QAction* action : top->menu()->actions()) {
-                    if (action->text() == text) {
+                    if (action->property("anvil.title").toString() == text ||
+                        action->text() == text) {
                         return action;
                     }
                 }
@@ -2293,8 +2297,8 @@ TEST_F(MainWindowTest, TheViewMenuTogglesTheSidebarAndThePanel) {
     QAction* panel = find_action("Toggle &Panel");
     ASSERT_NE(sidebar, nullptr);
     ASSERT_NE(panel, nullptr);
-    EXPECT_EQ(sidebar->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_B));
-    EXPECT_EQ(panel->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_J));
+    EXPECT_TRUE(sidebar->text().endsWith("\tCtrl+B")) << sidebar->text().toStdString();
+    EXPECT_TRUE(panel->text().endsWith("\tCtrl+J")) << panel->text().toStdString();
 
     const int editor_width = window_->view()->width();
     sidebar->trigger();
@@ -2556,4 +2560,256 @@ TEST_F(MainWindowTest, TheEditorViewDrawsWithTheColorsOfTheTheme) {
     // Dark Modern: editor background #1F1F1F, gutter the same, and nothing of the palette's white.
     EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5), QColor("#1F1F1F"));
     EXPECT_EQ(image.pixelColor(2, image.height() - 5), QColor("#1F1F1F"));
+}
+
+// --- key bindings ---
+
+class MainWindowKeysTest : public MainWindowTest {
+protected:
+    void create_active_window() {
+        create_window();
+        window_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+        window_->view()->setFocus();
+        ASSERT_TRUE(window_->view()->hasFocus());
+    }
+
+    QAction* menu_action(const QString& title) {
+        for (QAction* top : window_->menuBar()->actions()) {
+            if (!top->menu()) {
+                continue;
+            }
+            for (QAction* action : top->menu()->actions()) {
+                if (action->property("anvil.title").toString() == title) {
+                    return action;
+                }
+            }
+        }
+        return nullptr;
+    }
+};
+
+TEST_F(MainWindowKeysTest, TypedCharactersAreNotTakenByTheBindings) {
+    create_active_window();
+    QTest::keyClicks(window_->view(), "abc ABC 123 {}[]\\/;'.,-=");
+    EXPECT_EQ(current_text(), "abc ABC 123 {}[]\\/;'.,-=");
+}
+
+TEST_F(MainWindowKeysTest, TheEditingKeysRunTheirCommands) {
+    create_active_window();
+    type("abc");
+    QTest::keyClick(window_->view(), Qt::Key_Left);
+    QTest::keyClick(window_->view(), Qt::Key_Backspace);
+    EXPECT_EQ(current_text(), "ac");
+    QTest::keyClick(window_->view(), Qt::Key_Z, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "abc");
+    QTest::keyClick(window_->view(), Qt::Key_Y, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "ac");
+    QTest::keyClick(window_->view(), Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(current_text(), "ac");
+    QTest::keyClick(window_->view(), Qt::Key_Delete);
+    EXPECT_EQ(current_text(), "a");
+}
+
+TEST_F(MainWindowKeysTest, TheClipboardKeysCutCopyAndPaste) {
+    create_active_window();
+    type("hello");
+    QTest::keyClick(window_->view(), Qt::Key_A, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_X, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "");
+    EXPECT_EQ(QGuiApplication::clipboard()->text(), "hello");
+    QTest::keyClick(window_->view(), Qt::Key_V, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_V, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "hellohello");
+}
+
+TEST_F(MainWindowKeysTest, ControlSSavesAndControlWClosesTheEditor) {
+    create_active_window();
+    const auto path = write("a.txt", "abc");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("X");
+    QTest::keyClick(window_->view(), Qt::Key_S, Qt::ControlModifier);
+    EXPECT_EQ(*platform::read_file(path), "Xabc");
+
+    ASSERT_EQ(window_->open_document_count(), 2U);
+    QTest::keyClick(window_->view(), Qt::Key_W, Qt::ControlModifier);
+    EXPECT_EQ(window_->open_document_count(), 1U);
+}
+
+TEST_F(MainWindowKeysTest, ControlWClosesAnEmptyGroupAndNotTheLastOne) {
+    create_active_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    ASSERT_EQ(window_->editor_area()->groups().size(), 2U);
+    ASSERT_TRUE(window_->editor_area()->groups()[1]->is_empty());
+
+    QTest::keyClick(window_->focusWidget() ? window_->focusWidget() : window_.get(), Qt::Key_W,
+                    Qt::ControlModifier);
+    QApplication::processEvents();
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1U);
+    EXPECT_EQ(window_->open_document_count(), 2U);
+}
+
+TEST_F(MainWindowKeysTest, ControlWInAGroupWithTabsClosesTheTabEvenWithSeveralGroups) {
+    create_active_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    QApplication::processEvents();
+    ASSERT_EQ(window_->editor_area()->groups().size(), 2U);
+
+    QTest::keyClick(window_->view(), Qt::Key_W, Qt::ControlModifier);
+    QApplication::processEvents();
+    EXPECT_EQ(window_->editor_area()->groups().size(), 2U);
+    EXPECT_EQ(current_text(), "B");
+}
+
+TEST_F(MainWindowKeysTest, TheFindFieldKeepsItsOwnKeys) {
+    create_active_window();
+    type("abc");
+    QTest::keyClick(window_->view(), Qt::Key_F, Qt::ControlModifier);
+    ASSERT_FALSE(window_->find_bar()->isHidden());
+    QLineEdit* field = window_->find_bar()->find_field();
+    ASSERT_TRUE(field->hasFocus());
+
+    QTest::keyClicks(field, "xyz");
+    EXPECT_EQ(field->text(), "xyz");
+    QTest::keyClick(field, Qt::Key_Left);
+    QTest::keyClick(field, Qt::Key_Backspace);
+    EXPECT_EQ(field->text(), "xz");
+    QTest::keyClick(field, Qt::Key_A, Qt::ControlModifier);
+    EXPECT_EQ(field->selectedText(), "xz");
+    EXPECT_EQ(current_text(), "abc");
+    EXPECT_TRUE(window_->current_document()->selections().primary().empty());
+}
+
+TEST_F(MainWindowKeysTest, FindNextAndPreviousWorkFromTheFindField) {
+    create_active_window();
+    type("a b a b");
+    QTest::keyClick(window_->view(), Qt::Key_F, Qt::ControlModifier);
+    window_->find_bar()->find_field()->clear();
+    window_->find_bar()->find_field()->setText("b");
+    ASSERT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_F3);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{6, 7}));
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_F3, Qt::ShiftModifier);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 3}));
+}
+
+TEST_F(MainWindowKeysTest, ControlHOpensFindAndReplace) {
+    create_active_window();
+    QTest::keyClick(window_->view(), Qt::Key_H, Qt::ControlModifier);
+    EXPECT_FALSE(window_->find_bar()->isHidden());
+    EXPECT_TRUE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
+}
+
+TEST_F(MainWindowKeysTest, NoBindingActsWhileADialogIsOpen) {
+    create_active_window();
+    type("ab");
+    QMessageBox box(window_.get());
+    bool checked = false;
+    QTimer::singleShot(50, &box, [&] {
+        QTest::keyClick(&box, Qt::Key_Z, Qt::ControlModifier);
+        QTest::keyClick(&box, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        checked = true;
+        box.accept();
+    });
+    box.exec();
+    ASSERT_TRUE(checked);
+    EXPECT_EQ(current_text(), "ab");
+    EXPECT_TRUE(window_->command_palette()->isHidden());
+}
+
+TEST_F(MainWindowKeysTest, TheSetContextCommandSetsAKeyThatBindingsRead) {
+    create_active_window();
+    auto binding = [](std::string_view keys, std::string command, std::string_view when) {
+        core::Keybinding result;
+        result.chord = *core::parse_key_chord(keys);
+        result.command = std::move(command);
+        result.when = *core::WhenExpression::parse(when);
+        return result;
+    };
+    window_->keybindings().set_bindings(
+        {binding("ctrl+j", "workbench.action.togglePanel", "myExt.armed")});
+
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier);
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
+
+    window_->commands().execute("setContext", json::array({"myExt.armed", true}));
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+
+    window_->commands().execute("setContext", json::array({"myExt.armed", nullptr}));
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+}
+
+TEST_F(MainWindowKeysTest, AChordShowsItsProgressInTheStatusBar) {
+    create_active_window();
+    core::Keybinding chord;
+    chord.chord = *core::parse_key_chord("ctrl+k ctrl+j");
+    chord.command = "workbench.action.togglePanel";
+    window_->keybindings().set_bindings({chord});
+
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    EXPECT_EQ(window_->status_bar().message(),
+              "(Ctrl+K) was pressed. Waiting for second key of chord...");
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
+    QApplication::processEvents();
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/chord_status.png");
+    }
+
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+    EXPECT_EQ(window_->status_bar().message(), "");
+
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_X, Qt::ControlModifier);
+    EXPECT_EQ(window_->status_bar().message(),
+              "The key combination (Ctrl+K, Ctrl+X) is not a command.");
+}
+
+TEST_F(MainWindowKeysTest, AnotherMessageSurvivesTheEndOfAChord) {
+    create_active_window();
+    core::Keybinding chord;
+    chord.chord = *core::parse_key_chord("ctrl+k ctrl+j");
+    chord.command = "workbench.action.togglePanel";
+    window_->keybindings().set_bindings({chord});
+
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    window_->status_bar().show_message("Saved", 0);
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier);
+    EXPECT_EQ(window_->status_bar().message(), "Saved");
+}
+
+TEST_F(MainWindowKeysTest, TheMenusShowTheShortcutsOfTheirCommands) {
+    create_window();
+    const auto shows = [&](const QString& title, const QString& shortcut) {
+        QAction* action = menu_action(title);
+        ASSERT_NE(action, nullptr) << title.toStdString();
+        EXPECT_TRUE(action->text().endsWith("\t" + shortcut))
+            << title.toStdString() << ": " << action->text().toStdString();
+    };
+    shows("&Save", "Ctrl+S");
+    shows("&Open…", "Ctrl+O");
+    shows("&Undo", "Ctrl+Z");
+    shows("&Show All Commands…", "Ctrl+Shift+P");
+}
+
+TEST_F(MainWindowKeysTest, ARebindingChangesWhatTheMenuShows) {
+    create_window();
+    QAction* save = menu_action("&Save");
+    ASSERT_NE(save, nullptr);
+    core::Keybinding rebound;
+    rebound.chord = *core::parse_key_chord("ctrl+alt+s");
+    rebound.command = "workbench.action.files.save";
+    window_->keybindings().set_bindings({rebound});
+
+    QMenu* menu = qobject_cast<QMenu*>(save->associatedObjects().value(0));
+    ASSERT_NE(menu, nullptr);
+    emit menu->aboutToShow();
+    EXPECT_TRUE(save->text().endsWith("\tCtrl+Alt+S")) << save->text().toStdString();
 }

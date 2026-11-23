@@ -8,6 +8,7 @@
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/keybinding_service.hpp"
 #include "anvil/ui/panel.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
@@ -115,6 +116,10 @@ public:
     StatusBar& status_bar() {
         return *status_bar_;
     }
+    // The key bindings, which turn key presses into commands before the widgets see them.
+    KeybindingService& keybindings() {
+        return *keys_;
+    }
     QuickPick* command_palette() {
         return palette_;
     }
@@ -148,6 +153,13 @@ private:
     class LayoutWatcher;
 
     void register_commands();
+    // Sets the context keys that the `when` of a key binding reads.
+    void fill_context(core::ContextKeys& keys) const;
+    // Runs the command of a key binding: the editor's own at once, an extension's through the host.
+    void run_bound_command(const std::string& command, const nlohmann::json* args);
+    // Adds a menu item that runs a command and shows its key binding.
+    QAction* add_command_action(QMenu* menu, const QString& title, const std::string& command);
+    void show_menu_shortcuts(QMenu* menu);
     // Lets extensions execute the registered commands, once the extension host is running.
     void share_commands_with_extensions();
     void build_menus();
@@ -224,6 +236,8 @@ private:
     std::optional<core::Uri> shown_uri_;
     std::size_t next_untitled_ = 1;
     StatusBar* status_bar_ = nullptr;
+    KeybindingService* keys_ = nullptr;
+    QString chord_text_;
     QMenu* window_menu_ = nullptr;
 };
 
