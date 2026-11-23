@@ -3,6 +3,9 @@ find_package(nlohmann_json REQUIRED)
 add_library(anvil_workbench STATIC
   editor_layout.cpp
   include/anvil/workbench/editor_layout.hpp
+  include/anvil/workbench/menu_model.hpp
+  include/anvil/workbench/menu_table.hpp
+  menu_model.cpp
 )
 add_library(anvil::workbench ALIAS anvil_workbench)
 
