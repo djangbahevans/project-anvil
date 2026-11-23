@@ -12,10 +12,11 @@ class QVBoxLayout;
 
 namespace anvil::ui {
 
-// The fixed parts of the window, in VS Code's positions and with its part ids: the activity bar at
-// the left edge, then the sidebar, then the editor area above the panel, and the status bar below
-// everything (ADR 0014).
+// The fixed parts of the window, in VS Code's positions and with its part ids: the title bar above
+// everything, the activity bar at the left edge, then the sidebar, then the editor area above the
+// panel, and the status bar below everything (ADR 0014).
 enum class Part {
+    title_bar,
     activity_bar,
     sidebar,
     editor,
@@ -32,8 +33,9 @@ std::optional<Part> part_from_id(std::string_view id);
 // parts other than the editor area are empty containers for views to be added to: the sidebar and
 // the panel start hidden, and so does the activity bar, because nothing is in them.
 //
-// The status bar belongs to the window, which hands it over; it goes along the bottom edge, below
-// everything else, and shows and hides like the other parts.
+// The status bar and the title bar belong to the window, which hands them over; the status bar goes
+// along the bottom edge and the title bar along the top, and they show and hide like the other
+// parts. A window without a title bar of its own, one that has the system's frame, hands none over.
 class Workbench : public QWidget {
     Q_OBJECT
 
@@ -55,6 +57,7 @@ public:
     // The editor area is the widget that fills the middle; the workbench owns it.
     void set_editor_area(QWidget* editor_area);
     void set_status_bar(QWidget* status_bar);
+    void set_title_bar(QWidget* title_bar);
 
     // The containers that views go into.
     QWidget* activity_bar() const;
@@ -72,8 +75,8 @@ public:
     void set_maximized(Part part, bool maximized);
 
     // How far the part reaches along the axis it is resized on: the width of the activity bar, the
-    // sidebar and the editor area, the height of the panel and the status bar. A hidden sidebar or
-    // panel reports the size it has when shown again.
+    // sidebar and the editor area, the height of the panel, the status bar and the title bar. A
+    // hidden sidebar or panel reports the size it has when shown again.
     int size(Part part) const;
     // Resizes the sidebar or the panel, to its minimum at least; the editor area keeps its own
     // minimum whatever is asked. Other parts keep their size.
@@ -100,6 +103,7 @@ private:
     QSplitter* down_ = nullptr;
     QVBoxLayout* root_layout_ = nullptr;
     QPointer<QWidget> status_bar_;
+    QPointer<QWidget> title_bar_;
     int sidebar_size_ = default_size;
     int panel_size_ = default_size;
     bool panel_maximized_ = false;
