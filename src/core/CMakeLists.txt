@@ -6,6 +6,7 @@ add_library(anvil_core STATIC
   editor_settings.cpp
   fuzzy.cpp
   jsonc.cpp
+  key_chord.cpp
   log.cpp
   rope.cpp
   search.cpp

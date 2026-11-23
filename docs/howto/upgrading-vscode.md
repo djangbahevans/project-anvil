@@ -41,7 +41,11 @@ The core's fuzzy matcher and its token theme matcher are tested against results 
 ```sh
 node scripts/generate-fuzzy-cases.mjs
 node scripts/generate-token-theme-cases.mjs
+node scripts/generate-key-table.mjs          # the keys, then the cases that use them
+node scripts/generate-key-chord-cases.mjs
 ```
+
+The key table (`src/core/include/anvil/core/key_table.hpp`) lists VS Code's `KeyCode` values with the names key bindings use for them, so a new key in the release is a new row. CI checks both scripts with `--check`.
 
 ## 6. Refresh the color themes
 
