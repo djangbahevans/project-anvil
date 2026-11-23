@@ -260,6 +260,7 @@ private:
     void use_native_frame();
     void set_up_title_bar();
     void update_chrome();
+    void update_title_bar_tooltips();
     QString title_text() const;
 
     Options options_;

@@ -330,11 +330,16 @@ void MainWindow::apply_keybindings() {
     const auto& user = user_keybindings_->bindings();
     bindings.insert(bindings.end(), user.begin(), user.end());
     keys_->set_bindings(std::move(bindings));
+    update_title_bar_tooltips();
 }
 
 void MainWindow::apply_settings() {
     const core::EditorSettings& editor = settings_->editor();
     area_->apply_settings(editor);
+    if (title_bar_) {
+        title_bar_->set_command_center_visible(editor.command_center);
+        title_bar_->set_layout_controls_visible(editor.layout_controls);
+    }
     layout_.set_focus_recent_after_close(editor.focus_recent_editor_after_close);
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
@@ -1141,8 +1146,41 @@ void MainWindow::set_up_title_bar() {
             workbench_->set_visible(Part::title_bar, false);
         }
     });
+    connect(title_bar_, &TitleBar::command_center_requested, this,
+            [this] { commands_.execute("workbench.action.showCommands"); });
+    connect(title_bar_, &TitleBar::toggle_sidebar_requested, this,
+            [this] { commands_.execute("workbench.action.toggleSidebarVisibility"); });
+    connect(title_bar_, &TitleBar::toggle_panel_requested, this,
+            [this] { commands_.execute("workbench.action.togglePanel"); });
+    // The buttons show what the window shows, however the parts were shown or hidden.
+    connect(workbench_, &Workbench::visibility_changed, this, [this](Part part, bool shown) {
+        if (part == Part::sidebar) {
+            title_bar_->set_sidebar_shown(shown);
+        } else if (part == Part::panel) {
+            title_bar_->set_panel_shown(shown);
+        }
+    });
+    title_bar_->set_sidebar_shown(workbench_->is_visible(Part::sidebar));
+    title_bar_->set_panel_shown(workbench_->is_visible(Part::panel));
+    title_bar_->set_command_center_text(tr("Anvil"));
     title_bar_->set_title(title_text());
     update_chrome();
+}
+
+void MainWindow::update_title_bar_tooltips() {
+    if (!title_bar_) {
+        return;
+    }
+    const auto with_shortcut = [this](const QString& name, const std::string& command) {
+        const QString shortcut = keys_->shortcut_label(command);
+        return shortcut.isEmpty() ? name : tr("%1 (%2)").arg(name, shortcut);
+    };
+    title_bar_->sidebar_button()->setToolTip(
+        with_shortcut(tr("Toggle Primary Side Bar"), "workbench.action.toggleSidebarVisibility"));
+    title_bar_->panel_button()->setToolTip(
+        with_shortcut(tr("Toggle Panel"), "workbench.action.togglePanel"));
+    title_bar_->command_center()->setToolTip(
+        with_shortcut(tr("Show All Commands"), "workbench.action.showCommands"));
 }
 
 void MainWindow::update_chrome() {

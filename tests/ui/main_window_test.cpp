@@ -2207,6 +2207,110 @@ TEST_F(MainWindowTitleBarTest, ASettingThatIsNotAStyleLeavesTheCustomTitleBar) {
     EXPECT_TRUE(window_->status_bar().message().contains("window.titleBarStyle"));
 }
 
+TEST_F(MainWindowTitleBarTest, TheCommandCenterAndTheLayoutControlsAreShownByDefault) {
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+    EXPECT_TRUE(window_->title_bar()->command_center_visible());
+    EXPECT_TRUE(window_->title_bar()->command_center()->isVisible());
+    EXPECT_EQ(window_->title_bar()->command_center()->text(), "Anvil");
+    EXPECT_TRUE(window_->title_bar()->layout_controls_visible());
+    EXPECT_TRUE(window_->title_bar()->sidebar_button()->isVisible());
+    EXPECT_TRUE(window_->title_bar()->panel_button()->isVisible());
+}
+
+TEST_F(MainWindowTitleBarTest, ClickingTheCommandCenterOpensTheCommandPalette) {
+    create_window();
+    ASSERT_TRUE(window_->command_palette()->isHidden());
+    window_->title_bar()->command_center()->click();
+    EXPECT_TRUE(window_->command_palette()->isVisible());
+}
+
+TEST_F(MainWindowTitleBarTest, TheLayoutButtonsToggleThePartsAndFollowThemWhateverChangedThem) {
+    create_window();
+    ui::TitleBar* bar = window_->title_bar();
+    ASSERT_NE(bar, nullptr);
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::sidebar));
+    EXPECT_FALSE(bar->sidebar_button()->isChecked());
+    EXPECT_FALSE(bar->panel_button()->isChecked());
+
+    bar->sidebar_button()->click();
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::sidebar));
+    EXPECT_TRUE(bar->sidebar_button()->isChecked());
+    EXPECT_FALSE(bar->panel_button()->isChecked());
+
+    bar->panel_button()->click();
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+    EXPECT_TRUE(bar->panel_button()->isChecked());
+
+    window_->commands().execute("workbench.action.toggleSidebarVisibility");
+    EXPECT_FALSE(bar->sidebar_button()->isChecked());
+    window_->commands().execute("workbench.action.togglePanel");
+    EXPECT_FALSE(bar->panel_button()->isChecked());
+
+    window_->workbench()->set_visible(Part::sidebar, true);
+    EXPECT_TRUE(bar->sidebar_button()->isChecked());
+    bar->sidebar_button()->click();
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::sidebar));
+    EXPECT_FALSE(bar->sidebar_button()->isChecked());
+}
+
+TEST_F(MainWindowTitleBarTest, TheButtonsAndTheCommandCenterNameTheirKeys) {
+    keybindings_file_ = scratch_ / "keybindings.json";
+    create_window();
+    ui::TitleBar* bar = window_->title_bar();
+    EXPECT_EQ(bar->sidebar_button()->toolTip(), "Toggle Primary Side Bar (Ctrl+B)");
+    EXPECT_EQ(bar->panel_button()->toolTip(), "Toggle Panel (Ctrl+J)");
+    EXPECT_EQ(bar->command_center()->toolTip(), "Show All Commands (Ctrl+Shift+P)");
+
+    write("keybindings.json",
+          R"j([{"key": "ctrl+alt+b", "command": "workbench.action.toggleSidebarVisibility"}])j");
+    ASSERT_TRUE(wait_until([&] {
+        return bar->sidebar_button()->toolTip() == "Toggle Primary Side Bar (Ctrl+Alt+B)";
+    }));
+    EXPECT_EQ(bar->panel_button()->toolTip(), "Toggle Panel (Ctrl+J)");
+}
+
+TEST_F(MainWindowTitleBarTest, TheSettingsTurnTheCommandCenterAndTheLayoutControlsOff) {
+    settings_file_ = write("settings.json",
+                           R"j({"window.commandCenter": false,
+                                "workbench.layoutControl.enabled": false})j");
+    create_window();
+    ui::TitleBar* bar = window_->title_bar();
+    ASSERT_NE(bar, nullptr);
+    EXPECT_FALSE(bar->command_center_visible());
+    EXPECT_FALSE(bar->command_center()->isVisible());
+    EXPECT_FALSE(bar->layout_controls_visible());
+    EXPECT_FALSE(bar->sidebar_button()->isVisible());
+    EXPECT_FALSE(bar->panel_button()->isVisible());
+}
+
+TEST_F(MainWindowTitleBarTest,
+       EachSettingTurnsOffItsOwnPartAndTheyFollowChangesWhileTheWindowRuns) {
+    settings_file_ = write("settings.json", R"j({"window.commandCenter": false})j");
+    create_window();
+    ui::TitleBar* bar = window_->title_bar();
+    EXPECT_FALSE(bar->command_center()->isVisible());
+    EXPECT_TRUE(bar->sidebar_button()->isVisible());
+
+    write("settings.json", R"j({"workbench.layoutControl.enabled": false})j");
+    ASSERT_TRUE(wait_until([&] { return !bar->sidebar_button()->isVisible(); }));
+    EXPECT_TRUE(bar->command_center()->isVisible());
+    EXPECT_FALSE(bar->panel_button()->isVisible());
+
+    write("settings.json", "{}");
+    ASSERT_TRUE(wait_until([&] { return bar->sidebar_button()->isVisible(); }));
+    EXPECT_TRUE(bar->command_center()->isVisible());
+}
+
+TEST_F(MainWindowTitleBarTest, WithoutTheCommandCenterTheBarShowsTheWindowTitleAgain) {
+    settings_file_ = write("settings.json", R"j({"window.commandCenter": false})j");
+    create_window();
+    ui::TitleBar* bar = window_->title_bar();
+    const QImage untitled = bar->grab().toImage();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
+    EXPECT_NE(bar->grab().toImage(), untitled);
+}
+
 TEST_F(MainWindowTitleBarTest, TheTitleFollowsTheShownDocumentAndItsChanges) {
     create_window();
     ASSERT_TRUE(window_->has_custom_title_bar());

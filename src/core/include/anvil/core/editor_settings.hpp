@@ -50,6 +50,12 @@ struct EditorSettings {
     // window.titleBarStyle: read when the window is created, so a change applies after a restart
     TitleBarStyle title_bar_style = TitleBarStyle::custom;
 
+    // window.commandCenter: the title bar shows the box that opens the command palette
+    bool command_center = true;
+    // workbench.layoutControl.enabled: the title bar shows the buttons that toggle the side bar and
+    // the panel
+    bool layout_controls = true;
+
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
