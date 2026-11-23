@@ -106,7 +106,6 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                  return view && view->composing();
              }},
         key_platform(), this);
-    keys_->set_bindings(default_keybindings(key_platform()));
     qApp->installEventFilter(keys_);
     connect(keys_, &KeybindingService::chord_message, this,
             [this](const QString& text, int duration) {
@@ -132,6 +131,17 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             tr("Settings not applied, keeping the previous ones: %1").arg(message), 15000);
     });
     settings_->start();
+
+    user_keybindings_ =
+        new KeybindingsStore({.file = options_.keybindings_file, .logger = logger}, this);
+    connect(user_keybindings_, &KeybindingsStore::changed, this, &MainWindow::apply_keybindings);
+    connect(
+        user_keybindings_, &KeybindingsStore::load_failed, this, [this](const QString& message) {
+            status_bar_->show_message(
+                tr("Key bindings not applied, keeping the previous ones: %1").arg(message), 15000);
+        });
+    user_keybindings_->start();
+    apply_keybindings();
 
     themes_ = new ThemeStore(colors_, options_.themes_directory.value_or(themes_directory()),
                              logger, this);
@@ -247,6 +257,18 @@ MainWindow::MainWindow(Options options, QWidget* parent)
 MainWindow::~MainWindow() {
     // The area observes the layout, which is destroyed before the child widgets are.
     delete area_;
+}
+
+void MainWindow::apply_keybindings() {
+    std::vector<core::Keybinding> bindings = default_keybindings(key_platform());
+    const auto& user = user_keybindings_->bindings();
+    bindings.insert(bindings.end(), user.begin(), user.end());
+    keys_->set_bindings(std::move(bindings));
+    for (const QAction* top : menuBar()->actions()) {
+        if (top->menu()) {
+            show_menu_shortcuts(top->menu());
+        }
+    }
 }
 
 void MainWindow::apply_settings() {
@@ -399,7 +421,6 @@ void MainWindow::build_menus() {
     // The key bindings can change while the window runs, so a menu shows them when it opens.
     for (QMenu* menu : {file, edit, view, commands}) {
         connect(menu, &QMenu::aboutToShow, this, [this, menu] { show_menu_shortcuts(menu); });
-        show_menu_shortcuts(menu);
     }
 
     window_menu_ = menuBar()->addMenu(tr("Wi&ndow"));

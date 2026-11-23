@@ -53,6 +53,7 @@ protected:
         ui::MainWindowOptions options;
         options.confirm_unsaved_changes = confirm_unsaved_changes;
         options.settings_file = settings_file_;
+        options.keybindings_file = keybindings_file_;
         options.themes_directory = themes_directory_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
@@ -206,6 +207,7 @@ protected:
 
     std::filesystem::path scratch_;
     std::filesystem::path settings_file_;
+    std::filesystem::path keybindings_file_;
     // Unset: the themes that ship with the editor.
     std::optional<std::filesystem::path> themes_directory_;
     std::unique_ptr<MainWindow> window_;
@@ -2812,4 +2814,99 @@ TEST_F(MainWindowKeysTest, ARebindingChangesWhatTheMenuShows) {
     ASSERT_NE(menu, nullptr);
     emit menu->aboutToShow();
     EXPECT_TRUE(save->text().endsWith("\tCtrl+Alt+S")) << save->text().toStdString();
+}
+
+TEST_F(MainWindowKeysTest, AUserBindingOverridesADefaultOneAndTheMenuFollows) {
+    keybindings_file_ = write(
+        "keybindings.json", R"j([{"key": "ctrl+s", "command": "workbench.action.togglePanel"}])j");
+    create_active_window();
+    const auto path = write("a.txt", "abc");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    ASSERT_FALSE(window_->workbench()->is_visible(Part::panel));
+    type("X");
+
+    QTest::keyClick(window_->view(), Qt::Key_S, Qt::ControlModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+    EXPECT_EQ(*platform::read_file(path), "abc");
+
+    EXPECT_EQ(menu_action("&Save")->text(), "&Save");
+    EXPECT_TRUE(menu_action("Toggle &Panel")->text().endsWith("\tCtrl+S"))
+        << menu_action("Toggle &Panel")->text().toStdString();
+}
+
+TEST_F(MainWindowKeysTest, AUserRemovalTakesADefaultBindingAway) {
+    keybindings_file_ =
+        write("keybindings.json",
+              R"j([{"key": "ctrl+b", "command": "-workbench.action.toggleSidebarVisibility"}])j");
+    create_active_window();
+    const bool shown = window_->workbench()->is_visible(Part::sidebar);
+
+    QTest::keyClick(window_->view(), Qt::Key_B, Qt::ControlModifier);
+    EXPECT_EQ(window_->workbench()->is_visible(Part::sidebar), shown);
+    EXPECT_FALSE(menu_action("Toggle &Sidebar")->text().contains('\t'));
+}
+
+TEST_F(MainWindowKeysTest, AUserBindingHasItsWhenAndItsArguments) {
+    keybindings_file_ = write("keybindings.json",
+                              R"j([{"key": "ctrl+alt+j", "command": "workbench.action.togglePanel",
+              "when": "editorTextFocus"}])j");
+    create_active_window();
+
+    window_->find_bar()->show();
+    window_->find_bar()->find_field()->setFocus();
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_J,
+                    Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
+
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_J, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+}
+
+TEST_F(MainWindowKeysTest, AFileThatAppearsLaterIsAppliedAndTheMenuFollows) {
+    keybindings_file_ = scratch_ / "keybindings.json";
+    create_active_window();
+    QTest::keyClick(window_->view(), Qt::Key_Y, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
+
+    write("keybindings.json",
+          R"j([{"key": "ctrl+alt+y", "command": "workbench.action.togglePanel"}])j");
+    ASSERT_TRUE(
+        wait_until([&] { return menu_action("Toggle &Panel")->text().endsWith("\tCtrl+Alt+Y"); }));
+    QTest::keyClick(window_->view(), Qt::Key_Y, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+
+    std::filesystem::remove(keybindings_file_);
+    ASSERT_TRUE(
+        wait_until([&] { return menu_action("Toggle &Panel")->text().endsWith("\tCtrl+J"); }));
+}
+
+TEST_F(MainWindowKeysTest, AFileWithASyntaxErrorKeepsTheBindingsAndSaysSo) {
+    keybindings_file_ =
+        write("keybindings.json",
+              R"j([{"key": "ctrl+alt+y", "command": "workbench.action.togglePanel"}])j");
+    create_active_window();
+
+    write("keybindings.json", "[{");
+    ASSERT_TRUE(wait_until(
+        [&] { return window_->status_bar().message().startsWith("Key bindings not applied"); }));
+    EXPECT_TRUE(window_->status_bar().message().contains("keybindings.json:"));
+    QTest::keyClick(window_->view(), Qt::Key_Y, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+}
+
+TEST_F(MainWindowKeysTest, AChordInProgressEndsWhenTheFileChanges) {
+    keybindings_file_ =
+        write("keybindings.json",
+              R"j([{"key": "ctrl+k ctrl+u", "command": "workbench.action.togglePanel"}])j");
+    create_active_window();
+
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    ASSERT_TRUE(window_->status_bar().message().startsWith("(Ctrl+K)"));
+    write("keybindings.json",
+          R"j([{"key": "ctrl+k ctrl+u", "command": "workbench.action.togglePanel"},
+               {"key": "f9", "command": "workbench.action.togglePanel"}])j");
+    ASSERT_TRUE(wait_until([&] { return window_->status_bar().message().isEmpty(); }));
+    QTest::keyClick(window_->view(), Qt::Key_U, Qt::ControlModifier);
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
 }
