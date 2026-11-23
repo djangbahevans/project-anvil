@@ -2616,6 +2616,20 @@ TEST_F(MainWindowKeysTest, TheEditingKeysRunTheirCommands) {
     EXPECT_EQ(current_text(), "a");
 }
 
+TEST_F(MainWindowKeysTest, HomeAndTheCursorHomeCommandGoToTheFirstCharacterOfTheLine) {
+    create_active_window();
+    type("    abc");
+    QTest::keyClick(window_->view(), Qt::Key_Home);
+    EXPECT_EQ(window_->current_document()->selections().primary(), core::Selection::caret(4));
+    QTest::keyClick(window_->view(), Qt::Key_Home);
+    EXPECT_EQ(window_->current_document()->selections().primary(), core::Selection::caret(0));
+    window_->commands().execute("cursorHome");
+    EXPECT_EQ(window_->current_document()->selections().primary(), core::Selection::caret(4));
+    window_->commands().execute("cursorEnd");
+    QTest::keyClick(window_->view(), Qt::Key_Home, Qt::ShiftModifier);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{7, 4}));
+}
+
 TEST_F(MainWindowKeysTest, TheClipboardKeysCutCopyAndPaste) {
     create_active_window();
     type("hello");

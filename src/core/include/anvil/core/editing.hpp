@@ -15,7 +15,11 @@ enum class Motion {
     right,
     up,
     down,
+    // Column 1 of the line.
     line_start,
+    // VS Code's Home: the first character that is not a space or a tab, or column 1 when the caret
+    // is already there or the line has nothing else.
+    home,
     line_end,
     document_start,
     document_end,

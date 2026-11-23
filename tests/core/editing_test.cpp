@@ -323,6 +323,123 @@ TEST(EditControllerMove, LineAndDocumentBoundaries) {
     EXPECT_EQ(editor.primary(), Selection::caret(11));
 }
 
+// --- Home ---
+
+namespace {
+
+// Where Home goes, by the book: the column of the first character that is not a space or a tab,
+// the start of the line when the caret is there already or the line has no such character.
+std::size_t reference_home(const std::string& text, std::size_t offset) {
+    const std::size_t newline = offset == 0 ? std::string::npos : text.rfind('\n', offset - 1);
+    const std::size_t start = newline == std::string::npos ? 0 : newline + 1;
+    const std::size_t end = std::min(text.find('\n', start), text.size());
+    const std::size_t first = text.find_first_not_of(" \t", start);
+    if (first == std::string::npos || first >= end || first == offset) {
+        return start;
+    }
+    return first;
+}
+
+std::size_t home_from(std::string_view text, std::size_t offset) {
+    Editor editor(text, {Selection::caret(offset)});
+    editor.controller.move(Motion::home);
+    EXPECT_TRUE(editor.primary().empty());
+    return editor.primary().active;
+}
+
+} // namespace
+
+TEST(EditControllerHome, GoesToTheFirstNonWhitespaceCharacterOfAnIndentedLine) {
+    EXPECT_EQ(home_from("    abc", 7), 4U);
+    EXPECT_EQ(home_from("    abc", 0), 4U);
+    EXPECT_EQ(home_from("    abc", 2), 4U);
+    EXPECT_EQ(home_from("\t\t abc", 6), 3U);
+}
+
+TEST(EditControllerHome, GoesToTheStartOfTheLineWhenTheCaretIsAtTheFirstCharacter) {
+    EXPECT_EQ(home_from("    abc", 4), 0U);
+    EXPECT_EQ(home_from("x\n  abc", 4), 2U);
+}
+
+TEST(EditControllerHome, GoesFromTheStartOfTheLineToTheFirstCharacter) {
+    EXPECT_EQ(home_from("x\n  abc", 2), 4U);
+}
+
+TEST(EditControllerHome, StaysAtColumnOneOnAnUnindentedLine) {
+    EXPECT_EQ(home_from("abc", 2), 0U);
+    EXPECT_EQ(home_from("abc", 0), 0U);
+    EXPECT_EQ(home_from("x\nabc", 4), 2U);
+}
+
+TEST(EditControllerHome, GoesToTheStartOfABlankOrWhitespaceOnlyLine) {
+    EXPECT_EQ(home_from("a\n\nb", 2), 2U);
+    EXPECT_EQ(home_from("a\n   \nb", 5), 2U);
+    EXPECT_EQ(home_from("a\n   \nb", 2), 2U);
+    EXPECT_EQ(home_from("a\n \t \nb", 4), 2U);
+}
+
+TEST(EditControllerHome, WorksOnTheLastLineAndWithMultibyteText) {
+    EXPECT_EQ(home_from("a\n  b", 5), 4U);
+    EXPECT_EQ(home_from(std::string("  ") + eacute + astral, 8), 2U);
+    EXPECT_EQ(home_from(std::string("  ") + eacute + astral, 2), 0U);
+}
+
+TEST(EditControllerHome, FindsTheCharacterBeyondALongRunOfWhitespace) {
+    const std::string indent(200, ' ');
+    EXPECT_EQ(home_from(indent + "x", 201), 200U);
+    EXPECT_EQ(home_from(indent + "x", 200), 0U);
+    EXPECT_EQ(home_from(indent, 100), 0U);
+    EXPECT_EQ(home_from(std::string(64, ' ') + "x", 0), 64U);
+}
+
+TEST(EditControllerHome, ExtendsTheSelectionFromTheAnchor) {
+    Editor editor("  abc", {Selection{5, 5}});
+    editor.controller.move(Motion::home, true);
+    EXPECT_EQ(editor.primary(), (Selection{5, 2}));
+    editor.controller.move(Motion::home, true);
+    EXPECT_EQ(editor.primary(), (Selection{5, 0}));
+    editor.controller.move(Motion::home, true);
+    EXPECT_EQ(editor.primary(), (Selection{5, 2}));
+}
+
+TEST(EditControllerHome, MovesFromTheActiveEndAndCollapsesASelection) {
+    Editor editor("  abc", {Selection{4, 3}});
+    editor.controller.move(Motion::home);
+    EXPECT_EQ(editor.primary(), Selection::caret(2));
+}
+
+TEST(EditControllerHome, MovesEveryCaretByItsOwnLine) {
+    // Lines: "  a" at 0, "b" at 4, "    c" at 6, "  " at 12.
+    Editor editor("  a\nb\n    c\n  ", {Selection::caret(3), Selection::caret(4),
+                                        Selection::caret(11), Selection::caret(14)});
+    editor.controller.move(Motion::home);
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(2), Selection::caret(4),
+                                           Selection::caret(10), Selection::caret(12)}));
+    editor.controller.move(Motion::home);
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(0), Selection::caret(4),
+                                           Selection::caret(6), Selection::caret(12)}));
+}
+
+TEST(EditControllerHome, AgreesWithTheReferenceOnRandomText) {
+    std::uint32_t seed = 12345;
+    const auto next = [&seed](std::uint32_t bound) {
+        seed = seed * 1664525U + 1013904223U;
+        return (seed >> 8) % bound;
+    };
+    constexpr char alphabet[] = {' ', ' ', '\t', 'a', 'b', '\n'};
+    for (int round = 0; round < 400; ++round) {
+        std::string text;
+        const std::uint32_t length = next(40);
+        for (std::uint32_t i = 0; i < length; ++i) {
+            text += alphabet[next(6)];
+        }
+        for (std::size_t offset = 0; offset <= text.size(); ++offset) {
+            ASSERT_EQ(home_from(text, offset), reference_home(text, offset))
+                << "text " << testing::PrintToString(text) << " offset " << offset;
+        }
+    }
+}
+
 TEST(EditControllerMove, WordMotionsSkipSpacesAndStopAtClassChanges) {
     Editor editor("foo bar_baz  +-  qux");
     for (const std::size_t expected : {3u, 11u, 15u, 20u, 20u}) {
