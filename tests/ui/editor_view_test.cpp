@@ -196,6 +196,31 @@ TEST_F(EditorViewTest, TheViewScrollsToKeepTheCaretVisible) {
     EXPECT_GT(primary().active, 10u);
 }
 
+TEST_F(EditorViewTest, HomeGoesToTheFirstCharacterThenToTheStartOfTheLine) {
+    open("a\n    bc");
+    key(Qt::Key_Down);
+    key(Qt::Key_End);
+    ASSERT_EQ(primary(), core::Selection::caret(8));
+    key(Qt::Key_Home);
+    EXPECT_EQ(primary(), core::Selection::caret(6));
+    key(Qt::Key_Home);
+    EXPECT_EQ(primary(), core::Selection::caret(2));
+    key(Qt::Key_Home);
+    EXPECT_EQ(primary(), core::Selection::caret(6));
+}
+
+TEST_F(EditorViewTest, ShiftHomeSelectsToTheFirstCharacterAndControlHomeToTheDocumentStart) {
+    open("a\n    bc");
+    key(Qt::Key_Down);
+    key(Qt::Key_End);
+    key(Qt::Key_Home, Qt::ShiftModifier);
+    EXPECT_EQ(primary(), (core::Selection{8, 6}));
+    key(Qt::Key_Home, Qt::ShiftModifier);
+    EXPECT_EQ(primary(), (core::Selection{8, 2}));
+    key(Qt::Key_Home, Qt::ControlModifier);
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+}
+
 TEST_F(EditorViewTest, SignalsAreEmittedOnlyForRealChanges) {
     open("ab");
     QSignalSpy selections(&view_, &EditorView::selections_changed);

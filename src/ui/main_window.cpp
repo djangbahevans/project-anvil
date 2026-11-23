@@ -332,8 +332,7 @@ void MainWindow::register_commands() {
     add("cursorRight", tr("Move Cursor Right"), [this] { view()->move(Motion::right); });
     add("cursorUp", tr("Move Cursor Up"), [this] { view()->move(Motion::up); });
     add("cursorDown", tr("Move Cursor Down"), [this] { view()->move(Motion::down); });
-    add("cursorHome", tr("Move Cursor to Line Start"),
-        [this] { view()->move(Motion::line_start); });
+    add("cursorHome", tr("Move Cursor to Line Start"), [this] { view()->move(Motion::home); });
     add("cursorEnd", tr("Move Cursor to Line End"), [this] { view()->move(Motion::line_end); });
     add("deleteLeft", tr("Delete Left"), [this] { view()->delete_backward(); });
     add("deleteRight", tr("Delete Right"), [this] { view()->delete_forward(); });

@@ -132,6 +132,26 @@ std::size_t line_indentation_length(const Text& text, std::size_t line, std::siz
     return std::min(length, limit_bytes);
 }
 
+// Where Home goes from `offset`: the first character of the line that is not a space or a tab, or
+// the start of the line when the caret is already at that character or the line has none.
+std::size_t home_target(const Text& text, std::size_t offset) {
+    const std::size_t line = text.position_at(offset).line;
+    const std::size_t start = text.line_start(line);
+    const std::size_t end = text.line_end(line);
+    std::size_t first = start;
+    constexpr std::size_t chunk = 64;
+    while (first < end) {
+        const std::string part = text.slice(first, std::min(chunk, end - first));
+        const std::size_t blanks = part.find_first_not_of(" \t");
+        if (blanks != std::string::npos) {
+            first += blanks;
+            break;
+        }
+        first += part.size();
+    }
+    return first == end || offset == first ? start : first;
+}
+
 } // namespace
 
 std::optional<Selection> word_at(const Text& text, std::size_t offset) {
@@ -402,6 +422,9 @@ EditOutcome EditController::move(Motion motion, bool extend) {
             break;
         case Motion::line_start:
             target = text.line_start(text.position_at(selection.active).line);
+            break;
+        case Motion::home:
+            target = home_target(text, selection.active);
             break;
         case Motion::line_end:
             target = text.line_end(text.position_at(selection.active).line);
