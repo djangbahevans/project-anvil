@@ -53,6 +53,8 @@ constexpr WorkbenchColorKey table[] = {
     from_palette("editor.selectionBackground", "Background of selected text in the editor.",
                  QPalette::Highlight),
     from_palette("editorCursor.foreground", "The caret of the editor.", QPalette::Text),
+    optional_color("editorGroup.border", "Border between the groups of the editor area.",
+                   QPalette::Mid),
     from_palette("editorGroupHeader.tabsBackground",
                  "Background of the strip of tabs above an editor.", QPalette::Window),
     optional_color("editorGroupHeader.tabsBorder", "Border below the strip of tabs.",
