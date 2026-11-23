@@ -1,6 +1,6 @@
 # 0015. Custom title bar on Linux and Windows, native frame and global menu on macOS
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-23
 
 ## Context
