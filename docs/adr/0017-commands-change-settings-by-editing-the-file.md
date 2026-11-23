@@ -1,6 +1,6 @@
 # 0017. Commands change settings by editing the settings file in place
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-23
 
 ## Context
@@ -28,4 +28,4 @@ A command that changes a setting edits the text of the user's settings file in p
 - A write can race with an edit that the user makes in another program; comparing the bytes before replacing narrows the window and does not close it. The failure leaves the file intact and the command can be repeated.
 - A window with the file open and unsaved changes refuses to write over them, and the session override keeps the command working.
 - A session-only store of settings, with no writing, would lose the user's choice at the next start, which is not what a user who picked a theme expects, and would differ from VS Code. A separate state file read below `settings.json` would keep the user's file untouched, but the user could not see in `settings.json` what a command changed, and a key the user had also set there would silently override the command's choice. Both are rejected.
-- Implementation issues follow the acceptance of this ADR: the tree parser and the edit in `core`, and `SettingsStore::change` with the session override and the status bar message.
+- The implementation is two pieces: the tree parser and the edit in `core` ([#189](https://github.com/djangbahevans/project-anvil/issues/189)), and `SettingsStore::change` with the session override and the status bar message ([#190](https://github.com/djangbahevans/project-anvil/issues/190)).
