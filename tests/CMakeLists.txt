@@ -9,6 +9,8 @@ add_executable(anvil_core_tests
   core/editing_test.cpp
   core/editor_settings_test.cpp
   core/fuzzy_test.cpp
+  core/jsonc_edit_model_test.cpp
+  core/jsonc_edit_test.cpp
   core/jsonc_test.cpp
   core/key_chord_test.cpp
   core/key_dispatcher_test.cpp
