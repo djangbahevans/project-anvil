@@ -130,3 +130,11 @@ TEST_F(WorkspaceTest, ASecondFolderIsReportedAndIgnored) {
     ASSERT_EQ(launch.problems.size(), 1u);
     EXPECT_NE(launch.problems[0].find("other"), std::string::npos);
 }
+
+TEST_F(WorkspaceTest, AMissingFolderAfterTheWorkspaceIsReportedAsMissing) {
+    const auto launch = anvil::core::parse_launch_arguments(
+        {(root_ / "project").string(), (root_ / "gone").string() + "/"});
+    ASSERT_TRUE(launch.workspace.has_value());
+    ASSERT_EQ(launch.problems.size(), 1u);
+    EXPECT_NE(launch.problems[0].find("does not exist"), std::string::npos);
+}

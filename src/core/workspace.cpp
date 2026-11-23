@@ -30,9 +30,11 @@ std::expected<Workspace, Error> Workspace::open(const std::filesystem::path& fol
         return std::unexpected(Error{ErrorCode::io_error, folder.string() + ": " + ec.message()});
     }
     if (!fs::is_directory(canonical, ec)) {
-        return std::unexpected(
-            Error{fs::exists(canonical, ec) ? ErrorCode::not_a_directory : ErrorCode::not_found,
-                  folder.string() + " is not a folder"});
+        return fs::exists(canonical, ec)
+                   ? std::unexpected(
+                         Error{ErrorCode::not_a_directory, folder.string() + " is not a folder"})
+                   : std::unexpected(
+                         Error{ErrorCode::not_found, folder.string() + " does not exist"});
     }
     Workspace workspace;
     workspace.name = canonical.has_filename() ? canonical.filename().generic_string()
@@ -47,15 +49,16 @@ LaunchArguments parse_launch_arguments(const std::vector<std::string>& arguments
     for (const std::string& argument : arguments) {
         std::error_code ec;
         const std::filesystem::path path(argument);
+        const bool is_folder = std::filesystem::is_directory(path, ec);
         const bool names_folder =
-            std::filesystem::is_directory(path, ec) ||
+            is_folder ||
             (!argument.empty() && (argument.back() == '/' ||
                                    argument.back() == std::filesystem::path::preferred_separator));
         if (!names_folder) {
             result.files.push_back(path);
             continue;
         }
-        if (result.workspace) {
+        if (is_folder && result.workspace) {
             result.problems.push_back(argument + ": only one folder can be opened; ignored");
             continue;
         }
