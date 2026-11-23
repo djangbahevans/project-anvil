@@ -8,6 +8,7 @@
 
 class QAbstractButton;
 class QHBoxLayout;
+class QResizeEvent;
 
 namespace anvil::ui {
 
@@ -40,6 +41,34 @@ public:
     // Shows the restore icon in place of the maximize icon.
     void set_maximized(bool maximized);
 
+    // The command center is a box in the middle of the bar that shows `text`, the name of the
+    // workspace, and asks for the command palette when it is clicked. It replaces the title, which
+    // is drawn only while there is no command center, and is left out while the bar is too narrow
+    // for it.
+    void set_command_center_visible(bool visible);
+    bool command_center_visible() const {
+        return command_center_wanted_;
+    }
+    void set_command_center_text(const QString& text);
+    QAbstractButton* command_center() const {
+        return command_center_;
+    }
+
+    // The two buttons before the window buttons that show and hide the primary side bar and the
+    // panel. Each shows by its icon whether its part is shown, and asks for the change.
+    void set_layout_controls_visible(bool visible);
+    bool layout_controls_visible() const {
+        return layout_controls_wanted_;
+    }
+    void set_sidebar_shown(bool shown);
+    void set_panel_shown(bool shown);
+    QAbstractButton* sidebar_button() const {
+        return sidebar_button_;
+    }
+    QAbstractButton* panel_button() const {
+        return panel_button_;
+    }
+
     QAbstractButton* minimize_button() const {
         return minimize_;
     }
@@ -57,16 +86,26 @@ signals:
     void toggle_maximized_requested();
     void minimize_requested();
     void close_requested();
+    void command_center_requested();
+    void toggle_sidebar_requested();
+    void toggle_panel_requested();
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
     class ControlButton;
+    class LayoutButton;
+    class CommandCenter;
 
     void style_menu_bar();
+    void place_command_center();
+    // Where the buttons on the right begin.
+    int buttons_left() const;
 
     const WorkbenchColors& colors_;
     QString title_;
@@ -75,6 +114,12 @@ private:
     QAbstractButton* minimize_ = nullptr;
     QAbstractButton* maximize_ = nullptr;
     QAbstractButton* close_ = nullptr;
+    QAbstractButton* sidebar_button_ = nullptr;
+    QAbstractButton* panel_button_ = nullptr;
+    QAbstractButton* command_center_ = nullptr;
+    QWidget* layout_spacer_ = nullptr;
+    bool command_center_wanted_ = false;
+    bool layout_controls_wanted_ = false;
     QWidget* icon_ = nullptr;
     QPointer<QWidget> menu_bar_;
 };
