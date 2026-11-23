@@ -72,7 +72,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services |
 | `src/workbench` | the editor layout: groups of tabs, the split tree, focus, saving and restoring it (no Qt) |
-| `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, tab strip, main window, extension host bridge |
+| `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, tab strip, splitter, editor area and its groups, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
 | `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer and the token theme matcher, copying the color themes, formatting |
@@ -112,6 +112,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 - Qt sizes are signed (`qsizetype`); cast them explicitly under `-Wconversion`. AUTOMOC only processes headers that are listed in the target's sources.
 - `QTest::mouseMove` sends nothing when the cursor is already at that position, which a previous test can leave it at, so a hover test that uses it passes or fails by test order. Send a `QMouseEvent` to the widget instead. `QToolTip::hideText()` hides the tip after a delay; wait for `QToolTip::isVisible()` to turn false.
 - A key that the editor view uses, such as Tab, also moves the focus between widgets, and Qt does that first when another widget can take the focus. `EditorView` refuses to hand the focus on; test its keys in a shown `MainWindow` with the sidebar and the panel open, because with the editor alone nothing else can take the focus and the bug does not show.
+- Deleting a widget from a slot of one of its own signals, such as dropping a group whose tab strip menu asked for it, crashes when the signal returns. Rebuild the tree of the editor area and delete what is no longer used with `deleteLater`; moving a widget that has the keyboard focus between splitters also moves the focus, which `EditorArea` has to expect.
 - Process tests that start `sh -c` must `exec` the real program, or killing the shell leaves an orphan holding ctest's output pipe open.
 - Benchmarks on WSL2 vary by several times between runs; compare orders of magnitude.
 
