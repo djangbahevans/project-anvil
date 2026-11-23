@@ -1,8 +1,11 @@
 #include "anvil/workbench/menu_model.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <functional>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -80,11 +83,50 @@ TEST(MenuTable, IsWellFormed) {
             EXPECT_FALSE(entry.id.empty()) << i;
             EXPECT_FALSE(entry.label.empty()) << entry.id;
         }
-        if (!entry.when.empty()) {
-            EXPECT_TRUE(core::WhenExpression::parse(entry.when).has_value()) << entry.when;
+        for (const std::string_view clause : {entry.when, entry.precondition, entry.toggled}) {
+            if (!clause.empty()) {
+                EXPECT_TRUE(core::WhenExpression::parse(clause).has_value()) << clause;
+            }
         }
         previous_depth = entry.depth;
     }
+}
+
+TEST(MenuTable, EveryConfigKeyThatAClauseReadsHasADefault) {
+    std::set<std::string> defaults;
+    for (const MenuConfigDefault& entry : menu_config_defaults) {
+        defaults.insert(std::string(entry.key));
+        EXPECT_FALSE(nlohmann::json::parse(entry.json, nullptr, false).is_discarded()) << entry.key;
+    }
+    const std::string_view prefix = "config.";
+    for (const MenuEntry& entry : menu_table) {
+        for (const std::string_view clause : {entry.when, entry.precondition, entry.toggled}) {
+            for (std::size_t at = clause.find(prefix); at != std::string_view::npos;
+                 at = clause.find(prefix, at + 1)) {
+                std::size_t end = at + prefix.size();
+                while (end < clause.size() &&
+                       (std::isalnum(static_cast<unsigned char>(clause[end])) != 0 ||
+                        clause[end] == '.')) {
+                    ++end;
+                }
+                const std::string key(clause.substr(at + prefix.size(), end - at - prefix.size()));
+                EXPECT_TRUE(defaults.contains(key)) << key;
+            }
+        }
+    }
+}
+
+TEST(MenuTable, TheMinimapIsToggledByItsSetting) {
+    const auto found = std::ranges::find_if(menu_table, [](const MenuEntry& entry) {
+        return entry.id == "editor.action.toggleMinimap";
+    });
+    ASSERT_NE(found, std::end(menu_table));
+    EXPECT_EQ(found->toggled, "config.editor.minimap.enabled");
+    const auto save = std::ranges::find_if(menu_table, [](const MenuEntry& entry) {
+        return entry.id == "workbench.action.files.save";
+    });
+    ASSERT_NE(save, std::end(menu_table));
+    EXPECT_EQ(save->precondition, "activeEditor || foldersViewVisible && sideBarFocus");
 }
 
 TEST(MenuModel, TheMenuBarIsVSCodes) {
@@ -204,6 +246,96 @@ TEST(MenuModel, EveryTopLevelMenuHasItemsAndEveryItemHasACommand) {
             }
         });
     }
+}
+
+core::ContextKeys with_settings(std::string_view jsonc) {
+    core::ContextKeys keys = desktop();
+    const auto settings = core::Settings::parse(jsonc);
+    EXPECT_TRUE(settings.has_value());
+    set_menu_config_context(keys, settings.value_or(core::Settings{}));
+    return keys;
+}
+
+const MenuItem& item_of(const std::vector<MenuItem>& menu, std::string_view id) {
+    static const MenuItem none;
+    const MenuItem* found = find_id(menu, id);
+    EXPECT_NE(found, nullptr) << id;
+    return found ? *found : none;
+}
+
+TEST(MenuModel, AToggledItemIsCheckedWhileItsConditionHolds) {
+    const MenuItem& minimap_default =
+        item_of(menu_items("MenubarViewMenu", with_settings("{}")), "editor.action.toggleMinimap");
+    EXPECT_TRUE(minimap_default.checkable);
+    EXPECT_TRUE(minimap_default.checked) << "VS Code shows the minimap by default";
+
+    const MenuItem& minimap_off = item_of(
+        menu_items("MenubarViewMenu", with_settings(R"j({"editor.minimap.enabled": false})j")),
+        "editor.action.toggleMinimap");
+    EXPECT_TRUE(minimap_off.checkable);
+    EXPECT_FALSE(minimap_off.checked);
+
+    EXPECT_FALSE(item_of(menu_items("MenubarFileMenu", with_settings("{}")),
+                         "workbench.action.toggleAutoSave")
+                     .checked);
+    EXPECT_TRUE(item_of(menu_items("MenubarFileMenu",
+                                   with_settings(R"j({"files.autoSave": "onFocusChange"})j")),
+                        "workbench.action.toggleAutoSave")
+                    .checked);
+}
+
+TEST(MenuModel, AnItemWithoutAToggledConditionIsNotCheckable) {
+    const MenuItem& open =
+        item_of(menu_items("MenubarFileMenu", desktop()), "workbench.action.files.openFile");
+    EXPECT_FALSE(open.checkable);
+    EXPECT_FALSE(open.checked);
+}
+
+TEST(MenuModel, AnItemIsEnabledWhileItsPreconditionHolds) {
+    core::ContextKeys keys = desktop();
+    EXPECT_FALSE(
+        item_of(menu_items("MenubarFileMenu", keys), "workbench.action.files.save").enabled);
+    keys.set("activeEditor", true);
+    EXPECT_TRUE(
+        item_of(menu_items("MenubarFileMenu", keys), "workbench.action.files.save").enabled);
+    EXPECT_TRUE(
+        item_of(menu_items("MenubarFileMenu", keys), "workbench.action.files.openFile").enabled);
+}
+
+TEST(MenuConfigContext, TheDefaultsApplyWhileTheSettingsSayNothing) {
+    const core::ContextKeys keys = with_settings("{}");
+    ASSERT_NE(keys.find("config.editor.minimap.enabled"), nullptr);
+    EXPECT_EQ(std::get<bool>(*keys.find("config.editor.minimap.enabled")), true);
+    EXPECT_EQ(std::get<std::string>(*keys.find("config.files.autoSave")), "off");
+}
+
+TEST(MenuConfigContext, TheFileOverridesTheDefaultsInEitherSpelling) {
+    const core::ContextKeys flat = with_settings(R"j({"editor.minimap.enabled": false})j");
+    EXPECT_EQ(std::get<bool>(*flat.find("config.editor.minimap.enabled")), false);
+    const core::ContextKeys nested =
+        with_settings(R"j({"editor": {"minimap": {"enabled": false}}})j");
+    EXPECT_EQ(std::get<bool>(*nested.find("config.editor.minimap.enabled")), false);
+    const core::ContextKeys both = with_settings(
+        R"j({"editor": {"minimap": {"enabled": true}}, "editor.minimap.enabled": false})j");
+    EXPECT_EQ(std::get<bool>(*both.find("config.editor.minimap.enabled")), false)
+        << "a flat key wins over a nested one, as it does for the settings";
+    const core::ContextKeys mixed = with_settings(
+        R"j({"editor": {"minimap.enabled": false}, "editor.minimap": {"enabled": true}})j");
+    EXPECT_EQ(std::get<bool>(*mixed.find("config.editor.minimap.enabled")), false)
+        << "the shorter prefix is read first, as the settings find a key";
+}
+
+TEST(MenuConfigContext, EverySettingOfTheFileIsAKey) {
+    const core::ContextKeys keys = with_settings(
+        R"j({"editor.fontSize": 14, "files.exclude": {"a": true}, "custom.list": ["x", "y"],
+             "custom.mixed": [1, "y"], "custom.none": null, "files.eol": "\n"})j");
+    EXPECT_EQ(std::get<double>(*keys.find("config.editor.fontSize")), 14);
+    EXPECT_EQ(std::get<bool>(*keys.find("config.files.exclude.a")), true);
+    EXPECT_EQ(std::get<std::vector<std::string>>(*keys.find("config.custom.list")),
+              (std::vector<std::string>{"x", "y"}));
+    EXPECT_EQ(std::get<std::string>(*keys.find("config.files.eol")), "\n");
+    EXPECT_EQ(keys.find("config.custom.mixed"), nullptr);
+    EXPECT_EQ(keys.find("config.custom.none"), nullptr);
 }
 
 TEST(MenuModel, AnUnknownMenuHasNoItems) {

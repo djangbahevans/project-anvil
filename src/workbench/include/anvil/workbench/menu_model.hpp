@@ -1,5 +1,6 @@
 #pragma once
 
+#include "anvil/core/settings.hpp"
 #include "anvil/core/when_expression.hpp"
 #include "anvil/workbench/menu_table.hpp"
 
@@ -30,6 +31,11 @@ struct MenuItem {
     MenuEntryKind kind = MenuEntryKind::item;
     MenuLabel label{};
     std::string id{};
+    // False when the item's `precondition` does not hold for the context.
+    bool enabled = true;
+    // An item with a `toggled` condition is checkable, and checked while the condition holds.
+    bool checkable = false;
+    bool checked = false;
     std::vector<MenuItem> items{};
 };
 
@@ -39,12 +45,20 @@ struct MenuItem {
 // that depends on state (a folder being open, a debug session) is left unset.
 void set_menu_context_defaults(core::ContextKeys& keys);
 
+// Sets `config.<key>` for the settings that the menus' clauses read, to the value in `settings`
+// or else to VS Code's default, and for every other value in `settings` too, so that a clause such
+// as `config.editor.minimap.enabled` reads what the settings file says. A key that is spelled in
+// the file as nested objects (`"editor": {"minimap": {"enabled": false}}`) is set under its dotted
+// name. Values that are neither booleans, numbers, strings nor lists of strings are left out.
+void set_menu_config_context(core::ContextKeys& keys, const core::Settings& settings);
+
 // The titles of the menu bar, in order, without their items.
 std::vector<MenuItem> top_level_menus(const core::ContextKeys& context);
 
 // The entries of the top-level menu `menu_id` (`MenubarFileMenu`) as the context shows them.
 // An entry whose `when` clause does not hold is left out, and so is a submenu with no entries
-// left. A separator is kept only between two entries.
+// left. A separator is kept only between two entries. An item whose `precondition` does not hold
+// is disabled, and one with a `toggled` condition is checkable.
 std::vector<MenuItem> menu_items(std::string_view menu_id, const core::ContextKeys& context);
 
 } // namespace anvil::workbench

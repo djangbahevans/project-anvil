@@ -164,9 +164,24 @@ async function dumpRegistry() {
             if ('submenu' in item) {
                 return { id: item.submenu.id, title: title(item.title), group: item.group, order: item.order, when: item.when?.serialize(), children: dump(item.submenu) };
             }
-            return { id: item.command.id, title: title(item.command.title), group: item.group, order: item.order, when: item.when?.serialize() };
+            const { id, precondition, toggled } = item.command;
+            return {
+                id,
+                title: title(item.command.title),
+                group: item.group,
+                order: item.order,
+                when: item.when?.serialize(),
+                precondition: precondition?.serialize(),
+                toggled: (toggled?.condition ?? toggled)?.serialize(),
+            };
         });
-    process.stdout.write(`JSON${JSON.stringify(dump(MenuId.MenubarMainMenu))}\n`);
+    const { Extensions: ConfigurationExtensions } = await load('platform/configuration/common/configurationRegistry.js');
+    const properties = Registry.as(ConfigurationExtensions.Configuration).getConfigurationProperties();
+    const defaults = {};
+    for (const [key, property] of Object.entries(properties)) {
+        defaults[key] = property.default === undefined ? null : property.default;
+    }
+    process.stdout.write(`JSON${JSON.stringify({ menus: dump(MenuId.MenubarMainMenu), defaults })}\n`);
     process.exit(0);
 }
 
@@ -190,8 +205,8 @@ function run(platform) {
 }
 
 const version = JSON.parse(fs.readFileSync(path.join(vscodeDir, 'package.json'), 'utf8')).version;
-const linux = run('linux');
-const windows = run('win32');
+const { menus: linux, defaults: linuxDefaults } = run('linux');
+const { menus: windows, defaults: windowsDefaults } = run('win32');
 if (JSON.stringify(linux) !== JSON.stringify(windows)) {
     throw new Error('the menus of Linux and Windows differ; the table would need a platform column');
 }
@@ -221,17 +236,45 @@ const flatten = (items, depth) => {
     for (const item of [...items].sort(compare)) {
         const group = item.group || '';
         if (depth > 0 && previous !== undefined && group !== previous) {
-            rows.push({ depth, kind: 'separator', label: '', id: '', when: '' });
+            rows.push({ depth, kind: 'separator', label: '', id: '', when: '', precondition: '', toggled: '' });
         }
         previous = group;
         const label = (item.title.mnemonicTitle ?? item.title.value).replaceAll('{0}', 'Default');
-        rows.push({ depth, kind: item.children ? 'submenu' : 'item', label, id: item.id, when: item.when ?? '' });
+        rows.push({
+            depth,
+            kind: item.children ? 'submenu' : 'item',
+            label,
+            id: item.id,
+            when: item.when ?? '',
+            precondition: item.precondition ?? '',
+            toggled: item.toggled ?? '',
+        });
         if (item.children) {
             flatten(item.children, depth + 1);
         }
     }
 };
 flatten(linux, 0);
+
+// The settings that the clauses read as `config.<key>`, with the defaults that apply while the settings file says nothing.
+const configKeys = [
+    ...new Set(
+        rows.flatMap((row) =>
+            [row.when, row.precondition, row.toggled].flatMap((clause) =>
+                [...clause.matchAll(/\bconfig\.([\w.]+)/g)].map((match) => match[1]),
+            ),
+        ),
+    ),
+].sort();
+const configDefaults = configKeys.map((key) => {
+    if (!(key in linuxDefaults)) {
+        throw new Error(`the clauses read config.${key}, which no configuration registers`);
+    }
+    if (JSON.stringify(linuxDefaults[key]) !== JSON.stringify(windowsDefaults[key])) {
+        throw new Error(`the default of ${key} differs between Linux and Windows`);
+    }
+    return { key, value: JSON.stringify(linuxDefaults[key]) };
+});
 
 const submenus = rows.filter((row) => row.kind === 'submenu' && row.depth === 0).map((row) => row.id);
 const expected = [
@@ -283,11 +326,25 @@ const generated = [
     '    std::string_view id;',
     '    // The `when` clause under which the entry is shown, or empty.',
     '    std::string_view when;',
+    '    // The condition under which the item is enabled, or empty.',
+    '    std::string_view precondition;',
+    '    // The condition under which the item shows a check mark, or empty.',
+    '    std::string_view toggled;',
+    '};',
+    '',
+    '// A setting that the clauses read as `config.<key>`, with its default as JSON.',
+    'struct MenuConfigDefault {',
+    '    std::string_view key;',
+    '    std::string_view json;',
+    '};',
+    '',
+    'inline constexpr MenuConfigDefault menu_config_defaults[] = {',
+    ...configDefaults.map((entry) => `    {${quote(entry.key)}, ${quote(entry.value)}},`),
     '};',
     '',
     'inline constexpr MenuEntry menu_table[] = {',
     ...rows.map(
-        (row) => `    {${row.depth}, MenuEntryKind::${row.kind}, ${quote(row.label)}, ${quote(row.id)}, ${quote(row.when)}},`,
+        (row) => `    {${row.depth}, MenuEntryKind::${row.kind}, ${quote(row.label)}, ${quote(row.id)}, ${quote(row.when)}, ${quote(row.precondition)}, ${quote(row.toggled)}},`,
     ),
     '};',
     '',

@@ -1,6 +1,9 @@
 #include "anvil/workbench/menu_model.hpp"
 
+#include <algorithm>
 #include <iterator>
+#include <nlohmann/json.hpp>
+#include <optional>
 
 namespace anvil::workbench {
 
@@ -44,12 +47,53 @@ void set_menu_context_defaults(core::ContextKeys& keys) {
 
 namespace {
 
-bool shown(const MenuEntry& entry, const core::ContextKeys& context) {
-    if (entry.when.empty()) {
+std::optional<core::ContextValue> context_value(const nlohmann::json& value) {
+    if (value.is_boolean()) {
+        return value.get<bool>();
+    }
+    if (value.is_number()) {
+        return value.get<double>();
+    }
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_array() &&
+        std::ranges::all_of(value, [](const auto& item) { return item.is_string(); })) {
+        return value.get<std::vector<std::string>>();
+    }
+    return std::nullopt;
+}
+
+void set_config_key(core::ContextKeys& keys, const std::string& name, const nlohmann::json& value) {
+    if (auto converted = context_value(value)) {
+        keys.set("config." + name, std::move(*converted));
+    }
+}
+
+void set_config_values(core::ContextKeys& keys, const std::string& prefix,
+                       const nlohmann::json& object) {
+    for (const auto& [name, value] : object.items()) {
+        const std::string path = prefix.empty() ? name : prefix + "." + name;
+        if (value.is_object()) {
+            set_config_values(keys, path, value);
+        } else {
+            set_config_key(keys, path, value);
+        }
+    }
+}
+
+// A clause that does not parse holds, so that a mistake in the table shows an entry that works
+// instead of hiding it.
+bool holds(std::string_view clause, const core::ContextKeys& context) {
+    if (clause.empty()) {
         return true;
     }
-    const auto expression = core::WhenExpression::parse(entry.when);
+    const auto expression = core::WhenExpression::parse(clause);
     return !expression || expression->evaluate(context);
+}
+
+bool shown(const MenuEntry& entry, const core::ContextKeys& context) {
+    return holds(entry.when, context);
 }
 
 // Builds the entries of one menu level: those at `depth` that follow `index`, with the entries
@@ -76,6 +120,10 @@ std::vector<MenuItem> build(std::size_t& index, std::size_t depth,
             item.items = std::move(children);
         } else if (!visible) {
             continue;
+        } else {
+            item.enabled = holds(entry.precondition, context);
+            item.checkable = !entry.toggled.empty();
+            item.checked = item.checkable && holds(entry.toggled, context);
         }
         if (pending_separator) {
             items.push_back(MenuItem{.kind = MenuEntryKind::separator});
@@ -87,6 +135,19 @@ std::vector<MenuItem> build(std::size_t& index, std::size_t depth,
 }
 
 } // namespace
+
+void set_menu_config_context(core::ContextKeys& keys, const core::Settings& settings) {
+    for (const MenuConfigDefault& entry : menu_config_defaults) {
+        set_config_key(keys, std::string(entry.key),
+                       nlohmann::json::parse(entry.json, nullptr, false));
+    }
+    set_config_values(keys, "", settings.root());
+    for (const MenuConfigDefault& entry : menu_config_defaults) {
+        if (const nlohmann::json* value = settings.find(entry.key)) {
+            set_config_key(keys, std::string(entry.key), *value);
+        }
+    }
+}
 
 std::vector<MenuItem> top_level_menus(const core::ContextKeys& context) {
     std::vector<MenuItem> menus;

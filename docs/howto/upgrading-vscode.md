@@ -48,7 +48,7 @@ node scripts/generate-keybinding-cases.mjs
 
 The key table (`src/core/include/anvil/core/key_table.hpp`) lists VS Code's `KeyCode` values with the names key bindings use for them, so a new key in the release is a new row. CI checks the three key scripts with `--check`.
 
-The menu bar is generated too (`src/workbench/include/anvil/workbench/menu_table.hpp`). `generate-menus.mjs` loads the compiled workbench in Node, creates its workbench contributions and views service against inert services, and reads the menus back from `MenuRegistry`. It stops with a message when a menu it expects (File to Help, and a few items that stand for registrations the script must reach) is missing, and when the menus of Linux and Windows differ. CI checks it with `--check`.
+The menu bar is generated too (`src/workbench/include/anvil/workbench/menu_table.hpp`). `generate-menus.mjs` loads the compiled workbench in Node, creates its workbench contributions and views service against inert services, and reads the menus back from `MenuRegistry`, with the `when`, `precondition` and `toggled` clause of each item and, from the configuration registry, the default of every setting that a clause reads as `config.<key>` (`menu_config_defaults`). It stops with a message when a menu it expects (File to Help, and a few items that stand for registrations the script must reach) is missing, when a clause reads a setting that no configuration registers, and when the menus or those defaults differ between Linux and Windows. CI checks it with `--check`.
 
 ```sh
 node scripts/generate-menus.mjs
