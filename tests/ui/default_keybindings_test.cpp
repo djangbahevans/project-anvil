@@ -1,0 +1,194 @@
+#include "anvil/ui/default_keybindings.hpp"
+
+#include <algorithm>
+#include <gtest/gtest.h>
+#include <set>
+#include <string>
+
+using namespace anvil::ui;
+using namespace anvil::core;
+
+namespace {
+
+const KeyPlatform platforms[] = {KeyPlatform::linux, KeyPlatform::windows, KeyPlatform::macos};
+
+std::vector<std::string> keys_of(const std::vector<Keybinding>& bindings,
+                                 const std::string& command) {
+    std::vector<std::string> keys;
+    for (const Keybinding& binding : bindings) {
+        if (binding.command == command) {
+            keys.push_back(format_key_chord(binding.chord));
+        }
+    }
+    // The primary key comes last in the table, and first here.
+    std::ranges::reverse(keys);
+    return keys;
+}
+
+std::vector<std::string> chords(std::initializer_list<const char*> texts) {
+    std::vector<std::string> formatted;
+    for (const char* text : texts) {
+        formatted.push_back(format_key_chord(*parse_key_chord(text)));
+    }
+    return formatted;
+}
+
+KeyStep step(std::string_view text) {
+    return parse_key_chord(text)->steps.front();
+}
+
+std::string resolved(const KeybindingTable& table, std::string_view key,
+                     const ContextKeys& context) {
+    const Resolution resolution = table.resolve({}, step(key), context);
+    return resolution.kind == Resolution::Kind::found ? resolution.command : "-";
+}
+
+ContextKeys context(std::initializer_list<const char*> true_keys) {
+    ContextKeys keys;
+    for (const char* key : true_keys) {
+        keys.set(key, true);
+    }
+    return keys;
+}
+
+} // namespace
+
+TEST(DefaultKeybindingsTest, EveryBindingIsBuiltInAndHasAKeyAndACommand) {
+    for (const KeyPlatform platform : platforms) {
+        const auto bindings = default_keybindings(platform);
+        EXPECT_GT(bindings.size(), 30U);
+        for (const Keybinding& binding : bindings) {
+            EXPECT_EQ(binding.source, KeybindingSource::builtin);
+            EXPECT_FALSE(binding.command.empty());
+            EXPECT_FALSE(binding.chord.steps.empty()) << binding.command;
+            EXPECT_FALSE(binding.when && binding.when->is_false()) << binding.command;
+        }
+    }
+}
+
+TEST(DefaultKeybindingsTest, EveryPlatformBindsTheSameCommandsExceptWhereVsCodeBindsNone) {
+    std::set<std::string> linux_commands;
+    std::set<std::string> windows_commands;
+    std::set<std::string> macos_commands;
+    for (const Keybinding& binding : default_keybindings(KeyPlatform::linux)) {
+        linux_commands.insert(binding.command);
+    }
+    for (const Keybinding& binding : default_keybindings(KeyPlatform::windows)) {
+        windows_commands.insert(binding.command);
+    }
+    for (const Keybinding& binding : default_keybindings(KeyPlatform::macos)) {
+        macos_commands.insert(binding.command);
+    }
+    // Windows has Alt+F4 from the system for quitting.
+    windows_commands.insert("workbench.action.quit");
+    EXPECT_EQ(linux_commands, windows_commands);
+    EXPECT_EQ(linux_commands, macos_commands);
+}
+
+TEST(DefaultKeybindingsTest, TheStandardShortcutsAreVsCodes) {
+    const auto linux = default_keybindings(KeyPlatform::linux);
+    EXPECT_EQ(keys_of(linux, "workbench.action.files.save"), chords({"ctrl+s"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.files.saveAs"), chords({"ctrl+shift+s"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.files.openFile"), chords({"ctrl+o"}));
+    EXPECT_EQ(keys_of(linux, "undo"), chords({"ctrl+z"}));
+    EXPECT_EQ(keys_of(linux, "redo"), chords({"ctrl+y", "ctrl+shift+z"}));
+    EXPECT_EQ(keys_of(linux, "actions.find"), chords({"ctrl+f"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.startFindReplace"), chords({"ctrl+h"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.nextMatchFindAction"), chords({"f3"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.previousMatchFindAction"), chords({"shift+f3"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.showCommands"), chords({"ctrl+shift+p", "f1"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.toggleSidebarVisibility"), chords({"ctrl+b"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.togglePanel"), chords({"ctrl+j"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.splitEditor"), chords({"ctrl+\\"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.closeActiveEditor"), chords({"ctrl+w"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.quit"), chords({"ctrl+q"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.clipboardPasteAction"),
+              chords({"ctrl+v", "shift+insert"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.clipboardCutAction"), chords({"ctrl+x"}));
+}
+
+TEST(DefaultKeybindingsTest, WindowsHasItsOwnSecondaryKeys) {
+    const auto windows = default_keybindings(KeyPlatform::windows);
+    EXPECT_EQ(keys_of(windows, "workbench.action.closeActiveEditor"),
+              chords({"ctrl+f4", "ctrl+w"}));
+    EXPECT_EQ(keys_of(windows, "editor.action.clipboardCutAction"),
+              chords({"ctrl+x", "shift+delete"}));
+    EXPECT_EQ(keys_of(windows, "editor.action.clipboardCopyAction"),
+              chords({"ctrl+c", "ctrl+insert"}));
+    EXPECT_TRUE(keys_of(windows, "workbench.action.quit").empty());
+}
+
+TEST(DefaultKeybindingsTest, MacUsesCommandWhereVsCodeUsesCtrlCmdAndControlForEmacsKeys) {
+    const auto mac = default_keybindings(KeyPlatform::macos);
+    EXPECT_EQ(keys_of(mac, "workbench.action.files.save"), chords({"cmd+s"}));
+    EXPECT_EQ(keys_of(mac, "redo"), chords({"cmd+shift+z"}));
+    EXPECT_EQ(keys_of(mac, "cursorLeft"), chords({"left", "ctrl+b"}));
+    EXPECT_EQ(keys_of(mac, "cursorHome"), chords({"home", "cmd+left"}));
+    EXPECT_EQ(keys_of(mac, "deleteLeft"),
+              chords({"backspace", "shift+backspace", "ctrl+h", "ctrl+backspace"}));
+    EXPECT_EQ(keys_of(mac, "editor.action.startFindReplace"), chords({"cmd+alt+f"}));
+    EXPECT_EQ(keys_of(mac, "editor.action.nextMatchFindAction"), chords({"cmd+g", "f3"}));
+    EXPECT_EQ(keys_of(mac, "workbench.action.quit"), chords({"cmd+q"}));
+}
+
+TEST(DefaultKeybindingsTest, TheCommandsOfTheEditorApplyWhereTheEditorHasTheFocus) {
+    const KeybindingTable table(default_keybindings(KeyPlatform::linux));
+    EXPECT_EQ(resolved(table, "ctrl+z", context({"editorTextFocus"})), "undo");
+    EXPECT_EQ(resolved(table, "ctrl+z", context({"inputFocus"})), "-");
+    EXPECT_EQ(resolved(table, "left", context({"editorTextFocus"})), "cursorLeft");
+    EXPECT_EQ(resolved(table, "left", context({})), "-");
+    EXPECT_EQ(resolved(table, "ctrl+c", context({"editorTextFocus"})),
+              "editor.action.clipboardCopyAction");
+    EXPECT_EQ(resolved(table, "ctrl+c", context({"inputFocus"})), "-");
+    EXPECT_EQ(resolved(table, "ctrl+s", context({})), "workbench.action.files.save");
+    EXPECT_EQ(resolved(table, "f3", context({"editorFocus"})), "editor.action.nextMatchFindAction");
+    EXPECT_EQ(resolved(table, "f3", context({})), "-");
+}
+
+TEST(DefaultKeybindingsTest, ControlWClosesAnEmptyGroupWhenThereIsMoreThanOne) {
+    const KeybindingTable table(default_keybindings(KeyPlatform::linux));
+    EXPECT_EQ(resolved(table, "ctrl+w", context({})), "workbench.action.closeActiveEditor");
+    EXPECT_EQ(resolved(table, "ctrl+w", context({"activeEditorGroupEmpty"})),
+              "workbench.action.closeActiveEditor");
+    EXPECT_EQ(resolved(table, "ctrl+w", context({"multipleEditorGroups"})),
+              "workbench.action.closeActiveEditor");
+    EXPECT_EQ(
+        resolved(table, "ctrl+w", context({"activeEditorGroupEmpty", "multipleEditorGroups"})),
+        "workbench.action.closeGroup");
+}
+
+TEST(DefaultKeybindingsTest, NoTwoBindingsHaveTheSameKeyCommandAndCondition) {
+    for (const KeyPlatform platform : platforms) {
+        std::set<std::string> seen;
+        for (const Keybinding& binding : default_keybindings(platform)) {
+            const std::string identity = format_key_chord(binding.chord) + " " + binding.command +
+                                         " " + (binding.when ? binding.when->canonical() : "");
+            EXPECT_TRUE(seen.insert(identity).second) << identity;
+        }
+    }
+}
+
+TEST(DefaultKeybindingsTest, ABindingOnMacNeverUsesTheWindowsKeyAndControlIsOnlyForEmacsKeys) {
+    for (const Keybinding& binding : default_keybindings(KeyPlatform::macos)) {
+        for (const KeyStep& step : binding.chord.steps) {
+            EXPECT_FALSE(step.modifiers.meta && step.modifiers.ctrl) << binding.command;
+            if (step.modifiers.ctrl) {
+                EXPECT_TRUE(step.key == Key::key_b || step.key == Key::key_f ||
+                            step.key == Key::key_p || step.key == Key::key_n ||
+                            step.key == Key::key_h || step.key == Key::key_d ||
+                            step.key == Key::backspace || step.key == Key::delete_key)
+                    << binding.command;
+            }
+        }
+    }
+}
+
+TEST(DefaultKeybindingsTest, TheMenuShowsThePrimaryKeyOfACommandThatHasSeveral) {
+    const KeybindingTable table(default_keybindings(KeyPlatform::linux));
+    const auto label = [&](std::string_view command) {
+        return format_key_chord(table.lookup_primary(command, ContextKeys())->chord);
+    };
+    EXPECT_EQ(label("workbench.action.showCommands"), "ctrl+shift+p");
+    EXPECT_EQ(label("redo"), "ctrl+y");
+    EXPECT_EQ(label("editor.action.clipboardPasteAction"), "ctrl+v");
+}

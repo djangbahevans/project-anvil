@@ -2,6 +2,7 @@
 
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/ui/default_keybindings.hpp"
 #include "anvil/ui/resources.hpp"
 
 #include <QAction>
@@ -11,6 +12,7 @@
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -24,6 +26,16 @@ namespace {
 constexpr const char* position_item_id = "status.editor.position";
 constexpr const char* host_item_id = "status.extensionHost";
 constexpr int position_priority = 100;
+
+core::KeyPlatform key_platform() {
+#if defined(Q_OS_MACOS)
+    return core::KeyPlatform::macos;
+#elif defined(Q_OS_WIN)
+    return core::KeyPlatform::windows;
+#else
+    return core::KeyPlatform::linux;
+#endif
+}
 
 QString display_name(const core::Uri& uri) {
     if (const auto path = uri.file_path()) {
@@ -84,6 +96,30 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     panel_ = new Panel(*workbench_, view_containers_, colors_, this);
 
     register_commands();
+    keys_ = new KeybindingService(
+        {.fill_context = [this](core::ContextKeys& keys) { fill_context(keys); },
+         .run = [this](const std::string& command,
+                       const nlohmann::json* args) { run_bound_command(command, args); },
+         .composing =
+             [] {
+                 const auto* view = qobject_cast<EditorView*>(QApplication::focusWidget());
+                 return view && view->composing();
+             }},
+        key_platform(), this);
+    keys_->set_bindings(default_keybindings(key_platform()));
+    qApp->installEventFilter(keys_);
+    connect(keys_, &KeybindingService::chord_message, this,
+            [this](const QString& text, int duration) {
+                if (text.isEmpty()) {
+                    if (status_bar_->message() == chord_text_) {
+                        status_bar_->clear_message();
+                    }
+                    chord_text_.clear();
+                } else {
+                    chord_text_ = duration == 0 ? text : QString();
+                    status_bar_->show_message(text, duration);
+                }
+            });
     build_menus();
 
     auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
@@ -258,6 +294,14 @@ void MainWindow::register_commands() {
             close_tab_at(group->id, *group->active);
         }
     });
+    add("workbench.action.quit", tr("Quit"), [this] { close(); });
+    commands_.add(
+        "setContext", tr("Set Context").toStdString(), [this](const nlohmann::json& args) {
+            if (args.is_array() && args.size() >= 1 && args[0].is_string()) {
+                keys_->set_extension_context(args[0].get<std::string>(),
+                                             args.size() >= 2 ? args[1] : nlohmann::json());
+            }
+        });
     add("workbench.action.splitEditor", tr("Split Editor"),
         [this] { layout_.split(layout_.focused(), workbench::Direction::right); });
     add("workbench.action.splitEditorDown", tr("Split Editor Down"),
@@ -290,60 +334,73 @@ void MainWindow::share_commands_with_extensions() {
     }
 }
 
+QAction* MainWindow::add_command_action(QMenu* menu, const QString& title,
+                                        const std::string& command) {
+    QAction* action = menu->addAction(title);
+    action->setData(QString::fromStdString(command));
+    action->setProperty("anvil.title", title);
+    connect(action, &QAction::triggered, this, [this, command] { commands_.execute(command); });
+    return action;
+}
+
+void MainWindow::show_menu_shortcuts(QMenu* menu) {
+    for (QAction* action : menu->actions()) {
+        const QString command = action->data().toString();
+        if (command.isEmpty()) {
+            continue;
+        }
+        const QString title = action->property("anvil.title").toString();
+        const QString label = keys_->shortcut_label(command.toStdString());
+        action->setText(label.isEmpty() ? title : title + QLatin1Char('\t') + label);
+    }
+}
+
 void MainWindow::build_menus() {
-    const auto run = [this](std::string id) {
-        return [this, id = std::move(id)] { commands_.execute(id); };
+    const auto add = [this](QMenu* menu, const QString& title, const std::string& command) {
+        add_command_action(menu, title, command);
     };
 
     QMenu* file = menuBar()->addMenu(tr("&File"));
-    file->addAction(tr("&Open…"), QKeySequence::Open, this, run("workbench.action.files.openFile"));
-    file->addAction(tr("&Save"), QKeySequence::Save, this, run("workbench.action.files.save"));
-    file->addAction(tr("Save &As…"), QKeySequence::SaveAs, this,
-                    run("workbench.action.files.saveAs"));
-    file->addAction(tr("&Close Tab"), QKeySequence::Close, this,
-                    run("workbench.action.closeActiveEditor"));
+    add(file, tr("&Open…"), "workbench.action.files.openFile");
+    add(file, tr("&Save"), "workbench.action.files.save");
+    add(file, tr("Save &As…"), "workbench.action.files.saveAs");
+    add(file, tr("&Close Tab"), "workbench.action.closeActiveEditor");
     file->addSeparator();
-    file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
+    add(file, tr("&Quit"), "workbench.action.quit");
 
     QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-    edit->addAction(tr("&Undo"), QKeySequence::Undo, this, run("undo"));
-    edit->addAction(tr("&Redo"), QKeySequence::Redo, this, run("redo"));
+    add(edit, tr("&Undo"), "undo");
+    add(edit, tr("&Redo"), "redo");
     edit->addSeparator();
-    edit->addAction(tr("Cu&t"), QKeySequence::Cut, this, run("editor.action.clipboardCutAction"));
-    edit->addAction(tr("&Copy"), QKeySequence::Copy, this,
-                    run("editor.action.clipboardCopyAction"));
-    edit->addAction(tr("&Paste"), QKeySequence::Paste, this,
-                    run("editor.action.clipboardPasteAction"));
+    add(edit, tr("Cu&t"), "editor.action.clipboardCutAction");
+    add(edit, tr("&Copy"), "editor.action.clipboardCopyAction");
+    add(edit, tr("&Paste"), "editor.action.clipboardPasteAction");
     edit->addSeparator();
-    edit->addAction(tr("Select &All"), QKeySequence::SelectAll, this,
-                    run("editor.action.selectAll"));
+    add(edit, tr("Select &All"), "editor.action.selectAll");
     edit->addSeparator();
-    edit->addAction(tr("&Find…"), QKeySequence::Find, this, run("actions.find"));
-    edit->addAction(tr("Find &Next"), QKeySequence::FindNext, this,
-                    run("editor.action.nextMatchFindAction"));
-    edit->addAction(tr("Find Pre&vious"), QKeySequence::FindPrevious, this,
-                    run("editor.action.previousMatchFindAction"));
-    edit->addAction(tr("&Replace…"), QKeySequence::Replace, this,
-                    run("editor.action.startFindReplace"));
+    add(edit, tr("&Find…"), "actions.find");
+    add(edit, tr("Find &Next"), "editor.action.nextMatchFindAction");
+    add(edit, tr("Find Pre&vious"), "editor.action.previousMatchFindAction");
+    add(edit, tr("&Replace…"), "editor.action.startFindReplace");
 
     QMenu* view = menuBar()->addMenu(tr("&View"));
-    view->addAction(tr("Toggle &Sidebar"), QKeySequence(Qt::CTRL | Qt::Key_B), this,
-                    run("workbench.action.toggleSidebarVisibility"));
-    view->addAction(tr("Toggle &Panel"), QKeySequence(Qt::CTRL | Qt::Key_J), this,
-                    run("workbench.action.togglePanel"));
+    add(view, tr("Toggle &Sidebar"), "workbench.action.toggleSidebarVisibility");
+    add(view, tr("Toggle &Panel"), "workbench.action.togglePanel");
     view->addSeparator();
-    view->addAction(tr("Split Editor &Right"), QKeySequence(Qt::CTRL | Qt::Key_Backslash), this,
-                    run("workbench.action.splitEditor"));
-    view->addAction(tr("Split Editor &Down"), this, run("workbench.action.splitEditorDown"));
-    view->addAction(tr("Focus &Next Group"), this, run("workbench.action.focusNextGroup"));
-    view->addAction(tr("Focus Pre&vious Group"), this, run("workbench.action.focusPreviousGroup"));
-    view->addAction(tr("&Close Editor Group"), this, run("workbench.action.closeGroup"));
+    add(view, tr("Split Editor &Right"), "workbench.action.splitEditor");
+    add(view, tr("Split Editor &Down"), "workbench.action.splitEditorDown");
+    add(view, tr("Focus &Next Group"), "workbench.action.focusNextGroup");
+    add(view, tr("Focus Pre&vious Group"), "workbench.action.focusPreviousGroup");
+    add(view, tr("&Close Editor Group"), "workbench.action.closeGroup");
 
     QMenu* commands = menuBar()->addMenu(tr("Comm&ands"));
-    QAction* show_commands =
-        commands->addAction(tr("&Show All Commands…"), this, run("workbench.action.showCommands"));
-    show_commands->setShortcuts(
-        {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), QKeySequence(Qt::Key_F1)});
+    add(commands, tr("&Show All Commands…"), "workbench.action.showCommands");
+
+    // The key bindings can change while the window runs, so a menu shows them when it opens.
+    for (QMenu* menu : {file, edit, view, commands}) {
+        connect(menu, &QMenu::aboutToShow, this, [this, menu] { show_menu_shortcuts(menu); });
+        show_menu_shortcuts(menu);
+    }
 
     window_menu_ = menuBar()->addMenu(tr("Wi&ndow"));
     connect(window_menu_, &QMenu::aboutToShow, this, [this] {
@@ -364,6 +421,55 @@ void MainWindow::build_menus() {
             }
         }
     });
+}
+
+void MainWindow::fill_context(core::ContextKeys& keys) const {
+#if defined(Q_OS_MACOS)
+    keys.set("isMac", true);
+#elif defined(Q_OS_WIN)
+    keys.set("isWindows", true);
+#else
+    keys.set("isLinux", true);
+#endif
+    QWidget* focus = QApplication::focusWidget();
+    const auto* view = qobject_cast<const EditorView*>(focus);
+    const bool input = qobject_cast<const QLineEdit*>(focus) != nullptr;
+    bool editor_focus = view != nullptr;
+    for (EditorGroupWidget* group : area_->groups()) {
+        editor_focus = editor_focus || (focus && group->find_bar()->isAncestorOf(focus));
+    }
+    keys.set("editorFocus", editor_focus);
+    keys.set("editorTextFocus", view != nullptr);
+    keys.set("inputFocus", input);
+    keys.set("textInputFocus", view != nullptr || input);
+    if (view && view->document()) {
+        const core::SelectionSet& selections = view->document()->selections();
+        keys.set("editorHasSelection", !selections.primary().empty());
+        keys.set("editorHasMultipleSelections", selections.all().size() > 1);
+    }
+
+    if (const core::Uri* uri = current_uri_ptr()) {
+        const std::string path = uri->path;
+        const std::size_t slash = path.find_last_of('/');
+        const std::string name = path.substr(slash == std::string::npos ? 0 : slash + 1);
+        const std::size_t dot = name.find_last_of('.');
+        keys.set("resourceScheme", uri->scheme);
+        keys.set("resourceFilename", name);
+        keys.set("resourceExtname",
+                 dot == std::string::npos || dot == 0 ? std::string() : name.substr(dot));
+        keys.set("resourceLangId", std::string("plaintext"));
+    }
+    const workbench::EditorGroup* group = layout_.group(layout_.focused());
+    keys.set("activeEditorGroupEmpty", group && group->tabs.empty());
+    keys.set("multipleEditorGroups", layout_.group_ids().size() > 1);
+}
+
+void MainWindow::run_bound_command(const std::string& command, const nlohmann::json* args) {
+    if (commands_.find(command)) {
+        commands_.execute(command, args ? nlohmann::json::array({*args}) : nlohmann::json::array());
+    } else {
+        execute_command(command);
+    }
 }
 
 const core::Uri* MainWindow::current_uri_ptr() const {
@@ -658,7 +764,9 @@ void MainWindow::show_command_palette() {
     };
     std::vector<Entry> entries;
     for (const CommandRegistry::Command& command : commands_.commands()) {
-        entries.push_back({command.id, QString::fromStdString(command.title)});
+        if (command.id != "setContext") {
+            entries.push_back({command.id, QString::fromStdString(command.title)});
+        }
     }
     if (bridge_.running()) {
         for (const std::string& id : bridge_.host()->commands().extension_commands()) {

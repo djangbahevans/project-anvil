@@ -64,6 +64,10 @@ public:
 
     KeyDispatch dispatch(const KeyStep& press, const ContextKeys& context, Time now);
 
+    // Whether `dispatch` would handle the press, without changing anything: a toolkit asks this
+    // before the press itself arrives, to keep its own shortcuts from taking it.
+    bool would_handle(const KeyStep& press, const ContextKeys& context) const;
+
     // Ends a chord whose last press is more than `chord_timeout` old.
     KeyDispatch check_timeout(Time now);
     // Ends a chord, as when the window loses the focus.

@@ -3,16 +3,22 @@ add_library(anvil_ui STATIC
   codicon_table.hpp
   codicons.cpp
   command_registry.cpp
+  default_keybindings.cpp
   editor_area.cpp
   editor_view.cpp
   extension_host_bridge.cpp
   find_bar.cpp
+  key_translation.cpp
+  keybinding_service.cpp
   include/anvil/ui/activity_bar.hpp
   include/anvil/ui/codicons.hpp
   include/anvil/ui/command_registry.hpp
+  include/anvil/ui/default_keybindings.hpp
   include/anvil/ui/editor_area.hpp
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/find_bar.hpp
+  include/anvil/ui/key_translation.hpp
+  include/anvil/ui/keybinding_service.hpp
   include/anvil/ui/main_window.hpp
   include/anvil/ui/panel.hpp
   include/anvil/ui/quick_pick.hpp
