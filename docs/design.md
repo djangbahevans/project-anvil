@@ -117,6 +117,10 @@ Every operation changes the model completely and then tells its observers, with 
 
 Settings are global. Per-language overrides (`"[python]": {...}`), workspace settings and a settings editor are not implemented; the parsed JSON keeps its nesting so that they can be added.
 
+## Files
+
+`platform` reads and writes whole files (`file.hpp`: `read_file`, `read_file_range`, and `write_file`, which writes a temporary file and renames it over the target) and, in `file_system.hpp`, inspects and changes the file system for the file system service of the extension host: `stat_path` (the type as VS Code's bit flags, with the symbolic link bit added to the type of the target and alone for a broken link; the size; the modification and creation times in milliseconds, the creation time from `statx` on Linux and `st_birthtime` on macOS or the creation time on Windows, and the modification time where the system records none; whether the owner cannot write), `list_directory` (entries sorted by name, as bytes that need not be UTF-8), `make_directory` (with its parents), `remove_path`, `rename_path` and `copy_path`. A symbolic link is removed and copied as a link and never followed out of a tree that is removed. An existing target stops a rename or a copy unless `overwrite` is set, and is then removed first when it cannot be replaced directly; a target that contains the source and a directory copied into itself are refused before anything is removed. A move to another file system fails. The failures that callers tell apart are `ErrorCode` values (`not_found`, `already_exists`, `not_a_directory`, `is_a_directory`, `permission_denied`), and the rest are `io_error`. The portable parts use `std::filesystem`; only the times are per OS (`file_times_<os>.cpp`), and the macOS and Windows ones have not been built.
+
 ## Extension compatibility
 
 The upstream extension host runs unmodified from a pinned VS Code release. The editor answers its RPC calls for the in-scope API surface and reports unsupported API use explicitly. Extensions are installed from Open VSX or from local `.vsix` files ([0007](adr/0007-extension-registry-open-vsx.md)).

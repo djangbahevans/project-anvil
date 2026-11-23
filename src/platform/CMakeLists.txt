@@ -1,14 +1,14 @@
 if(WIN32)
-  set(ANVIL_PLATFORM_SOURCES paths_windows.cpp process_windows.cpp local_socket_windows.cpp)
+  set(ANVIL_PLATFORM_SOURCES paths_windows.cpp process_windows.cpp local_socket_windows.cpp file_times_windows.cpp)
 elseif(APPLE)
-  set(ANVIL_PLATFORM_SOURCES paths_macos.cpp process_posix.cpp local_socket_posix.cpp)
+  set(ANVIL_PLATFORM_SOURCES paths_macos.cpp process_posix.cpp local_socket_posix.cpp file_times_macos.cpp)
 elseif(UNIX)
-  set(ANVIL_PLATFORM_SOURCES paths_linux.cpp process_posix.cpp local_socket_posix.cpp)
+  set(ANVIL_PLATFORM_SOURCES paths_linux.cpp process_posix.cpp local_socket_posix.cpp file_times_linux.cpp)
 else()
   message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-add_library(anvil_platform STATIC ${ANVIL_PLATFORM_SOURCES} editor_defaults.cpp file.cpp target.cpp working_directory.cpp)
+add_library(anvil_platform STATIC ${ANVIL_PLATFORM_SOURCES} editor_defaults.cpp file.cpp file_system.cpp target.cpp working_directory.cpp)
 add_library(anvil::platform ALIAS anvil_platform)
 
 target_include_directories(anvil_platform PUBLIC include)

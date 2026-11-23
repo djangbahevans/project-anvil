@@ -38,7 +38,7 @@ if(UNIX)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/paths_linux_test.cpp)
   endif()
-  list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/editor_defaults_test.cpp platform/file_test.cpp
+  list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/editor_defaults_test.cpp platform/file_system_test.cpp platform/file_test.cpp
        platform/working_directory_test.cpp)
   add_executable(anvil_platform_tests ${ANVIL_PLATFORM_TEST_SOURCES})
   target_link_libraries(anvil_platform_tests
