@@ -2074,6 +2074,8 @@ TEST_F(MainWindowTest, SaveAndCloseCommandsActOnTheShownDocument) {
 
 TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
     create_window();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    window_->commands().execute("workbench.action.focusPreviousGroup");
     const std::vector<std::string> command_ids = {
         "workbench.action.files.newUntitledFile",
         "workbench.action.files.openFile",
@@ -2636,6 +2638,78 @@ TEST_F(MainWindowMenuBarTest, ADisabledItemIsDimmerThanAnEnabledOne) {
     EXPECT_GT(enabled, 180);
     EXPECT_LT(disabled, enabled - 60);
     QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+// The action for `command` in the menu `index` as it is when the menu opens.
+QAction* opened_action(QMenu* menu, const std::string& command) {
+    emit menu->aboutToShow();
+    std::vector<QMenu*> pending{menu};
+    while (!pending.empty()) {
+        QMenu* current = pending.back();
+        pending.pop_back();
+        for (QAction* action : current->actions()) {
+            if (action->menu()) {
+                pending.push_back(action->menu());
+            } else if (action->data().toString().toStdString() == command) {
+                return action;
+            }
+        }
+    }
+    return nullptr;
+}
+
+TEST_F(MainWindowMenuBarTest, AnItemWithAToggledConditionShowsTheSettingAsACheckMark) {
+    settings_file_ = write("settings.json", R"j({"files.autoSave": "afterDelay"})j");
+    create_window();
+    QAction* auto_save = opened_action(menu(0), "workbench.action.toggleAutoSave");
+    ASSERT_NE(auto_save, nullptr);
+    EXPECT_TRUE(auto_save->isCheckable());
+    EXPECT_TRUE(auto_save->isChecked());
+
+    QAction* minimap = opened_action(menu(3), "editor.action.toggleMinimap");
+    ASSERT_NE(minimap, nullptr);
+    EXPECT_TRUE(minimap->isCheckable());
+    EXPECT_TRUE(minimap->isChecked()) << "VS Code's default is on";
+
+    window_->change_setting("editor.minimap.enabled", false);
+    window_->change_setting("files.autoSave", "off");
+    EXPECT_FALSE(opened_action(menu(3), "editor.action.toggleMinimap")->isChecked());
+    EXPECT_FALSE(opened_action(menu(0), "workbench.action.toggleAutoSave")->isChecked());
+}
+
+TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {
+    create_window();
+    QAction* open = opened_action(menu(0), "workbench.action.files.openFile");
+    ASSERT_NE(open, nullptr);
+    EXPECT_FALSE(open->isCheckable());
+}
+
+TEST_F(MainWindowMenuBarTest, TheCheckMarksOfThePartsThatTheWindowHasFollowThem) {
+    create_window();
+    for (const bool shown : {true, false, true}) {
+        window_->workbench()->set_visible(Part::sidebar, shown);
+        window_->workbench()->set_visible(Part::panel, shown);
+        EXPECT_EQ(opened_action(menu(3), "workbench.action.toggleSidebarVisibility")->isChecked(),
+                  shown);
+        EXPECT_EQ(opened_action(menu(3), "workbench.action.togglePanel")->isChecked(), shown);
+    }
+}
+
+TEST_F(MainWindowMenuBarTest,
+       AnItemWhosePreconditionDoesNotHoldIsDisabledAndEnabledAgainWhenItDoes) {
+    create_window();
+    EXPECT_TRUE(opened_action(menu(0), "workbench.action.files.save")->isEnabled());
+    EXPECT_TRUE(opened_action(menu(0), "workbench.action.files.saveAs")->isEnabled());
+
+    window_->commands().execute("workbench.action.splitEditorRight");
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    ASSERT_TRUE(window_->editor_layout().group(window_->editor_layout().focused())->tabs.empty());
+    EXPECT_FALSE(opened_action(menu(0), "workbench.action.files.save")->isEnabled());
+    EXPECT_FALSE(opened_action(menu(0), "workbench.action.files.saveAs")->isEnabled());
+    EXPECT_FALSE(opened_action(menu(0), "workbench.action.closeActiveEditor")->isEnabled());
+
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    EXPECT_TRUE(opened_action(menu(0), "workbench.action.files.save")->isEnabled());
 }
 
 TEST_F(MainWindowMenuBarTest, TheSubmenusFollowTheirMenu) {

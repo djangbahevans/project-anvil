@@ -538,7 +538,22 @@ void MainWindow::style_menus() {
 core::ContextKeys MainWindow::menu_context() const {
     core::ContextKeys keys;
     workbench::set_menu_context_defaults(keys);
+    workbench::set_menu_config_context(keys, settings_->settings());
     fill_context(keys);
+    // Only a menu reads these, and finding the dirty documents grows with the number of tabs, which
+    // `fill_context` must not do because it runs on every key press.
+    keys.set("activeEditor", current_uri_ptr() != nullptr);
+    bool editor_open = false;
+    for (const workbench::GroupId id : layout_.group_ids()) {
+        editor_open = editor_open || !layout_.group(id)->tabs.empty();
+    }
+    keys.set("editorIsOpen", editor_open);
+    keys.set("dirtyWorkingCopies", std::ranges::any_of(documents_, [](const auto& entry) {
+                 return entry.second->is_dirty();
+             }));
+    keys.set("isFullscreen", isFullScreen());
+    keys.set("sideBarVisible", workbench_->is_visible(Part::sidebar));
+    keys.set("panelVisible", workbench_->is_visible(Part::panel));
     return keys;
 }
 
@@ -558,7 +573,12 @@ void MainWindow::populate_menu(QMenu* menu, const std::vector<workbench::MenuIte
                 menu->addAction(label.isEmpty() ? title : title + QLatin1Char('\t') + label);
             action->setData(QString::fromStdString(item.id));
             action->setProperty("anvil.title", title);
+            if (item.checkable) {
+                action->setCheckable(true);
+                action->setChecked(item.checked);
+            }
             if (commands_.find(item.id)) {
+                action->setEnabled(item.enabled);
                 connect(action, &QAction::triggered, this,
                         [this, id = item.id] { commands_.execute(id); });
             } else {
