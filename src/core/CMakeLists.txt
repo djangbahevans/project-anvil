@@ -21,6 +21,7 @@ add_library(anvil_core STATIC
   text_file.cpp
   token_theme.cpp
   uri.cpp
+  workspace.cpp
   utf.cpp
   when_expression.cpp
 )

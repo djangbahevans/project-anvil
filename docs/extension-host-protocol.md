@@ -124,7 +124,7 @@ The editor starts the extension host in its storage directory, whatever director
 After the handshake the extension host does not run any extension until the editor has made these calls, in this order. Each is a request to an `ExtHost*` service; the extension host acknowledges and replies after it has processed the call.
 
 1. `ExtHostConfiguration.$initializeConfiguration(data)` with `IConfigurationInitData`. Empty configuration models are sufficient.
-2. `ExtHostWorkspace.$initializeWorkspace(workspace | null, trusted)`. Extension activation waits for this call; without it `$activateByEvent` is acknowledged and never replied to.
+2. `ExtHostWorkspace.$initializeWorkspace(workspace | null, trusted)`. Extension activation waits for this call; without it `$activateByEvent` is acknowledged and never replied to. See "Workspace" for the data.
 3. `ExtHostExtensionService.$activateByEvent(event, activationKind)`, for example `"*"` for eager extensions.
 
 An extension's command is then runnable with `ExtHostCommands.$executeContributedCommand(id, ...args)`.
@@ -138,6 +138,20 @@ Observed requests from the extension host while starting and activating one exte
 | `MainThreadLogger.$registerLogger`, `MainThreadCommands.$registerCommand`, `MainThreadExtensionService.$onWillActivateExtension`, `$onDidActivateExtension`, `MainThreadTask.*`, `MainThreadSearch.*`, `MainThreadTerminalService.$registerProcessSupport`, `MainThreadDebugService.$registerDebugTypes`, `MainThreadStatusBar.$setEntry` | empty |
 
 Every request must still be acknowledged and replied to; a service the editor does not implement replies empty (`ReplyOKEmpty`) so that the extension host does not wait on it.
+
+## Workspace
+
+Without a folder the editor sends `$initializeWorkspace(null, true)` and the init data's `workspace` is `null`: `workspace.workspaceFolders` and `workspace.name` are `undefined`, and `ExtensionContext.storageUri` is `undefined`.
+
+With a folder the editor sends `$initializeWorkspace(data, true)`, so the workspace is trusted, where `data` is an `IWorkspaceData`:
+
+```json
+{"id": "<id>", "name": "<folder name>", "folders": [{"uri": {"$mid": 1, "scheme": "file", "path": "/the/folder"}, "name": "<folder name>", "index": 0}], "isUntitled": false, "transient": false}
+```
+
+The init data's `workspace` is the same object without `folders` (`IStaticWorkspaceData`). `ExtHostStoragePaths` reads only the init data: it keeps the workspace storage of an extension in `workspaceStorageHome/<id>`, and `storageUri` is `undefined` while the init data has no workspace, so both must carry the same `id`.
+
+The editor derives the data from a path with `core::Workspace::open`. The path is made absolute and passed through `std::filesystem::weakly_canonical`, so a relative path, a trailing separator and a symbolic link to the folder all name the same workspace. `name` is the last component of the canonical path (the whole path for a root). `id` is the 64-bit FNV-1a hash (offset basis 14695981039346656037, prime 1099511628211) of the UTF-8 bytes of the canonical path with forward slashes, written as 16 lowercase hexadecimal digits; for `/` it is `af63a24c860189fe`. The hash is fixed by this document and not `std::hash`, which differs between runs and platforms, so the same folder has the same storage in every run.
 
 ## Command execution
 

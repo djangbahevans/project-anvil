@@ -1,5 +1,6 @@
 #include "anvil/exthost/init_data.hpp"
 
+#include "anvil/core/uri.hpp"
 #include "anvil/platform/process.hpp"
 #include "anvil/platform/target.hpp"
 
@@ -14,6 +15,10 @@ using nlohmann::json;
 
 json file_uri(const std::filesystem::path& path) {
     return {{"$mid", 1}, {"scheme", "file"}, {"path", path.generic_string()}};
+}
+
+json uri_components(const core::Uri& uri) {
+    return {{"$mid", 1}, {"scheme", uri.scheme}, {"path", uri.path}};
 }
 
 // The extension host compares identifiers by the precomputed lowercase `_lower` field.
@@ -87,6 +92,22 @@ std::expected<LoadedExtension, Error> load_extension(const std::filesystem::path
 
 } // namespace
 
+std::string workspace_initialization_args(const std::optional<core::Workspace>& workspace) {
+    if (!workspace) {
+        return "[null,true]";
+    }
+    const json data = {
+        {"id", workspace->id},
+        {"name", workspace->name},
+        {"folders", json::array({{{"uri", uri_components(core::Uri::file(workspace->folder))},
+                                  {"name", workspace->name},
+                                  {"index", 0}}})},
+        {"transient", false},
+        {"isUntitled", false},
+    };
+    return json::array({data, true}).dump();
+}
+
 std::expected<std::string, Error> build_init_data(const InitDataOptions& options) {
     json all_extensions = json::array();
     json activation_events = json::object();
@@ -115,7 +136,11 @@ std::expected<std::string, Error> build_init_data(const InitDataOptions& options
           {"appUriScheme", options.uri_scheme},
           {"globalStorageHome", file_uri(options.storage_dir / "globalStorage")},
           {"workspaceStorageHome", file_uri(options.storage_dir / "workspaceStorage")}}},
-        {"workspace", nullptr},
+        {"workspace", options.workspace ? json{{"id", options.workspace->id},
+                                               {"name", options.workspace->name},
+                                               {"transient", false},
+                                               {"isUntitled", false}}
+                                        : json(nullptr)},
         {"extensions",
          {{"versionId", 1},
           {"allExtensions", std::move(all_extensions)},

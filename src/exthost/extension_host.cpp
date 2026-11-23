@@ -38,10 +38,12 @@ void register_startup_services(RequestRouter& router) {
 } // namespace
 
 ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
-                             std::shared_ptr<core::Logger> logger)
+                             std::shared_ptr<core::Logger> logger,
+                             std::optional<core::Workspace> workspace)
     : logger_(logger ? std::move(logger) : std::make_shared<core::NullLogger>()),
       host_(std::move(host)), commands_(host_->session(), router_),
-      documents_(host_->session(), router_), logging_(logger_, router_), file_system_(router_) {
+      documents_(host_->session(), router_), logging_(logger_, router_), file_system_(router_),
+      workspace_(std::move(workspace)) {
     register_startup_services(router_);
     host_->session().set_request_handler(
         [this](const Request& request) { return router_.dispatch(request); });
@@ -49,7 +51,8 @@ ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
         startup_steps_ = {
             {ProxyId::ExtHostConfiguration, "$initializeConfiguration",
              initial_configuration_json()},
-            {ProxyId::ExtHostWorkspace, "$initializeWorkspace", "[null,true]"},
+            {ProxyId::ExtHostWorkspace, "$initializeWorkspace",
+             workspace_initialization_args(workspace_)},
             // Extensions that activate at startup must already see the open documents.
             {ProxyId::ExtHostDocumentsAndEditors, "$acceptDocumentsAndEditorsDelta",
              documents_.initial_delta_args()},
@@ -76,6 +79,7 @@ ExtensionHost::start(const ExtensionHostOptions& options) {
         .extension_dirs = options.extension_dirs,
         .storage_dir = options.storage_dir,
         .logs_dir = *logs,
+        .workspace = options.workspace,
     });
     if (!init_data) {
         return std::unexpected(init_data.error());
@@ -88,7 +92,8 @@ ExtensionHost::start(const ExtensionHostOptions& options) {
     if (!host) {
         return std::unexpected(host.error());
     }
-    return std::unique_ptr<ExtensionHost>(new ExtensionHost(std::move(*host), options.logger));
+    return std::unique_ptr<ExtensionHost>(
+        new ExtensionHost(std::move(*host), options.logger, options.workspace));
 }
 
 void ExtensionHost::run_step(std::size_t index) {

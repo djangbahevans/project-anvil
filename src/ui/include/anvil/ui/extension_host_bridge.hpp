@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,8 @@ public:
         std::filesystem::path vscode_dir;
         std::vector<std::filesystem::path> extension_dirs;
         std::filesystem::path storage_dir;
+        // The folder extensions work on; they see no workspace when unset.
+        std::optional<core::Workspace> workspace{};
     };
 
     struct Callbacks {

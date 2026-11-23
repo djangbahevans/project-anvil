@@ -57,6 +57,7 @@ protected:
         options.keybindings_file = keybindings_file_;
         options.themes_directory = themes_directory_;
         options.custom_title_bar = custom_title_bar_;
+        options.workspace = workspace_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
             const std::filesystem::path node = ANVIL_NODE_EXECUTABLE;
@@ -236,6 +237,7 @@ protected:
     }
 
     std::filesystem::path scratch_;
+    std::optional<core::Workspace> workspace_;
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
     // The tests keep the system frame except those about the title bar.
@@ -768,6 +770,36 @@ TEST_F(MainWindowTest, ExtensionsSeeDocumentsClose) {
     const json open = run("anvil.docs.openDocuments");
     EXPECT_EQ(open.size(), 2u);
     EXPECT_TRUE(std::find(open.begin(), open.end(), core::Uri::file(a).to_string()) == open.end());
+}
+
+TEST_F(MainWindowTest, TheWindowTitleNamesTheWorkspaceFolder) {
+    std::filesystem::create_directories(scratch_ / "project");
+    workspace_ = *core::Workspace::open(scratch_ / "project");
+    custom_title_bar_ = true;
+    create_window();
+    EXPECT_EQ(window_->windowTitle(), "Untitled-1 — project — Anvil[*]");
+
+    const auto file = write("notes.txt", "x");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(file.string())));
+    EXPECT_EQ(window_->windowTitle(), "notes.txt — project — Anvil[*]");
+
+    window_->commands().execute("workbench.action.splitEditor");
+    EXPECT_EQ(window_->windowTitle(), "project — Anvil");
+    EXPECT_EQ(window_->title_bar()->command_center()->text(), "project");
+}
+
+TEST_F(MainWindowTest, ExtensionsSeeTheWorkspaceFolder) {
+    std::filesystem::create_directories(scratch_ / "project");
+    workspace_ = *core::Workspace::open(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const json seen = run("anvil.workspace.report", json::array({"/elsewhere"}));
+    EXPECT_EQ(seen["name"], "project");
+    ASSERT_EQ(seen["folders"].size(), 1u);
+    EXPECT_EQ(seen["folders"][0]["path"], workspace_->folder.generic_string());
 }
 
 TEST_F(MainWindowTest, ClosingTheShownDocumentMakesTheNeighbourActiveInExtensions) {

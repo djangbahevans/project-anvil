@@ -123,6 +123,8 @@ Settings are global. Per-language overrides (`"[python]": {...}`), workspace set
 
 `exthost::FileSystemService` serves `vscode.workspace.fs` for `file:` resources with these operations; the Node extension host serves most `file:` calls itself, so the editor sees rename, copy, deletes that use the trash and other schemes (see the protocol reference).
 
+`core::Workspace` is the folder the window works on: its canonical path, its name, and a stable id made by a fixed hash of the path (see the protocol reference, "Workspace"), by which extension storage is kept per workspace. `core::parse_launch_arguments` turns the command line into the optional workspace, the files to open and the problems to report: the first directory is the workspace, and a second directory or a missing folder (an argument that ends in a separator) is reported and ignored. `MainWindowOptions::workspace` shows the folder's name in the window title and the command center, and `ExtensionHostBridge::Config::workspace` reaches the extension host as the init data's workspace and the `$initializeWorkspace` call. The folder is fixed while the window runs; opening another folder restarts the extension host ([0016](adr/0016-opening-a-folder-restarts-the-extension-host.md)).
+
 ## Extension compatibility
 
 The upstream extension host runs unmodified from a pinned VS Code release. The editor answers its RPC calls for the in-scope API surface and reports unsupported API use explicitly. Extensions are installed from Open VSX or from local `.vsix` files ([0007](adr/0007-extension-registry-open-vsx.md)).

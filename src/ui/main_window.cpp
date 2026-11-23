@@ -286,8 +286,9 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             status_bar_->show_message(
                 tr("The extension host stopped: %1").arg(QString::fromStdString(reason)), 10000);
         };
-        if (auto started = bridge_.start(*options_.extension_host, logger, std::move(callbacks));
-            !started) {
+        ExtensionHostBridge::Config host_config = *options_.extension_host;
+        host_config.workspace = options_.workspace;
+        if (auto started = bridge_.start(host_config, logger, std::move(callbacks)); !started) {
             status_bar_->show_message(tr("The extension host did not start: %1")
                                           .arg(QString::fromStdString(started.error().message)),
                                       15000);
@@ -1076,12 +1077,15 @@ void MainWindow::refresh_current() {
 
 void MainWindow::update_title() {
     const core::Uri* current = current_uri_ptr();
+    const QString folder =
+        options_.workspace ? QString::fromStdString(options_.workspace->name) : QString();
     if (!current) {
-        setWindowTitle(tr("Anvil"));
+        setWindowTitle(folder.isEmpty() ? tr("Anvil") : tr("%1 — Anvil").arg(folder));
         setWindowModified(false);
         return;
     }
-    setWindowTitle(tr("%1 — Anvil[*]").arg(display_name(*current)));
+    setWindowTitle(folder.isEmpty() ? tr("%1 — Anvil[*]").arg(display_name(*current))
+                                    : tr("%1 — %2 — Anvil[*]").arg(display_name(*current), folder));
     setWindowModified(documents_.at(*current)->is_dirty());
 }
 
@@ -1200,7 +1204,8 @@ void MainWindow::set_up_title_bar() {
     });
     title_bar_->set_sidebar_shown(workbench_->is_visible(Part::sidebar));
     title_bar_->set_panel_shown(workbench_->is_visible(Part::panel));
-    title_bar_->set_command_center_text(tr("Anvil"));
+    title_bar_->set_command_center_text(
+        options_.workspace ? QString::fromStdString(options_.workspace->name) : tr("Anvil"));
     title_bar_->set_title(title_text());
     update_chrome();
 }
