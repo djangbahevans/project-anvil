@@ -89,6 +89,11 @@ public:
         return router_.unhandled();
     }
 
+    // Gives up on the host: every request that has no reply yet fails with `reason`, and the host
+    // is closed. Destroying the host stops the process; this tells the callers of requests why
+    // they get no answer.
+    void abandon(const std::string& reason);
+
     // Services the connection for up to `timeout`; see HostProcess::pump. Returns false once the
     // connection has closed.
     std::expected<bool, Error> pump(std::chrono::milliseconds timeout);

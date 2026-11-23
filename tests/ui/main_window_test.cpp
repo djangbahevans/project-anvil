@@ -58,6 +58,8 @@ protected:
         options.themes_directory = themes_directory_;
         options.custom_title_bar = custom_title_bar_;
         options.workspace = workspace_;
+        options.choose_folder = choose_folder_;
+        options.logger = logger_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
             const std::filesystem::path node = ANVIL_NODE_EXECUTABLE;
@@ -100,6 +102,15 @@ protected:
             QTest::qWait(10);
         }
         return done();
+    }
+
+    // Waits until the extension host that was started last has finished starting.
+    bool wait_host_ready() {
+        return wait_until([&] {
+                   return window_->bridge().host() &&
+                          window_->bridge().host()->state() != exthost::HostState::starting;
+               }) &&
+               window_->bridge().host()->state() == exthost::HostState::ready;
     }
 
     // Runs an extension command through the extension host and returns its result.
@@ -238,6 +249,8 @@ protected:
 
     std::filesystem::path scratch_;
     std::optional<core::Workspace> workspace_;
+    std::function<std::optional<std::filesystem::path>()> choose_folder_;
+    std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
     // The tests keep the system frame except those about the title bar.
@@ -800,6 +813,203 @@ TEST_F(MainWindowTest, ExtensionsSeeTheWorkspaceFolder) {
     EXPECT_EQ(seen["name"], "project");
     ASSERT_EQ(seen["folders"].size(), 1u);
     EXPECT_EQ(seen["folders"][0]["path"], workspace_->folder.generic_string());
+}
+
+TEST_F(MainWindowTest, OpeningAFolderRestartsTheExtensionHostWithIt) {
+    std::filesystem::create_directories(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const json before = run("anvil.workspace.report", json::array({"/x"}));
+    EXPECT_TRUE(before["folders"].empty());
+    const long old_pid = before["pid"].get<long>();
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(wait_host_ready());
+
+    ASSERT_TRUE(window_->workspace().has_value());
+    EXPECT_EQ(window_->workspace()->name, "project");
+    const json after = run("anvil.workspace.report", json::array({"/x"}));
+    ASSERT_EQ(after["folders"].size(), 1u);
+    EXPECT_EQ(after["folders"][0]["path"], window_->workspace()->folder.generic_string());
+    EXPECT_EQ(after["name"], "project");
+    EXPECT_NE(after["pid"].get<long>(), old_pid);
+    EXPECT_NE(::kill(static_cast<pid_t>(old_pid), 0), 0) << "the old extension host still runs";
+    EXPECT_TRUE(window_->bridge().host()->commands().extension_commands().contains(
+        "anvil.workspace.report"));
+
+    EXPECT_TRUE(window_->open_folder(scratch_ / "project"));
+    EXPECT_EQ(run("anvil.workspace.report", json::array({"/x"}))["pid"].get<long>(),
+              after["pid"].get<long>())
+        << "opening the folder that is open restarted the host";
+}
+
+TEST_F(MainWindowTest, ClosingTheFolderRestartsTheExtensionHostWithoutOne) {
+    std::filesystem::create_directories(scratch_ / "project");
+    workspace_ = *core::Workspace::open(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const long old_pid = run("anvil.workspace.report", json::array({"/x"}))["pid"].get<long>();
+
+    window_->close_folder();
+    ASSERT_TRUE(wait_host_ready());
+
+    EXPECT_FALSE(window_->workspace().has_value());
+    const json after = run("anvil.workspace.report", json::array({"/x"}));
+    EXPECT_TRUE(after["folders"].empty());
+    EXPECT_EQ(after["name"], nullptr);
+    EXPECT_NE(after["pid"].get<long>(), old_pid);
+    EXPECT_NE(::kill(static_cast<pid_t>(old_pid), 0), 0) << "the old extension host still runs";
+}
+
+TEST_F(MainWindowTest, ChangingTheFolderKeepsTheTabsAndDocumentsAndAsksNothing) {
+    std::filesystem::create_directories(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    create_window(true, true);
+    if (!window_) {
+        return;
+    }
+    const auto saved = write("saved.txt", "on disk");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(saved.string())));
+    type("unsaved edit");
+    const std::string first_text = current_text();
+    window_->commands().execute("workbench.action.splitEditor");
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    type("second group");
+    const auto titles = tab_titles();
+    const std::size_t documents = window_->open_document_count();
+    const std::size_t groups = window_->editor_area()->groups().size();
+    ASSERT_TRUE(window_->current_document()->is_dirty());
+
+    prompt_shown_ = false;
+    answer_next_prompt(QMessageBox::Cancel);
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(wait_host_ready());
+
+    EXPECT_FALSE(prompt_shown_);
+    EXPECT_EQ(tab_titles(), titles);
+    EXPECT_EQ(window_->open_document_count(), documents);
+    EXPECT_EQ(window_->editor_area()->groups().size(), groups);
+    EXPECT_EQ(current_text(), "second group");
+    const json seen = run("anvil.workspace.report", json::array({"/x"}));
+    std::set<std::string> texts;
+    for (const json& document : seen["documents"]) {
+        texts.insert(document["text"].get<std::string>());
+    }
+    EXPECT_TRUE(texts.contains("second group")) << seen["documents"].dump();
+    EXPECT_TRUE(texts.contains(first_text)) << seen["documents"].dump();
+    EXPECT_EQ(seen["activeEditor"], window_->current_uri().to_string());
+}
+
+TEST_F(MainWindowTest, ARequestInFlightWhenTheHostRestartsFailsWithAnErrorThatSaysSo) {
+    std::filesystem::create_directories(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    std::optional<exthost::CallResult> result;
+    window_->bridge().host()->commands().execute(
+        "anvil.workspace.hang", "[]", [&](exthost::CallResult r) { result = std::move(r); });
+    ASSERT_TRUE(
+        wait_until([&] { return window_->bridge().host()->state() == exthost::HostState::ready; }));
+    QTest::qWait(300);
+    ASSERT_FALSE(result.has_value());
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+
+    ASSERT_TRUE(result.has_value());
+    ASSERT_FALSE(result->has_value());
+    EXPECT_NE(result->error().find("restarted"), std::string::npos) << result->error();
+}
+
+TEST_F(MainWindowTest, OpenFolderAsksForAFolderAndCancellingChangesNothing) {
+    std::filesystem::create_directories(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    int asked = 0;
+    std::optional<std::filesystem::path> answer;
+    choose_folder_ = [&] {
+        ++asked;
+        return answer;
+    };
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const long pid = run("anvil.workspace.report", json::array({"/x"}))["pid"].get<long>();
+
+    ASSERT_TRUE(window_->commands().execute("workbench.action.files.openFolder"));
+    EXPECT_EQ(asked, 0) << "the command must return before the host it runs in can be replaced";
+    ASSERT_TRUE(wait_until([&] { return asked == 1; }));
+    QTest::qWait(100);
+    EXPECT_FALSE(window_->workspace().has_value());
+    EXPECT_EQ(run("anvil.workspace.report", json::array({"/x"}))["pid"].get<long>(), pid);
+
+    answer = scratch_ / "project";
+    ASSERT_TRUE(window_->commands().execute("workbench.action.files.openFolder"));
+    ASSERT_TRUE(wait_until([&] { return window_->workspace().has_value(); }));
+    ASSERT_TRUE(wait_host_ready());
+    EXPECT_EQ(run("anvil.workspace.report", json::array({"/x"}))["folders"].size(), 1u);
+}
+
+TEST_F(MainWindowTest, OpenFolderAndCloseFolderAreInTheMenuAndFollowTheWorkspace) {
+    std::filesystem::create_directories(scratch_ / "project");
+    create_window();
+    QAction* open = menu_action("workbench.action.files.openFolder");
+    ASSERT_NE(open, nullptr);
+    EXPECT_TRUE(open->isEnabled());
+    EXPECT_EQ(menu_action("workbench.action.closeFolder"), nullptr);
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    QAction* close = menu_action("workbench.action.closeFolder");
+    ASSERT_NE(close, nullptr);
+    EXPECT_TRUE(close->isEnabled());
+    EXPECT_EQ(window_->windowTitle(), "Untitled-1 — project — Anvil[*]");
+
+    close->trigger();
+    EXPECT_TRUE(window_->workspace().has_value())
+        << "the command must return before the host it runs in can be replaced";
+    ASSERT_TRUE(wait_until([&] { return !window_->workspace().has_value(); }));
+    EXPECT_EQ(window_->windowTitle(), "Untitled-1 — Anvil[*]");
+    EXPECT_EQ(menu_action("workbench.action.closeFolder"), nullptr);
+}
+
+TEST_F(MainWindowTest, OpeningAFileInsteadOfAFolderChangesNothing) {
+    create_window();
+    const auto file = write("a.txt", "x");
+    EXPECT_FALSE(window_->open_folder(file));
+    EXPECT_FALSE(window_->open_folder(scratch_ / "missing"));
+    EXPECT_FALSE(window_->workspace().has_value());
+}
+
+TEST_F(MainWindowTest, AnExtensionHostThatStoppedStartsAgainWhenAFolderIsOpened) {
+    std::filesystem::create_directories(scratch_ / "project");
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->bridge().host()->commands().execute("anvil.workspace.die", "[]",
+                                                 [](exthost::CallResult) {});
+    ASSERT_TRUE(wait_until([&] { return !window_->bridge().running(); }));
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(window_->bridge().running());
+    ASSERT_TRUE(wait_host_ready());
+    EXPECT_EQ(run("anvil.workspace.report", json::array({"/x"}))["folders"].size(), 1u);
+}
+
+TEST_F(MainWindowTest, OpeningAFolderWithoutAnExtensionHostShowsItsName) {
+    std::filesystem::create_directories(scratch_ / "project");
+    create_window();
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    EXPECT_EQ(window_->windowTitle(), "Untitled-1 — project — Anvil[*]");
+    EXPECT_FALSE(window_->bridge().running());
 }
 
 TEST_F(MainWindowTest, ClosingTheShownDocumentMakesTheNeighbourActiveInExtensions) {
@@ -4181,4 +4391,83 @@ TEST_F(MainWindowTest, AContributedThemeCanIncludeAFileAndAMissingOneFailsWithou
     EXPECT_EQ(window_->colors().color("editor.foreground"), QColor("#123456"));
     EXPECT_FALSE(window_->themes().select("Fixture Missing"));
     EXPECT_EQ(window_->themes().current(), "fixture-included");
+}
+
+TEST_F(MainWindowContributionsTest,
+       TheContributionsOfTheExtensionsAreReadAgainWhenTheHostRestarts) {
+    const auto copy = scratch_ / "contributions";
+    std::filesystem::copy(ANVIL_CONTRIBUTIONS_EXTENSION, copy,
+                          std::filesystem::copy_options::recursive);
+    extension_dirs_ = {copy};
+    std::filesystem::create_directories(scratch_ / "project");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(shows(palette_labels(), "Keyed"));
+    window_->command_palette()->close();
+
+    std::string manifest = *platform::read_file(copy / "package.json");
+    const auto replace = [&](const std::string& from, const std::string& to) {
+        const auto at = manifest.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        manifest.replace(at, from.size(), to);
+    };
+    replace(R"("title": "Keyed")", R"("title": "Keyed Renamed")");
+    replace(R"("linux": "ctrl+alt+8")", R"("linux": "ctrl+alt+6")");
+    ASSERT_TRUE(platform::write_file(copy / "package.json", manifest).has_value());
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(wait_host_ready());
+
+    const auto labels = palette_labels();
+    EXPECT_TRUE(shows(labels, "Keyed Renamed"));
+    EXPECT_FALSE(shows(labels, "Keyed"));
+    window_->command_palette()->close();
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_6, Qt::ControlModifier | Qt::AltModifier);
+    ASSERT_TRUE(wait_until([&] { return current_text() == "[keyed]"; })) << current_text();
+}
+
+TEST_F(MainWindowContributionsTest, TheCommandsOfTheWindowAreSharedWithTheNewHost) {
+    std::filesystem::create_directories(scratch_ / "project");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(wait_host_ready());
+
+    std::optional<exthost::CallResult> result;
+    window_->bridge().host()->commands().execute(
+        "workbench.action.files.newUntitledFile", "[]",
+        [&](exthost::CallResult r) { result = std::move(r); });
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(result->has_value());
+    EXPECT_EQ(window_->open_document_count(), 2U);
+}
+
+TEST_F(MainWindowTest, ThemesOfExtensionsAreListedOnceAfterARestart) {
+    extension_dirs_ = {ANVIL_THEMES_EXTENSION};
+    std::filesystem::create_directories(scratch_ / "project");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const std::size_t count = window_->themes().themes().size();
+    const std::string current = window_->themes().current();
+    const auto theme_warnings = [&] {
+        return std::ranges::count(logger_->entries(), "theme",
+                                  &core::RecordingLogger::Entry::source);
+    };
+    const auto warnings = theme_warnings();
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(wait_host_ready());
+
+    EXPECT_EQ(window_->themes().themes().size(), count);
+    EXPECT_EQ(window_->themes().current(), current);
+    EXPECT_EQ(theme_warnings(), warnings);
 }

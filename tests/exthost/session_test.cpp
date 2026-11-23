@@ -137,6 +137,27 @@ TEST(Session, CallsAreNumberedAndMatchedToTheirReplies) {
                                                  "error:{\"message\":\"boom\"}"}));
 }
 
+TEST(Session, PendingCallsCanBeFailedAndTheirLateRepliesAreDropped) {
+    Session session("{}");
+    FakeHost host(session);
+    host.complete_handshake();
+
+    std::vector<std::string> results;
+    auto record = [&](CallResult result) {
+        results.push_back(result ? result->value_or("<undefined>") : "error:" + result.error());
+    };
+    session.call(ProxyId::ExtHostCommands, "$a", "[]", record);
+    session.call(ProxyId::ExtHostCommands, "$b", "[]", record);
+    ASSERT_TRUE(host.send_rpc(EmptyReply{1}).has_value());
+    ASSERT_EQ(results, (std::vector<std::string>{"<undefined>"}));
+
+    session.fail_pending_calls("gone");
+    EXPECT_EQ(results, (std::vector<std::string>{"<undefined>", "error:gone"}));
+
+    ASSERT_TRUE(host.send_rpc(JsonReply{2, "\"late\""}).has_value());
+    EXPECT_EQ(results.size(), 2u);
+}
+
 TEST(Session, CallBeforeTheSessionRunsFailsImmediately) {
     Session session("{}");
     std::optional<CallResult> result;

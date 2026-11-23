@@ -6,6 +6,10 @@
   "main": "./extension.js",
   "activationEvents": ["*"],
   "contributes": {
-    "commands": [{ "command": "anvil.workspace.report", "title": "Anvil: Report Workspace" }]
+    "commands": [
+      { "command": "anvil.workspace.report", "title": "Anvil: Report Workspace" },
+      { "command": "anvil.workspace.hang", "title": "Anvil: Never Reply" },
+      { "command": "anvil.workspace.die", "title": "Anvil: Kill The Host" }
+    ]
   }
 }

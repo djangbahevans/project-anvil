@@ -121,6 +121,11 @@ void ExtensionHost::fail(std::string message) {
     failure_ = std::move(message);
 }
 
+void ExtensionHost::abandon(const std::string& reason) {
+    state_ = HostState::closed;
+    host_->session().fail_pending_calls(reason);
+}
+
 std::expected<bool, Error> ExtensionHost::pump(std::chrono::milliseconds timeout) {
     const auto pumped = host_->pump(timeout);
     logging_.poll();

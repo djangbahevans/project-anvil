@@ -32,6 +32,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 
 class QMenu;
@@ -45,6 +46,9 @@ struct MainWindowOptions {
     // The folder the window works on: its name is in the window title, and the extension host
     // reports it as the workspace folder.
     std::optional<core::Workspace> workspace{};
+    // Asks which folder Open Folder opens; none means the question was cancelled. The window shows
+    // a folder dialog when unset.
+    std::function<std::optional<std::filesystem::path>()> choose_folder;
     // Receives the extension host's messages; discarded when unset.
     std::shared_ptr<core::Logger> logger;
     // The user settings file, read at startup and whenever it changes. A missing file means the
@@ -86,6 +90,17 @@ public:
     // asks whether to save them first; false means the user cancelled. Closing the last document
     // opens an untitled one.
     bool close_document(std::size_t index);
+
+    // The folder the window works on, if any.
+    const std::optional<core::Workspace>& workspace() const {
+        return options_.workspace;
+    }
+    // Makes the folder the workspace: the extension host restarts with it (ADR 0016), and the
+    // tabs, groups and documents stay as they are. Fails, with a message in the status bar, when
+    // the path is not a folder. Opening the folder that is the workspace already does nothing.
+    bool open_folder(const std::filesystem::path& folder);
+    // Leaves the workspace; the extension host restarts without one.
+    void close_folder();
 
     // The editor, the strip of tabs and the find bar of the focused group.
     EditorView* view() {
@@ -199,6 +214,13 @@ private:
     void style_menus();
     // Lets extensions execute the registered commands, once the extension host is running.
     void share_commands_with_extensions();
+    // Applies `options_.workspace`: restarts the extension host with it and gives it what the
+    // window holds (documents, commands, contributions), then shows the folder's name.
+    void workspace_changed();
+    void apply_extension_host_options();
+    // The name of the workspace folder, or "Anvil" without one.
+    QString workspace_label() const;
+    void open_folder_dialog();
     void build_menus();
     void apply_settings();
     // Whether a document of the window shows the file and has changes that are not saved.
@@ -303,6 +325,8 @@ private:
     EditorArea* area_ = nullptr;
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
+    // The extension themes given to the theme store: an identifier and a file for each.
+    std::set<std::string> offered_themes_;
     std::size_t next_untitled_ = 1;
     StatusBar* status_bar_ = nullptr;
     KeybindingService* keys_ = nullptr;
