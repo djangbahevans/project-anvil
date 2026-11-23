@@ -929,3 +929,233 @@ TEST(WordAt, AgreesWithSelectingAWordByDoubleClickOnAWordCharacter) {
         EXPECT_EQ(editor.primary(), *word) << offset;
     }
 }
+
+// --- occurrences ---
+
+namespace {
+
+Search search_for(std::string pattern, bool match_case = true, bool whole_word = false,
+                  bool regex = false) {
+    auto search = Search::create({.pattern = std::move(pattern),
+                                  .match_case = match_case,
+                                  .whole_word = whole_word,
+                                  .regex = regex});
+    EXPECT_TRUE(search.has_value());
+    return *search;
+}
+
+Search search_for(const OccurrenceQuery& occurrence) {
+    auto search = Search::create(occurrence.query);
+    EXPECT_TRUE(search.has_value());
+    return *search;
+}
+
+} // namespace
+
+TEST(EditControllerOccurrences, ALoneCaretTakesTheWordAtItAsAWholeCaseSensitiveSearch) {
+    Editor editor("foo bar", {Selection::caret(5)});
+    const auto occurrence = editor.controller.occurrence_query(false, false);
+    ASSERT_TRUE(occurrence.has_value());
+    EXPECT_EQ(occurrence->query.pattern, "bar");
+    EXPECT_TRUE(occurrence->query.whole_word);
+    EXPECT_TRUE(occurrence->query.match_case);
+    EXPECT_FALSE(occurrence->query.regex);
+    EXPECT_EQ(occurrence->first, (Selection{4, 7}));
+}
+
+TEST(EditControllerOccurrences, ACaretBetweenWordsHasNothingToSearchFor) {
+    Editor editor("foo  bar", {Selection::caret(4)});
+    EXPECT_FALSE(editor.controller.occurrence_query(false, false).has_value());
+    Editor punctuation("a + b", {Selection::caret(2)});
+    EXPECT_FALSE(punctuation.controller.occurrence_query(false, false).has_value());
+}
+
+TEST(EditControllerOccurrences, ASelectionSearchesItsTextWithTheGivenOptions) {
+    Editor editor("foo Bar baz", {Selection{4, 7}});
+    const auto plain = editor.controller.occurrence_query(false, false);
+    ASSERT_TRUE(plain.has_value());
+    EXPECT_EQ(plain->query.pattern, "Bar");
+    EXPECT_FALSE(plain->query.match_case);
+    EXPECT_FALSE(plain->query.whole_word);
+    EXPECT_FALSE(plain->first.has_value());
+
+    const auto strict = editor.controller.occurrence_query(true, true);
+    ASSERT_TRUE(strict.has_value());
+    EXPECT_TRUE(strict->query.match_case);
+    EXPECT_TRUE(strict->query.whole_word);
+}
+
+TEST(EditControllerOccurrences, AReversedMultiLineSelectionSearchesItsText) {
+    Editor editor("ab\ncd ab\ncd", {Selection{5, 0}});
+    const auto occurrence = editor.controller.occurrence_query(true, false);
+    ASSERT_TRUE(occurrence.has_value());
+    EXPECT_EQ(occurrence->query.pattern, "ab\ncd");
+    Editor target("ab\ncd ab\ncd", {Selection{0, 5}});
+    EXPECT_TRUE(target.controller.add_next_occurrence(search_for(*occurrence)).changed_anything());
+    EXPECT_EQ(target.primary(), (Selection{6, 11}));
+}
+
+TEST(EditControllerOccurrences, ACaretThatIsNotAloneUsesTheOptionsForTheWordAtIt) {
+    Editor editor("foo foo", {Selection::caret(1), Selection::caret(5)});
+    const auto occurrence = editor.controller.occurrence_query(false, false);
+    ASSERT_TRUE(occurrence.has_value());
+    EXPECT_EQ(occurrence->query.pattern, "foo");
+    EXPECT_FALSE(occurrence->query.whole_word);
+    EXPECT_FALSE(occurrence->query.match_case);
+}
+
+TEST(EditControllerOccurrences, AddsTheNextMatchAfterThePrimarySelectionAndMakesItPrimary) {
+    Editor editor("foo bar foo baz foo", {Selection{0, 3}});
+    const Search search = search_for("foo");
+    const EditOutcome first = editor.controller.add_next_occurrence(search);
+    EXPECT_TRUE(first.selections_changed);
+    EXPECT_FALSE(first.change.has_value());
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 3}, Selection{8, 11}}));
+    EXPECT_EQ(editor.primary(), (Selection{8, 11}));
+
+    editor.controller.add_next_occurrence(search);
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 3}, Selection{8, 11}, Selection{16, 19}}));
+    EXPECT_EQ(editor.primary(), (Selection{16, 19}));
+}
+
+TEST(EditControllerOccurrences, WrapsAroundTheDocumentAndStopsWhenEveryMatchIsTaken) {
+    Editor editor("foo bar foo", {Selection{8, 11}});
+    const Search search = search_for("foo");
+    editor.controller.add_next_occurrence(search);
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 3}, Selection{8, 11}}));
+    EXPECT_EQ(editor.primary(), (Selection{0, 3}));
+
+    const EditOutcome none = editor.controller.add_next_occurrence(search);
+    EXPECT_FALSE(none.changed_anything());
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 3}, Selection{8, 11}}));
+}
+
+TEST(EditControllerOccurrences, DoesNothingWhenTheOnlyMatchIsTheSelection) {
+    Editor editor("foo bar", {Selection{0, 3}});
+    EXPECT_FALSE(editor.controller.add_next_occurrence(search_for("foo")).changed_anything());
+    EXPECT_FALSE(editor.controller.add_next_occurrence(search_for("zzz")).changed_anything());
+}
+
+TEST(EditControllerOccurrences, SkipsMatchesThatOverlapASelection) {
+    // "aa" matches at 0, 3 and 6; the second selection covers the last two.
+    Editor editor("aa aa aa aa", {Selection{0, 2}, Selection{3, 8}});
+    editor.controller.add_next_occurrence(search_for("aa"));
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 2}, Selection{3, 8}, Selection{9, 11}}));
+    EXPECT_EQ(editor.primary(), (Selection{9, 11}));
+
+    // With every match overlapped or taken, nothing is added.
+    EXPECT_FALSE(editor.controller.add_next_occurrence(search_for("aa")).changed_anything());
+}
+
+TEST(EditControllerOccurrences, AMatchTouchingASelectionIsStillAdded) {
+    Editor editor("aaaa", {Selection{0, 2}});
+    editor.controller.add_next_occurrence(search_for("aa"));
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 2}, Selection{2, 4}}));
+}
+
+TEST(EditControllerOccurrences, AMatchTouchingACaretIsNotAdded) {
+    Editor editor("aa aa", {Selection{0, 2}, Selection::caret(3)});
+    // The caret at 3 is the start of the second match.
+    EXPECT_FALSE(editor.controller.add_next_occurrence(search_for("aa")).changed_anything());
+}
+
+TEST(EditControllerOccurrences, WholeWordMatchingSkipsMatchesInsideWords) {
+    Editor editor("foo foobar foo", {Selection{0, 3}});
+    const auto occurrence = editor.controller.occurrence_query(true, true);
+    ASSERT_TRUE(occurrence.has_value());
+    editor.controller.add_next_occurrence(search_for(*occurrence));
+    EXPECT_EQ(editor.primary(), (Selection{11, 14}));
+
+    Editor loose("foo foobar foo", {Selection{0, 3}});
+    loose.controller.add_next_occurrence(search_for("foo", true, false));
+    EXPECT_EQ(loose.primary(), (Selection{4, 7}));
+}
+
+TEST(EditControllerOccurrences, CaseSensitivityFollowsTheSearch) {
+    Editor sensitive("foo Foo foo", {Selection{0, 3}});
+    sensitive.controller.add_next_occurrence(search_for("foo", true));
+    EXPECT_EQ(sensitive.primary(), (Selection{8, 11}));
+
+    Editor insensitive("foo Foo foo", {Selection{0, 3}});
+    insensitive.controller.add_next_occurrence(search_for("foo", false));
+    EXPECT_EQ(insensitive.primary(), (Selection{4, 7}));
+}
+
+TEST(EditControllerOccurrences, WorksOnMultiByteText) {
+    const std::string text =
+        std::string(eacute) + "x " + eacute + "x " + astral + " " + eacute + "x";
+    Editor editor(text, {Selection{0, 3}});
+    const Search search = search_for(std::string(eacute) + "x");
+    editor.controller.add_next_occurrence(search);
+    EXPECT_EQ(editor.primary(), (Selection{4, 7}));
+    editor.controller.add_next_occurrence(search);
+    EXPECT_EQ(editor.primary(), (Selection{13, 16}));
+}
+
+TEST(EditControllerOccurrences, AddSelectionMakesTheNewSelectionPrimaryAndMergesOverlaps) {
+    Editor editor("foo bar", {Selection::caret(1)});
+    editor.controller.add_selection(Selection{0, 3});
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 3}}));
+    editor.controller.add_selection(Selection{4, 7});
+    EXPECT_EQ(editor.primary(), (Selection{4, 7}));
+    EXPECT_EQ(editor.selections().size(), 2U);
+}
+
+TEST(EditControllerOccurrences, SelectsEveryMatchAndKeepsTheOneAtThePrimarySelectionPrimary) {
+    Editor editor("foo bar foo baz foo", {Selection::caret(9)});
+    const auto result = editor.controller.select_all_occurrences(search_for("foo"), 100);
+    EXPECT_TRUE(result.outcome.selections_changed);
+    EXPECT_FALSE(result.outcome.change.has_value());
+    EXPECT_FALSE(result.truncated);
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 3}, Selection{8, 11}, Selection{16, 19}}));
+    EXPECT_EQ(editor.primary(), (Selection{8, 11}));
+}
+
+TEST(EditControllerOccurrences, SelectingAllMatchesIgnoresTheCurrentSelectionsAndHonorsTheLimit) {
+    Editor editor("a a a a a", {Selection::caret(0), Selection::caret(4)});
+    const auto result = editor.controller.select_all_occurrences(search_for("a"), 3);
+    EXPECT_TRUE(result.truncated);
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 1}, Selection{2, 3}, Selection{4, 5}}));
+}
+
+TEST(EditControllerOccurrences, SelectingAllMatchesTakesARegularExpression) {
+    Editor editor("a1 b22 c333", {Selection::caret(0)});
+    editor.controller.select_all_occurrences(search_for("\\d+", true, false, true), 100);
+    EXPECT_EQ(editor.selections(), (Carets{Selection{1, 2}, Selection{4, 6}, Selection{8, 11}}));
+}
+
+TEST(EditControllerOccurrences, SelectingAllMatchesDoesNothingWithoutAMatch) {
+    Editor editor("abc", {Selection::caret(1), Selection::caret(2)});
+    const auto result = editor.controller.select_all_occurrences(search_for("zzz"), 100);
+    EXPECT_FALSE(result.outcome.changed_anything());
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(1), Selection::caret(2)}));
+}
+
+TEST(EditControllerOccurrences, SelectionsShareTextWhenEachHasTheTextOfTheFirst) {
+    Editor same("foo bar foo", {Selection{0, 3}, Selection{8, 11}});
+    EXPECT_TRUE(same.controller.selections_share_text(true));
+    Editor different("foo bar foo", {Selection{0, 3}, Selection{4, 7}});
+    EXPECT_FALSE(different.controller.selections_share_text(true));
+    Editor cased("foo Foo", {Selection{0, 3}, Selection{4, 7}});
+    EXPECT_FALSE(cased.controller.selections_share_text(true));
+    EXPECT_TRUE(cased.controller.selections_share_text(false));
+    Editor with_caret("foo foo", {Selection{0, 3}, Selection::caret(5)});
+    EXPECT_FALSE(with_caret.controller.selections_share_text(false));
+    Editor alone("foo", {Selection::caret(1)});
+    EXPECT_TRUE(alone.controller.selections_share_text(true));
+}
+
+TEST(EditControllerOccurrences, CaretsGrowToTheirWordsAndOtherSelectionsStay) {
+    Editor editor("foo bar  baz", {Selection::caret(1), Selection::caret(8), Selection{9, 11}});
+    editor.controller.expand_carets_to_words();
+    EXPECT_EQ(editor.selections(),
+              (Carets{Selection{0, 3}, Selection::caret(8), Selection{9, 11}}));
+}
+
+TEST(EditControllerOccurrences, NoCommandChangesTheText) {
+    Editor editor("foo foo foo", {Selection{0, 3}});
+    editor.controller.add_next_occurrence(search_for("foo"));
+    editor.controller.select_all_occurrences(search_for("foo"), 10);
+    EXPECT_EQ(editor.text(), "foo foo foo");
+    EXPECT_FALSE(editor.controller.undo().changed_anything());
+}

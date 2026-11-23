@@ -3,6 +3,7 @@ add_library(anvil_core STATIC
   color_theme.cpp
   document.cpp
   editing.cpp
+  occurrences.cpp
   editor_settings.cpp
   fuzzy.cpp
   jsonc.cpp

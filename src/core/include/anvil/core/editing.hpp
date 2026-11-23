@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/document.hpp"
+#include "anvil/core/search.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +45,15 @@ struct EditOutcome {
 // characters on both sides of the caret are not word characters. An offset inside a character moves
 // back to its start, and one past the end is the end.
 std::optional<Selection> word_at(const Text& text, std::size_t offset);
+
+// What "add selection to next find match" searches for, as VS Code starts it from the primary
+// selection.
+struct OccurrenceQuery {
+    // A literal query for the text of the selection, or for the word under a lone caret.
+    Query query;
+    // The word under a caret, which the first command selects instead of looking for a match.
+    std::optional<Selection> first;
+};
 
 // What copy puts on the clipboard.
 struct CopiedText {
@@ -117,6 +127,35 @@ public:
     EditOutcome select_word_at(std::size_t offset);
     // Selects the whole line containing `offset`, including its line break.
     EditOutcome select_line_at(std::size_t offset);
+
+    // --- occurrences ---
+
+    // What to search for from the primary selection. A lone caret takes the word at it, which
+    // matches whole words only and respects case whatever the options say; any other caret takes
+    // the word at it, and a selection takes its text, both with `match_case` and `whole_word`.
+    // Nothing for a caret that is not in a word.
+    std::optional<OccurrenceQuery> occurrence_query(bool match_case, bool whole_word) const;
+    // Whether the selections after the first all have the text of the first, ignoring case unless
+    // `match_case`. False when one of them is a caret.
+    bool selections_share_text(bool match_case) const;
+    // Replaces every caret with the word at it, when it has one.
+    EditOutcome expand_carets_to_words();
+    // Adds `selection`, which becomes the primary one. A selection that overlaps another is
+    // merged with it.
+    EditOutcome add_selection(Selection selection);
+    // Adds the first match of `search` that begins at or after the end of the primary selection,
+    // wrapping around the text and skipping matches that overlap a selection, as the primary
+    // selection. Does nothing when every match is taken.
+    EditOutcome add_next_occurrence(const Search& search);
+
+    struct AllOccurrences {
+        EditOutcome outcome;
+        // More matches exist than `limit`, and only the first `limit` were selected.
+        bool truncated = false;
+    };
+    // Replaces the selections with every match of `search`, up to `limit`. The match that meets
+    // the primary selection becomes the primary one. Does nothing when there is no match.
+    AllOccurrences select_all_occurrences(const Search& search, std::size_t limit);
 
     // The text of the selections, joined by line breaks when there are several; empty when only
     // carets are present.
