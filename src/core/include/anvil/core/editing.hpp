@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace anvil::core {
 
@@ -57,10 +58,14 @@ struct OccurrenceQuery {
 
 // What copy puts on the clipboard.
 struct CopiedText {
+    // The pieces joined by line breaks.
     std::string text;
     // True when `text` stands for the line of a lone caret: it is that line followed by a line
     // break, and pasting it into a lone caret inserts it above that caret's line.
     bool whole_line = false;
+    // The separate pieces when there are several, one per selection, and one per line for the
+    // carets: pasting them into as many cursors gives each its own piece. Empty otherwise.
+    std::vector<std::string> pieces;
 };
 
 // The editing commands a user triggers with the keyboard and mouse, applied to a document: typing,
@@ -85,7 +90,14 @@ public:
     // ending in a line break (copied_text() with whole_line set) is inserted at the start of the
     // line of each caret, which moves down with the text, provided every selection is an empty
     // caret. Anything else is pasted like ordinary text.
-    EditOutcome paste(std::string_view text, bool whole_line = false);
+    //
+    // With several cursors, `pieces` (copied_text().pieces of the copy that `text` came from) are
+    // given to the cursors one each when there are as many as cursors. Otherwise a `text` that
+    // is not a whole line, and has as many lines as there are cursors, ignoring one line break at
+    // its end, goes one line to each cursor. Everything else is pasted at every cursor. The
+    // selections are replaced and the carets inserted at, in document order, as one undo step.
+    EditOutcome paste(std::string_view text, bool whole_line = false,
+                      const std::vector<std::string>& pieces = {});
     // Replaces the ranges with their texts as one undo step that never joins typing. The edits are
     // in coordinates of the current text, and must be valid as for Document::apply_edits. The
     // selections move with the edits unless `selection_after` is given, which then becomes the only
@@ -100,10 +112,11 @@ public:
     EditOutcome delete_forward();
     // Deletes the selections, for cut.
     EditOutcome delete_selection();
-    // Deletes the line of a lone caret with its line break, for cutting a line: the break before
-    // it for the last line of several, so that no empty line is left behind. The caret goes to
-    // where the line was. Does nothing for a selection or several carets.
-    EditOutcome delete_caret_line();
+    // Deletes what copied_text() copies, for cut: the selections, and the lines of the carets with
+    // their line breaks (the break before the last line of several, so that no empty line is left
+    // behind, unless the line before is cut as well). Carets on the same line cut it once. Ranges
+    // that overlap are deleted as one. Every cursor ends as a caret where its text was.
+    EditOutcome delete_cut();
 
     EditOutcome undo();
     EditOutcome redo();
@@ -160,8 +173,10 @@ public:
     // The text of the selections, joined by line breaks when there are several; empty when only
     // carets are present.
     std::string selected_text() const;
-    // The text for the clipboard: the selected text, or, for a lone caret, its line and a line
-    // break (also on a last line that has none). Empty for several carets.
+    // The text for the clipboard, as VS Code puts it there: the selected text of each selection and
+    // the line of each caret, which is its text and a line break (also on a last line that has
+    // none), in document order, with the carets on one line giving it once. Several pieces are
+    // joined by line breaks. Empty when the document has no selection and no caret to copy from.
     CopiedText copied_text() const;
 
 private:
@@ -175,6 +190,8 @@ private:
     EditOutcome apply(std::vector<Edit> edits, std::vector<Selection> selections_after,
                       EditKind kind, bool may_join);
     EditOutcome replace_selections(std::string_view text, EditKind kind, bool may_join);
+    // Replaces the selections, in document order, with one text each.
+    EditOutcome replace_each_selection(const std::vector<std::string>& texts);
     enum class DeleteMode {
         backward,
         forward,
