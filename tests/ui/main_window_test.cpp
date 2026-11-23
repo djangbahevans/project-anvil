@@ -1901,6 +1901,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.newUntitledFile",
                                           "workbench.action.quit",
                                           "workbench.action.closeWindow",
+                                          "workbench.action.toggleFullScreen",
                                           "editor.action.addSelectionToNextFindMatch",
                                           "editor.action.selectHighlights",
                                           "editor.action.selectAllMatches",
@@ -2011,6 +2012,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.closeActiveEditor",
         "workbench.action.closeWindow",
         "workbench.action.quit",
+        "workbench.action.toggleFullScreen",
         "undo",
         "redo",
         "editor.action.clipboardCutAction",
@@ -2084,6 +2086,21 @@ TEST_F(MainWindowTest, CloseWindowClosesTheWindow) {
     ASSERT_TRUE(window_->isVisible());
     window_->commands().execute("workbench.action.closeWindow");
     EXPECT_FALSE(window_->isVisible());
+}
+
+TEST_F(MainWindowTest, ToggleFullScreenEntersAndLeavesFullscreenAndKeepsAMaximizedWindow) {
+    create_window();
+    window_->showMaximized();
+    QApplication::processEvents();
+    ASSERT_TRUE(window_->isMaximized());
+
+    window_->commands().execute("workbench.action.toggleFullScreen");
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->isFullScreen());
+    window_->commands().execute("workbench.action.toggleFullScreen");
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->isFullScreen());
+    EXPECT_TRUE(window_->isMaximized());
 }
 
 // --- title bar ---
@@ -3420,6 +3437,20 @@ TEST_F(MainWindowOccurrencesTest, RendersTheSelectedOccurrences) {
 }
 
 // --- extension contributions ---
+
+TEST_F(MainWindowKeysTest, F11TogglesFullscreenAndTheViewMenuItemRunsTheSameCommand) {
+    create_active_window();
+    QTest::keyClick(window_->view(), Qt::Key_F11);
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->isFullScreen());
+    QAction* item = menu_action("workbench.action.toggleFullScreen");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_TRUE(item->text().endsWith("\tF11")) << item->text().toStdString();
+    item->trigger();
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->isFullScreen());
+}
 
 class MainWindowContributionsTest : public MainWindowTest {
 protected:

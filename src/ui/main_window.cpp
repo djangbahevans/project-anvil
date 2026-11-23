@@ -380,6 +380,8 @@ void MainWindow::register_commands() {
         [this] { add_untitled_document(); });
     add("workbench.action.quit", tr("Quit"), [this] { close(); });
     add("workbench.action.closeWindow", tr("Close Window"), [this] { close(); });
+    add("workbench.action.toggleFullScreen", tr("Toggle Full Screen"),
+        [this] { setWindowState(windowState() ^ Qt::WindowFullScreen); });
     commands_.add(
         "setContext", tr("Set Context").toStdString(), [this](const nlohmann::json& args) {
             if (args.is_array() && args.size() >= 1 && args[0].is_string()) {
