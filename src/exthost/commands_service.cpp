@@ -88,7 +88,17 @@ void CommandsService::execute(const std::string& id, const std::string& args_jso
         on_result(builtin->second(args));
         return;
     }
-    on_result(std::unexpected(error_json("command '" + id + "' not found")));
+    // The command may belong to an extension that has not been activated yet, which registers it
+    // when the event that VS Code derives from its manifest, `onCommand:<id>`, activates it.
+    const json activation_args = json::array({"onCommand:" + id, 0});
+    session_.call(ProxyId::ExtHostExtensionService, "$activateByEvent", activation_args.dump(),
+                  [this, id, args, on_result = std::move(on_result)](CallResult) mutable {
+                      if (extension_commands_.contains(id)) {
+                          run_extension_command(id, args, std::move(on_result));
+                      } else {
+                          on_result(std::unexpected(error_json("command '" + id + "' not found")));
+                      }
+                  });
 }
 
 std::optional<HandlerResult> CommandsService::execute_for_extension_host(const Request& request,

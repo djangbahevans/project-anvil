@@ -143,6 +143,7 @@ Commands run in one of two places. Built-in commands run in the editor; commands
 - An extension calling `vscode.commands.executeCommand(id, ...args)` stays inside the extension host when it registered `id` itself. Otherwise the extension host sends `MainThreadCommands.$executeCommand(id, args, retry)` with `retry` set.
 - The editor runs a built-in command and replies with its result. For a command registered by an extension it forwards the call as `ExtHostCommands.$executeContributedCommand(id, ...args)` and replies when that completes, so the reply to `$executeCommand` is sent after the request was acknowledged.
 - When the command is unknown, `retry` is set and there are arguments, the editor calls `ExtHostExtensionService.$activateByEvent("onCommand:<id>", 0)` and then fails the request with an error whose message is exactly `$executeCommand:retry`. The extension host recognizes that message and runs the command again locally with `retry` cleared, which lets a lazily activated extension receive arguments that are not JSON.
+- When the editor itself is asked to run an unknown command (the palette, a key binding), it calls `$activateByEvent("onCommand:<id>", 0)` first and, if the command is registered when the reply arrives, runs it as an extension command. Otherwise it fails with `command '<id>' not found`.
 - Any other unknown command fails with `command '<id>' not found`.
 - `$fireCommandActivationEvent(id)` is answered with an empty reply and triggers `$activateByEvent("onCommand:<id>", 0)` without waiting for it.
 
@@ -173,6 +174,7 @@ Extensions see a document only after the editor has announced it with `ExtHostDo
 ## Init data details
 
 - `ExtensionIdentifier` values in the init data (`extensions.allExtensions[].identifier` and `extensions.myExtensions`) must include the precomputed lowercase `_lower` field alongside `value`. Without it identifier comparisons fail and extensions silently never activate.
+- The extension host only activates for the events listed in `extensions.activationEvents`, which are the editor's to compute: VS Code adds `onCommand:<id>` for every command in `contributes.commands`, so an extension that lists no activation events still starts when one of its commands is run. Without those entries `$activateByEvent("onCommand:<id>")` activates nothing.
 - URIs in the init data are `UriComponents` objects such as `{ "$mid": 1, "scheme": "file", "path": "/..." }`.
 - Each entry of `extensions.allExtensions` is the extension's `package.json` manifest merged with `identifier`, `extensionLocation`, `isBuiltin`, `isUserBuiltin`, `isUnderDevelopment` and `targetPlatform`.
 

@@ -40,7 +40,8 @@ public:
     std::vector<std::string> command_ids() const;
 
     // Runs a command with `args_json`, the JSON text of the argument array, and reports the
-    // outcome to `on_result`.
+    // outcome to `on_result`. A command that is neither built in nor registered yet activates the
+    // extensions that name it in `onCommand:<id>` and is looked for again.
     void execute(const std::string& id, const std::string& args_json,
                  Session::ReplyHandler on_result);
 

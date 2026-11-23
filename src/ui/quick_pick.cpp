@@ -90,9 +90,14 @@ public:
         painter->fillRect(option.rect, colors_.color(selected ? "quickInputList.focusBackground"
                                                               : "quickInput.background"));
 
-        const QColor text =
+        QColor text =
             colors_.color(selected ? "quickInputList.focusForeground" : "quickInput.foreground");
-        const QColor dim = selected ? text : colors_.color("descriptionForeground");
+        if (item.disabled) {
+            text = colors_.color("descriptionForeground");
+            text.setAlphaF(text.alphaF() * 0.7F);
+        }
+        const QColor dim =
+            selected && !item.disabled ? text : colors_.color("descriptionForeground");
         const QColor accent = selected ? text : colors_.color("list.highlightForeground");
 
         QFont bold = option.font;
@@ -368,6 +373,9 @@ void QuickPick::choose(const QModelIndex& index) {
         return;
     }
     const std::size_t item = model_->row_of(index).item;
+    if (model_->item_of(index).disabled) {
+        return;
+    }
     close_popup(true);
     emit accepted(item);
 }

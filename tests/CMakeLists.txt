@@ -48,6 +48,7 @@ endif()
 
 add_executable(anvil_exthost_tests
   exthost/commands_service_test.cpp
+  exthost/contributions_test.cpp
   exthost/documents_service_test.cpp
   exthost/frame_test.cpp
   exthost/init_data_test.cpp
@@ -125,6 +126,7 @@ if(TARGET anvil_ui)
   target_compile_definitions(anvil_ui_tests PRIVATE
     ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
     ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
-    ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension")
+    ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
+    ANVIL_CONTRIBUTIONS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/contributions-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()

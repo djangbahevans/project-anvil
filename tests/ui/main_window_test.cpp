@@ -64,7 +64,7 @@ protected:
                                 "(scripts/fetch-vscode.sh)";
             }
             options.extension_host = ui::ExtensionHostBridge::Config{
-                node, vscode_dir, {ANVIL_DOCUMENTS_EXTENSION}, scratch_ / "host"};
+                node, vscode_dir, extension_dirs_, scratch_ / "host"};
         }
         window_ = std::make_unique<MainWindow>(std::move(options));
         window_->show();
@@ -208,6 +208,7 @@ protected:
     std::filesystem::path scratch_;
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
+    std::vector<std::filesystem::path> extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION};
     // Unset: the themes that ship with the editor.
     std::optional<std::filesystem::path> themes_directory_;
     std::unique_ptr<MainWindow> window_;
@@ -2168,7 +2169,7 @@ TEST_F(MainWindowTest, TheCommandPaletteShowsAMessageWhenNoCommandMatches) {
     EXPECT_TRUE(shown);
 }
 
-TEST_F(MainWindowTest, ExtensionCommandsAreInThePaletteByIdAndRunFromIt) {
+TEST_F(MainWindowTest, ExtensionCommandsAreInThePaletteByTitleAndRunFromIt) {
     create_window(true);
     if (!window_) {
         return;
@@ -2176,9 +2177,9 @@ TEST_F(MainWindowTest, ExtensionCommandsAreInThePaletteByIdAndRunFromIt) {
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "ab\ncd").string())));
     window_->commands().execute("workbench.action.showCommands");
     ui::QuickPick* palette = window_->command_palette();
-    QTest::keyClicks(palette->filter_field(), "anvil.docs.replacetwo");
+    QTest::keyClicks(palette->filter_field(), "Anvil: Replace Two");
     ASSERT_FALSE(palette->shown_items().empty());
-    EXPECT_EQ(palette->list()->model()->index(0, 0).data().toString(), "anvil.docs.replaceTwo");
+    EXPECT_EQ(palette->list()->model()->index(0, 0).data().toString(), "Anvil: Replace Two");
 
     QTest::keyClick(palette->filter_field(), Qt::Key_Return);
     ASSERT_TRUE(wait_until([&] { return current_text() == "Xb\nd"; })) << current_text();
@@ -2191,7 +2192,9 @@ TEST_F(MainWindowTest, AFailingCommandRunFromThePaletteIsReportedInTheStatusBar)
     }
     window_->commands().execute("workbench.action.showCommands");
     ui::QuickPick* palette = window_->command_palette();
-    QTest::keyClicks(palette->filter_field(), "anvil.docs.open");
+    QTest::keyClicks(palette->filter_field(), "Anvil: Open");
+    ASSERT_FALSE(palette->shown_items().empty());
+    ASSERT_EQ(palette->list()->model()->index(0, 0).data().toString(), "Anvil: Open");
     QTest::keyClick(palette->filter_field(), Qt::Key_Return);
     // The command needs a path it is not given, so it throws in the extension host.
     EXPECT_TRUE(wait_until([&] {
@@ -2909,4 +2912,180 @@ TEST_F(MainWindowKeysTest, AChordInProgressEndsWhenTheFileChanges) {
     ASSERT_TRUE(wait_until([&] { return window_->status_bar().message().isEmpty(); }));
     QTest::keyClick(window_->view(), Qt::Key_U, Qt::ControlModifier);
     EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
+}
+
+// --- extension contributions ---
+
+class MainWindowContributionsTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        extension_dirs_ = {ANVIL_CONTRIBUTIONS_EXTENSION};
+    }
+
+    // The labels of the palette, in the order they are shown, after it was opened with `filter`.
+    std::vector<QString> palette_labels(const QString& filter = {}) {
+        window_->commands().execute("workbench.action.showCommands");
+        ui::QuickPick* palette = window_->command_palette();
+        if (!filter.isEmpty()) {
+            QTest::keyClicks(palette->filter_field(), filter);
+        }
+        std::vector<QString> labels;
+        for (int row = 0; row < palette->list()->model()->rowCount(); ++row) {
+            labels.push_back(palette->list()->model()->index(row, 0).data().toString());
+        }
+        return labels;
+    }
+
+    bool shows(const std::vector<QString>& labels, const QString& label) {
+        return std::ranges::find(labels, label) != labels.end();
+    }
+};
+
+TEST_F(MainWindowContributionsTest, TheCommandsOfAnExtensionAreInThePaletteByCategoryAndTitle) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto labels = palette_labels();
+    EXPECT_TRUE(shows(labels, "Fixtures: Lazy Command"));
+    EXPECT_TRUE(shows(labels, "Keyed"));
+    EXPECT_FALSE(shows(labels, "anvil.contrib.lazy"));
+    // A command that is contributed twice is listed once, with the first title.
+    EXPECT_FALSE(shows(labels, "Keyed Again"));
+}
+
+TEST_F(MainWindowContributionsTest, RendersTheDisabledAndTheEnabledCommandsOfAnExtension) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->commands().execute("workbench.action.showCommands");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "ed");
+    QApplication::processEvents();
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/palette_contributions.png");
+    }
+    EXPECT_GE(window_->command_palette()->shown_items().size(), 2U);
+}
+
+TEST_F(MainWindowContributionsTest, ARuleOfTheCommandPaletteHidesACommandUntilItsWhenHolds) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    EXPECT_FALSE(shows(palette_labels(), "Hidden"));
+    window_->command_palette()->cancel();
+
+    window_->commands().execute("setContext", json::array({"contrib.showHidden", true}));
+    EXPECT_TRUE(shows(palette_labels(), "Hidden"));
+    window_->command_palette()->cancel();
+
+    window_->commands().execute("setContext", json::array({"contrib.showHidden", nullptr}));
+    EXPECT_FALSE(shows(palette_labels(), "Hidden"));
+}
+
+TEST_F(MainWindowContributionsTest, ChoosingACommandActivatesItsExtensionAndRunsIt) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    QTest::keyClicks(palette->filter_field(), "Fixtures: Lazy");
+    ASSERT_FALSE(palette->shown_items().empty());
+    QTest::keyClick(palette->filter_field(), Qt::Key_Return);
+    ASSERT_TRUE(wait_until([&] { return current_text() == "[lazy]"; })) << current_text();
+}
+
+TEST_F(MainWindowContributionsTest, ACommandWhoseEnablementIsFalseIsDisabledAndDoesNotRun) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    QTest::keyClicks(palette->filter_field(), "Gated");
+    ASSERT_FALSE(palette->shown_items().empty());
+    QTest::keyClick(palette->filter_field(), Qt::Key_Return);
+    EXPECT_TRUE(palette->isVisible());
+    QTest::qWait(300);
+    EXPECT_EQ(current_text(), "");
+    palette->cancel();
+
+    window_->view()->setFocus();
+    window_->commands().execute("anvil.contrib.gated");
+    QTest::keyClick(window_->view(), Qt::Key_7, Qt::ControlModifier | Qt::AltModifier);
+    QTest::qWait(300);
+    EXPECT_EQ(current_text(), "");
+
+    window_->commands().execute("setContext", json::array({"contrib.armed", true}));
+    window_->commands().execute("workbench.action.showCommands");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "Gated");
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
+    ASSERT_TRUE(wait_until([&] { return current_text() == "[gated]"; })) << current_text();
+}
+
+TEST_F(MainWindowContributionsTest, AnEnablementThatCannotBeReadDoesNotTakeTheCommandAway) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->commands().execute("workbench.action.showCommands");
+    ui::QuickPick* palette = window_->command_palette();
+    QTest::keyClicks(palette->filter_field(), "Typo");
+    ASSERT_FALSE(palette->shown_items().empty());
+    QTest::keyClick(palette->filter_field(), Qt::Key_Return);
+    ASSERT_TRUE(wait_until([&] { return current_text() == "[typo]"; })) << current_text();
+}
+
+TEST_F(MainWindowContributionsTest, AKeyBindingOfTheExtensionRunsItsCommandWithThePlatformKey) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+
+    QTest::keyClick(window_->view(), Qt::Key_9, Qt::ControlModifier | Qt::AltModifier);
+    QTest::qWait(300);
+    EXPECT_EQ(current_text(), "");
+
+    QTest::keyClick(window_->view(), Qt::Key_8, Qt::ControlModifier | Qt::AltModifier);
+    ASSERT_TRUE(wait_until([&] { return current_text() == "[keyed]"; })) << current_text();
+}
+
+TEST_F(MainWindowContributionsTest, AKeyBindingOfTheExtensionKeepsItsWhen) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->commands().execute("actions.find");
+    ASSERT_TRUE(window_->find_bar()->find_field()->hasFocus());
+
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_8,
+                    Qt::ControlModifier | Qt::AltModifier);
+    QTest::qWait(300);
+    EXPECT_EQ(current_text(), "");
+}
+
+TEST_F(MainWindowContributionsTest, TheUsersBindingsWinOverThoseOfAnExtension) {
+    keybindings_file_ =
+        write("keybindings.json",
+              R"j([{"key": "ctrl+alt+8", "command": "workbench.action.togglePanel"}])j");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+
+    QTest::keyClick(window_->view(), Qt::Key_8, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
+    QTest::qWait(300);
+    EXPECT_EQ(current_text(), "");
 }

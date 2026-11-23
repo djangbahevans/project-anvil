@@ -2,6 +2,7 @@ find_package(nlohmann_json REQUIRED)
 
 add_library(anvil_exthost STATIC
   commands_service.cpp
+  contributions.cpp
   documents_service.cpp
   extension_host.cpp
   frame.cpp

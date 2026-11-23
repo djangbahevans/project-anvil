@@ -170,6 +170,11 @@ private:
     void apply_settings();
     // Gives the key bindings the default ones followed by the user's.
     void apply_keybindings();
+    // Takes the key bindings that the extensions declare in their manifests; problems go to
+    // `logger`.
+    void read_extension_keybindings(core::Logger& logger);
+    // Whether the `enablement` of the extension command allows it to run now.
+    bool command_enabled(const std::string& id) const;
     // Adds an untitled document and shows it in `group`, or in the focused group.
     void add_untitled_document(std::optional<workbench::GroupId> group = std::nullopt);
     // Makes the document the shown one of the focused group, or of the group that has it already,
@@ -231,6 +236,7 @@ private:
     std::vector<std::string> recent_commands_;
     SettingsStore* settings_ = nullptr;
     KeybindingsStore* user_keybindings_ = nullptr;
+    std::vector<core::Keybinding> extension_keybindings_;
     ThemeStore* themes_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;

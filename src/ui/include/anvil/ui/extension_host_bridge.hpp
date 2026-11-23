@@ -3,6 +3,7 @@
 #include "anvil/core/document.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/uri.hpp"
+#include "anvil/exthost/contributions.hpp"
 #include "anvil/exthost/extension_host.hpp"
 
 #include <QObject>
@@ -53,6 +54,11 @@ public:
     exthost::ExtensionHost* host() {
         return host_.get();
     }
+    // The commands, key bindings and palette rules that the extensions of the configuration
+    // declare in their manifests; empty until the host has started.
+    const exthost::Contributions& contributions() const {
+        return contributions_;
+    }
 
     // The document registered under `uri`, which extensions may also have opened; null when there
     // is none or no extension host is running.
@@ -74,6 +80,7 @@ private:
     void tick();
 
     std::unique_ptr<exthost::ExtensionHost> host_;
+    exthost::Contributions contributions_;
     QTimer timer_;
     Callbacks callbacks_;
 };
