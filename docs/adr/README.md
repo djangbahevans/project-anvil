@@ -30,4 +30,4 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0012](0012-editing-commands-in-core.md) | Editing commands in the core, painting in the view | Accepted |
 | [0013](0013-pcre2-for-search.md) | PCRE2 for regular expressions and case folding in search | Accepted |
 | [0014](0014-workbench-layout.md) | Workbench window built from fixed parts in a purpose-built layout | Accepted |
-| [0015](0015-custom-title-bar.md) | Custom title bar on Linux and Windows, native frame and global menu on macOS | Proposed |
+| [0015](0015-custom-title-bar.md) | Custom title bar on Linux and Windows, native frame and global menu on macOS | Accepted |
