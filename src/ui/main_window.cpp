@@ -455,6 +455,40 @@ QString menu_text(const workbench::MenuLabel& label) {
 
 } // namespace
 
+#if !defined(Q_OS_MACOS)
+namespace {
+
+QString menu_style_sheet(const WorkbenchColors& colors) {
+    const auto css = [&](std::string_view key) { return colors.color(key).name(QColor::HexArgb); };
+    QColor disabled = colors.color("menu.foreground");
+    disabled.setAlphaF(0.4F);
+    return QStringLiteral(
+               "QMenu { background: %1; color: %2; border: 1px solid %3; padding: 4px 0; }"
+               "QMenu::item { background: transparent; padding: 4px 24px 4px 26px; }"
+               "QMenu::item:selected { background: %4; color: %5; }"
+               "QMenu::item:disabled { color: %6; }"
+               "QMenu::item:disabled:selected { background: transparent; }"
+               "QMenu::separator { height: 1px; background: %7; margin: 4px 0; }")
+        .arg(css("menu.background"), css("menu.foreground"), css("menu.border"),
+             css("menu.selectionBackground"), css("menu.selectionForeground"),
+             disabled.name(QColor::HexArgb), css("menu.separatorBackground"));
+}
+
+} // namespace
+#endif
+
+// The system draws the global menu bar of macOS, and its menus with it.
+void MainWindow::style_menus() {
+#if !defined(Q_OS_MACOS)
+    const QString sheet = menu_style_sheet(colors_);
+    for (const QAction* top : menu_bar_->actions()) {
+        if (top->menu()) {
+            top->menu()->setStyleSheet(sheet);
+        }
+    }
+#endif
+}
+
 core::ContextKeys MainWindow::menu_context() const {
     core::ContextKeys keys;
     workbench::set_menu_context_defaults(keys);
@@ -513,6 +547,8 @@ void MainWindow::build_menus() {
             populate_menu(menu, workbench::menu_items(id, menu_context()));
         });
     }
+    style_menus();
+    connect(&colors_, &WorkbenchColors::changed, this, &MainWindow::style_menus);
 }
 
 void MainWindow::fill_context(core::ContextKeys& keys) const {
