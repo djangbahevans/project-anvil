@@ -16,6 +16,8 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSignalSpy>
+#include <QSplitter>
+#include <QSplitterHandle>
 #include <QTest>
 #include <QTimer>
 #include <chrono>
@@ -25,6 +27,7 @@
 #include <unistd.h>
 
 using namespace anvil;
+using anvil::ui::EditorGroupWidget;
 using anvil::ui::MainWindow;
 using anvil::ui::Part;
 using anvil::ui::StatusBar;
@@ -641,7 +644,8 @@ TEST_F(MainWindowTest, SavingFromTheClosePromptWritesTheDocumentBeingClosed) {
     EXPECT_TRUE(prompt_shown_);
     EXPECT_EQ(*platform::read_file(a), "!A");
     EXPECT_EQ(*platform::read_file(c), "C");
-    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "b.txt", "c.txt"}));
+    // A new tab opens to the right of the active one, which was a.txt when c.txt opened.
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "c.txt", "b.txt"}));
 }
 
 TEST_F(MainWindowTest, SavingFromTheQuitPromptWritesTheDocumentBeingAskedAbout) {
@@ -761,19 +765,479 @@ TEST_F(MainWindowTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
     };
     const auto one_tab = time_typing();
 
+    // Four groups, with the 500 tabs spread over them.
+    for (int i = 0; i < 3; ++i) {
+        window_->commands().execute("workbench.action.splitEditor");
+    }
     for (int i = 0; i < 499; ++i) {
         ASSERT_TRUE(window_->open_file(
             QString::fromStdString(write("tab" + std::to_string(i) + ".txt", "x").string())));
+        window_->commands().execute("workbench.action.focusNextGroup");
     }
-    ASSERT_EQ(window_->tab_strip()->count(), 500);
+    ASSERT_EQ(window_->editor_area()->groups().size(), 4U);
+    ASSERT_EQ(window_->open_document_count(), 500U);
+    int tabs = 0;
+    for (EditorGroupWidget* group : window_->editor_area()->groups()) {
+        tabs += group->tabs()->count();
+        EXPECT_GE(group->tabs()->count(), 100);
+    }
+    ASSERT_EQ(tabs, 500);
     const auto many_tabs = time_typing();
 
     // Typing into the last tab costs about as much as typing into the only one. Laying out or
     // repainting the strip for every tab on every keystroke would cost many times as much.
     EXPECT_LT(many_tabs, one_tab * 5 + std::chrono::milliseconds(5))
         << "one tab: " << std::chrono::duration_cast<std::chrono::microseconds>(one_tab).count()
-        << " us, 500 tabs: "
+        << " us, 500 tabs in 4 groups: "
         << std::chrono::duration_cast<std::chrono::microseconds>(many_tabs).count() << " us";
+}
+
+// --- editor groups ---
+
+namespace {
+
+std::vector<QString> titles_of(EditorGroupWidget* group) {
+    std::vector<QString> titles;
+    for (int i = 0; i < group->tabs()->count(); ++i) {
+        titles.push_back(group->tabs()->tab(i).title);
+    }
+    return titles;
+}
+
+} // namespace
+
+TEST_F(MainWindowTest, SplitEditorAddsAnEmptyGroupToTheRightThatHasTheFocus) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    const auto first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+
+    const auto ids = window_->editor_layout().group_ids();
+    ASSERT_EQ(ids.size(), 2U);
+    EXPECT_EQ(ids[0], first);
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]);
+    ASSERT_NE(window_->editor_area()->root_splitter(), nullptr);
+    EXPECT_EQ(window_->editor_area()->root_splitter()->orientation(), Qt::Horizontal);
+    EXPECT_EQ(window_->editor_area()->root_splitter()->count(), 2);
+
+    EditorGroupWidget* left = window_->editor_area()->group(ids[0]);
+    EditorGroupWidget* right = window_->editor_area()->group(ids[1]);
+    EXPECT_EQ(titles_of(left), (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_TRUE(titles_of(right).empty());
+    EXPECT_TRUE(right->is_empty());
+    EXPECT_FALSE(left->is_empty());
+    EXPECT_TRUE(left->isVisible());
+    EXPECT_TRUE(right->isVisible());
+    EXPECT_LT(left->geometry().right(), right->geometry().left() + 2);
+    EXPECT_EQ(right->view()->document(), nullptr);
+}
+
+TEST_F(MainWindowTest, SplitEditorDownStacksTheGroups) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditorDown");
+    QApplication::processEvents();
+    ASSERT_NE(window_->editor_area()->root_splitter(), nullptr);
+    EXPECT_EQ(window_->editor_area()->root_splitter()->orientation(), Qt::Vertical);
+    const auto groups = window_->editor_area()->groups();
+    ASSERT_EQ(groups.size(), 2U);
+    EXPECT_LT(groups[0]->geometry().bottom(), groups[1]->geometry().top() + 2);
+}
+
+TEST_F(MainWindowTest, TheTwoGroupsSplitTheAreaEvenly) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_NEAR(groups[0]->width(), groups[1]->width(), 3);
+    EXPECT_GT(groups[0]->width(), 100);
+}
+
+TEST_F(MainWindowTest, TheFocusedGroupReceivesFileOpens) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt"}));
+    EXPECT_FALSE(groups[1]->is_empty());
+    EXPECT_EQ(current_text(), "B");
+    EXPECT_EQ(window_->open_document_count(), 3U);
+
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1", "a.txt", "c.txt"}));
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt"}));
+}
+
+TEST_F(MainWindowTest, TwoGroupsShowDifferentDocuments) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "AAA").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "BBB").string())));
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_EQ(groups[0]->view()->document()->text().to_string(), "AAA");
+    EXPECT_EQ(groups[1]->view()->document()->text().to_string(), "BBB");
+    EXPECT_NE(groups[0]->view()->document(), groups[1]->view()->document());
+}
+
+TEST_F(MainWindowTest, OpeningADocumentThatIsOpenInAnotherGroupFocusesItThere) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    const auto first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_NE(window_->editor_layout().focused(), first);
+
+    ASSERT_TRUE(window_->open_file(QString::fromStdString((scratch_ / "a.txt").string())));
+    EXPECT_EQ(window_->editor_layout().focused(), first);
+    EXPECT_EQ(current_text(), "A");
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"b.txt"}));
+    EXPECT_EQ(window_->open_document_count(), 3U);
+}
+
+TEST_F(MainWindowTest, ShowingTheDocumentOfAnotherGroupSwitchesItsTabToo) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString((scratch_ / "a.txt").string())));
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_EQ(groups[0]->tabs()->current_index(), 1);
+    EXPECT_EQ(groups[0]->view()->document()->text().to_string(), "A");
+    EXPECT_EQ(window_->editor_layout().focused(), groups[0]->id());
+}
+
+TEST_F(MainWindowTest, TheFocusMovesBetweenGroupsWithTheCommandsAndWrapsAround) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    const auto ids = window_->editor_layout().group_ids();
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]);
+    EXPECT_TRUE(window_->view()->hasFocus());
+
+    window_->commands().execute("workbench.action.focusNextGroup");
+    EXPECT_EQ(window_->editor_layout().focused(), ids[0]);
+    EXPECT_EQ(current_text(), "A");
+    EXPECT_TRUE(window_->view()->hasFocus());
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]);
+    EXPECT_EQ(current_text(), "B");
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    EXPECT_EQ(window_->editor_layout().focused(), ids[0]);
+}
+
+TEST_F(MainWindowTest, TheFocusedGroupHasTheActiveTabHighlight) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_FALSE(groups[0]->tabs()->focused());
+    EXPECT_TRUE(groups[1]->tabs()->focused());
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    EXPECT_TRUE(groups[0]->tabs()->focused());
+    EXPECT_FALSE(groups[1]->tabs()->focused());
+}
+
+TEST_F(MainWindowTest, ClickingInAnotherGroupFocusesIt) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    const auto first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    window_->editor_area()->group(first)->view()->setFocus();
+    EXPECT_EQ(window_->editor_layout().focused(), first);
+    EXPECT_EQ(current_text(), "A");
+}
+
+TEST_F(MainWindowTest, SelectingATabOfAnotherGroupFocusesThatGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    const auto first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    TabStrip* strip = window_->editor_area()->group(first)->tabs();
+    const QPoint at = strip->tab_rect(0).center() - QPoint(10, 0);
+    QMouseEvent press(QEvent::MouseButtonPress, at, strip->mapToGlobal(at), Qt::LeftButton,
+                      Qt::LeftButton, {});
+    QApplication::sendEvent(strip, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, at, strip->mapToGlobal(at), Qt::LeftButton,
+                        Qt::NoButton, {});
+    QApplication::sendEvent(strip, &release);
+    EXPECT_EQ(window_->editor_layout().focused(), first);
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+}
+
+TEST_F(MainWindowTest, TheStatusBarFollowsTheCaretOfTheFocusedGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc\ndef").string())));
+    window_->view()->move(core::Motion::right);
+    window_->view()->move(core::Motion::right);
+    EXPECT_EQ(label_text("Ln "), "Ln 1, Col 3");
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "xyz").string())));
+    EXPECT_EQ(label_text("Ln "), "Ln 1, Col 1");
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    EXPECT_EQ(label_text("Ln "), "Ln 1, Col 3");
+    window_->editor_area()->groups()[1]->view()->move(core::Motion::down);
+    EXPECT_EQ(label_text("Ln "), "Ln 1, Col 3");
+}
+
+TEST_F(MainWindowTest, TheTitleAndTheCommandsFollowTheFocusedGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    EXPECT_TRUE(window_->windowTitle().contains("b.txt"));
+    type("!");
+    EXPECT_EQ(window_->editor_area()->groups()[1]->view()->document()->text().to_string(), "!B");
+    EXPECT_EQ(window_->editor_area()->groups()[0]->view()->document()->text().to_string(), "A");
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    EXPECT_TRUE(window_->windowTitle().contains("a.txt"));
+    EXPECT_FALSE(window_->isWindowModified());
+    window_->commands().execute("workbench.action.focusNextGroup");
+    EXPECT_TRUE(window_->isWindowModified());
+    EXPECT_TRUE(window_->editor_area()->groups()[1]->tabs()->tab(0).dirty);
+    EXPECT_FALSE(window_->editor_area()->groups()[0]->tabs()->tab(1).dirty);
+}
+
+TEST_F(MainWindowTest, TypingInOneGroupLeavesTheOthersAlone) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    type("1");
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(scratch_ / "b.txt"), "1B");
+    EXPECT_EQ(*platform::read_file(scratch_ / "a.txt"), "A");
+}
+
+TEST_F(MainWindowTest, ClosingTheLastTabOfAGroupClosesTheGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_EQ(window_->editor_area()->groups().size(), 2U);
+    EXPECT_TRUE(window_->close_document(0));
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1U);
+    EXPECT_EQ(window_->editor_area()->root_splitter(), nullptr);
+    EXPECT_EQ(window_->open_document_count(), 2U);
+    EXPECT_EQ(titles_of(window_->editor_area()->groups()[0]),
+              (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_area()->groups()[0]->id());
+    EXPECT_EQ(current_text(), "A");
+}
+
+TEST_F(MainWindowTest, CloseEditorGroupClosesTheGroupWithItsDocuments) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    window_->commands().execute("workbench.action.closeGroup");
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1U);
+    EXPECT_EQ(window_->open_document_count(), 2U);
+    EXPECT_EQ(current_text(), "A");
+}
+
+TEST_F(MainWindowTest, CloseEditorGroupAsksAboutUnsavedChangesAndCancelKeepsTheGroup) {
+    create_window(false, true);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    type("!");
+    answer_next_prompt(QMessageBox::Cancel);
+    window_->commands().execute("workbench.action.closeGroup");
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(window_->editor_area()->groups().size(), 2U);
+    EXPECT_EQ(window_->open_document_count(), 3U);
+
+    answer_next_prompt(QMessageBox::Discard);
+    window_->commands().execute("workbench.action.closeGroup");
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1U);
+    EXPECT_EQ(window_->open_document_count(), 2U);
+    EXPECT_EQ(*platform::read_file(scratch_ / "b.txt"), "B");
+}
+
+TEST_F(MainWindowTest, TheOnlyGroupCannotBeClosed) {
+    create_window();
+    window_->commands().execute("workbench.action.closeGroup");
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1U);
+    EXPECT_EQ(window_->open_document_count(), 1U);
+}
+
+TEST_F(MainWindowTest, ClosingTheLastDocumentOfAGroupWhileTheOthersAreEmptyLeavesAnUntitledOne) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    EXPECT_TRUE(window_->close_document(0));
+    EXPECT_EQ(window_->open_document_count(), 1U);
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+    EXPECT_EQ(window_->current_uri().path, "Untitled-2");
+    EXPECT_EQ(window_->editor_area()->groups().size(), 2U);
+}
+
+TEST_F(MainWindowTest, AnEmptyFocusedGroupHasNoDocumentToCommandOrToShow) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    EXPECT_EQ(window_->windowTitle(), "Anvil");
+    EXPECT_TRUE(label_text("Ln ").isEmpty());
+    EXPECT_FALSE(window_->save());
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    window_->commands().execute("actions.find");
+    window_->commands().execute("undo");
+    EXPECT_FALSE(window_->editor_area()->focused_group()->find_bar()->isVisible());
+    EXPECT_EQ(window_->open_document_count(), 1U);
+}
+
+TEST_F(MainWindowTest, SplittingAGroupThatIsNotFocusedAddsTheGroupNextToIt) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    window_->commands().execute("workbench.action.splitEditorDown");
+    const auto ids = window_->editor_layout().group_ids();
+    ASSERT_EQ(ids.size(), 3U);
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]);
+    QApplication::processEvents();
+    const auto* root = window_->editor_area()->root_splitter();
+    ASSERT_NE(root, nullptr);
+    EXPECT_EQ(root->count(), 2);
+    const auto* nested = qobject_cast<const QSplitter*>(root->widget(0));
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(nested->orientation(), Qt::Vertical);
+}
+
+TEST_F(MainWindowTest, MovingASplitterUpdatesTheRatiosOfTheLayout) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    QSplitter* splitter = window_->editor_area()->root_splitter();
+    ASSERT_NE(splitter, nullptr);
+    const int total = splitter->width();
+    QSplitterHandle* handle = splitter->handle(1);
+    const QPoint from = handle->rect().center();
+    const QPoint to = from + QPoint(total / 4 - handle->mapTo(splitter, from).x(), 0);
+    QMouseEvent press(QEvent::MouseButtonPress, from, handle->mapToGlobal(from), Qt::LeftButton,
+                      Qt::LeftButton, {});
+    QApplication::sendEvent(handle, &press);
+    QMouseEvent move(QEvent::MouseMove, to, handle->mapToGlobal(to), Qt::NoButton, Qt::LeftButton,
+                     {});
+    QApplication::sendEvent(handle, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, handle->mapToGlobal(to), Qt::LeftButton,
+                        Qt::NoButton, {});
+    QApplication::sendEvent(handle, &release);
+    const auto& ratios = window_->editor_layout().root().ratios;
+    ASSERT_EQ(ratios.size(), 2U);
+    EXPECT_NEAR(ratios[0], 0.25, 0.03);
+    EXPECT_NEAR(ratios[0] + ratios[1], 1.0, 1e-9);
+}
+
+TEST_F(MainWindowTest, TheSplitterStaysWhereTheUserLeavesItWhateverThePixel) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    QSplitter* splitter = window_->editor_area()->root_splitter();
+    ASSERT_NE(splitter, nullptr);
+    QSplitterHandle* handle = splitter->handle(1);
+    const QPoint from = handle->rect().center();
+    QMouseEvent press(QEvent::MouseButtonPress, from, handle->mapToGlobal(from), Qt::LeftButton,
+                      Qt::LeftButton, {});
+    QApplication::sendEvent(handle, &press);
+    for (int x = 131; x < 700; x += 37) {
+        const QPoint to(from.x() + x - handle->mapTo(splitter, from).x(), from.y());
+        QMouseEvent move(QEvent::MouseMove, to, handle->mapToGlobal(to), Qt::NoButton,
+                         Qt::LeftButton, {});
+        QApplication::sendEvent(handle, &move);
+        const QList<int> sizes = splitter->sizes();
+        QApplication::processEvents();
+        EXPECT_EQ(splitter->sizes(), sizes) << "at " << x;
+    }
+    QMouseEvent release(QEvent::MouseButtonRelease, from, handle->mapToGlobal(from), Qt::LeftButton,
+                        Qt::NoButton, {});
+    QApplication::sendEvent(handle, &release);
+}
+
+TEST_F(MainWindowTest, ChangingTheRatiosOfTheLayoutMovesTheSplitter) {
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    window_->editor_layout().set_ratios({}, {1, 3});
+    QApplication::processEvents();
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_NEAR(static_cast<double>(groups[0]->width()) / groups[1]->width(), 1.0 / 3.0, 0.05);
+}
+
+TEST_F(MainWindowTest, GroupsThatAreCreatedLaterGetTheSettings) {
+    settings_file_ = write("settings.json", R"j({"editor.fontSize": 20})j");
+    create_window();
+    window_->commands().execute("workbench.action.splitEditor");
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_EQ(groups[1]->view()->line_height(), groups[0]->view()->line_height());
+    EXPECT_GT(groups[1]->view()->line_height(), 20);
+}
+
+TEST_F(MainWindowTest, TheWindowMenuListsTheDocumentsOfEveryGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    QMenu* menu = nullptr;
+    for (QAction* action : window_->menuBar()->actions()) {
+        if (action->text().contains("ndow")) {
+            menu = action->menu();
+        }
+    }
+    ASSERT_NE(menu, nullptr);
+    emit menu->aboutToShow();
+    QStringList names;
+    QString checked;
+    for (const QAction* action : menu->actions()) {
+        names << action->text();
+        if (action->isChecked()) {
+            checked = action->text();
+        }
+    }
+    EXPECT_EQ(names, (QStringList{"Untitled-1", "a.txt", "b.txt"}));
+    EXPECT_EQ(checked, "b.txt");
+
+    menu->actions().at(1)->trigger();
+    EXPECT_EQ(current_text(), "A");
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[0]);
+}
+
+TEST_F(MainWindowTest, SavingADocumentUnderANewNameRenamesItsTabInItsGroup) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "renamed.txt").string())));
+    const auto groups = window_->editor_area()->groups();
+    EXPECT_EQ(titles_of(groups[1]), (std::vector<QString>{"renamed.txt"}));
+    EXPECT_EQ(titles_of(groups[0]), (std::vector<QString>{"Untitled-1", "a.txt"}));
+    EXPECT_TRUE(window_->windowTitle().contains("renamed.txt"));
+}
+
+TEST_F(MainWindowTest, ASplitWindowRendersForReview) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(
+        QString::fromStdString(write("first.txt", "hello, world\nsecond line\n").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("other.txt", "other\n").string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(
+        QString::fromStdString(write("right.txt", "a document\nin the second group\n").string())));
+    window_->commands().execute("workbench.action.splitEditorDown");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("below.txt", "below\n").string())));
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    QApplication::processEvents();
+    const QImage image = window_->grab().toImage();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/split_editors.png");
+    }
 }
 
 // --- with the extension host ---
@@ -789,6 +1253,30 @@ TEST_F(MainWindowTest, ExtensionsSeeTheShownDocument) {
     const json active = run("anvil.docs.active");
     EXPECT_EQ(active["text"], "hello\nworld");
     EXPECT_EQ(active["uri"], core::Uri::file(path).to_string());
+}
+
+TEST_F(MainWindowTest, TheActiveEditorOfExtensionsFollowsTheFocusedGroup) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "AAA");
+    const auto b = write("b.txt", "BBB");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    window_->commands().execute("workbench.action.splitEditor");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(b.string())));
+    EXPECT_EQ(run("anvil.docs.active")["uri"], core::Uri::file(b).to_string());
+
+    window_->commands().execute("workbench.action.focusPreviousGroup");
+    ASSERT_TRUE(wait_until(
+        [&] { return run("anvil.docs.active")["uri"] == core::Uri::file(a).to_string(); }));
+    type("X");
+    EXPECT_EQ(run("anvil.docs.active")["text"], "XAAA");
+
+    window_->commands().execute("workbench.action.focusNextGroup");
+    ASSERT_TRUE(wait_until(
+        [&] { return run("anvil.docs.active")["uri"] == core::Uri::file(b).to_string(); }));
+    EXPECT_EQ(run("anvil.docs.active")["text"], "BBB");
 }
 
 TEST_F(MainWindowTest, TypingInTheEditorReachesExtensions) {
@@ -1179,7 +1667,12 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.toggleSidebarVisibility",
                                           "workbench.action.togglePanel",
                                           "workbench.action.toggleActivityBarVisibility",
-                                          "workbench.action.toggleMaximizedPanel"};
+                                          "workbench.action.toggleMaximizedPanel",
+                                          "workbench.action.splitEditor",
+                                          "workbench.action.splitEditorDown",
+                                          "workbench.action.focusNextGroup",
+                                          "workbench.action.focusPreviousGroup",
+                                          "workbench.action.closeGroup"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
         ASSERT_NE(command, nullptr) << id;
