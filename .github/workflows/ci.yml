@@ -1,9 +1,32 @@
 name: CI
 
+# The ignored files are listed one by one, not with a pattern such as `**.md`: a test reads
+# THIRD_PARTY_NOTICES.md, and a file that a test or a script reads must start the run. The two
+# lists are the same.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.claude/**'
+      - 'tools/exthost-probe/README.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.claude/**'
+      - 'tools/exthost-probe/README.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
