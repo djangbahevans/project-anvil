@@ -189,22 +189,130 @@ TEST_F(EditorLayoutTest, ActivatingATabChecksTheIndex) {
     EXPECT_EQ(layout_.group(g)->active, 0U);
 }
 
-TEST_F(EditorLayoutTest, ClosingTheActiveTabActivatesItsRightNeighbor) {
+TEST_F(EditorLayoutTest, ClosingTheActiveTabActivatesTheTabThatWasActiveBeforeIt) {
     const GroupId g = layout_.focused();
-    open(g, {"a", "b", "c"});
-    ASSERT_TRUE(layout_.activate(g, 1));
-    EXPECT_TRUE(layout_.close_tab(g, 1));
-    EXPECT_EQ(tabs(g), (Names{"a", "c"}));
-    EXPECT_EQ(layout_.group(g)->active, 1U);
+    open(g, {"a", "b", "c", "d"});
+    ASSERT_TRUE(layout_.activate(g, 0));
+    ASSERT_TRUE(layout_.activate(g, 3));
+    EXPECT_TRUE(layout_.close_tab(g, 3));
+    EXPECT_EQ(tabs(g), (Names{"a", "b", "c"}));
+    EXPECT_EQ(names(*layout_.group(g))[*layout_.group(g)->active], "a");
+    EXPECT_TRUE(layout_.close_tab(g, 0));
     EXPECT_EQ(names(*layout_.group(g))[*layout_.group(g)->active], "c");
+    expect_consistent();
 }
 
-TEST_F(EditorLayoutTest, ClosingTheActiveLastTabActivatesItsLeftNeighbor) {
+TEST_F(EditorLayoutTest, TheRecentTabsAreOrderedByWhenTheyWereActive) {
     const GroupId g = layout_.focused();
     open(g, {"a", "b", "c"});
-    EXPECT_TRUE(layout_.close_tab(g, 2));
-    EXPECT_EQ(layout_.group(g)->active, 1U);
-    EXPECT_EQ(tabs(g), (Names{"a", "b"}));
+    layout_.activate(g, 0);
+    layout_.activate(g, 1);
+    ASSERT_EQ(layout_.group(g)->recent.size(), 3U);
+    EXPECT_EQ(layout_.group(g)->recent[0], doc("b"));
+    EXPECT_EQ(layout_.group(g)->recent[1], doc("a"));
+    EXPECT_EQ(layout_.group(g)->recent[2], doc("c"));
+    layout_.open(g, doc("c"));
+    EXPECT_EQ(layout_.group(g)->recent[0], doc("c"));
+    layout_.open(g, doc("d"));
+    EXPECT_EQ(layout_.group(g)->recent[0], doc("d"));
+    EXPECT_EQ(layout_.group(g)->recent.size(), 4U);
+    expect_consistent();
+}
+
+TEST_F(EditorLayoutTest, ClosingATabThatIsNotActiveKeepsTheOrderOfTheOthers) {
+    const GroupId g = layout_.focused();
+    open(g, {"a", "b", "c"});
+    layout_.activate(g, 0);
+    layout_.activate(g, 1);
+    layout_.close_tab(g, 2);
+    EXPECT_EQ(layout_.group(g)->recent, (std::vector<Uri>{doc("b"), doc("a")}));
+    layout_.close_tab(g, 1);
+    EXPECT_EQ(names(*layout_.group(g))[*layout_.group(g)->active], "a");
+}
+
+TEST_F(EditorLayoutTest, MovingATabKeepsTheRecentOrderAndMovingItToAnotherGroupMakesItRecentThere) {
+    const GroupId first = layout_.focused();
+    open(first, {"a", "b", "c"});
+    layout_.activate(first, 0);
+    layout_.activate(first, 2);
+    ASSERT_TRUE(layout_.move_tab(first, 0, first, 2));
+    EXPECT_EQ(layout_.group(first)->recent, (std::vector<Uri>{doc("c"), doc("a"), doc("b")}));
+    const GroupId second = *layout_.split(first, Direction::right);
+    open(second, {"x"});
+    ASSERT_TRUE(layout_.move_tab(first, 0, second, 1));
+    EXPECT_EQ(layout_.group(second)->recent, (std::vector<Uri>{doc("b"), doc("x")}));
+    EXPECT_EQ(layout_.group(first)->recent, (std::vector<Uri>{doc("c"), doc("a")}));
+    expect_consistent();
+}
+
+TEST_F(EditorLayoutTest, ASplitThatCopiesTheActiveDocumentHasItAsItsOnlyRecentTab) {
+    const GroupId first = layout_.focused();
+    open(first, {"a", "b"});
+    const GroupId second = *layout_.split(first, Direction::right, SplitContent::copy_active);
+    EXPECT_EQ(layout_.group(second)->recent, (std::vector<Uri>{doc("b")}));
+}
+
+TEST_F(EditorLayoutTest, RenamingADocumentRenamesItsRecentTab) {
+    const GroupId g = layout_.focused();
+    open(g, {"a", "b"});
+    layout_.replace_document(doc("a"), doc("z"));
+    EXPECT_EQ(layout_.group(g)->recent, (std::vector<Uri>{doc("b"), doc("z")}));
+    layout_.replace_document(doc("z"), doc("b"));
+    EXPECT_EQ(layout_.group(g)->recent, (std::vector<Uri>{doc("b")}));
+    expect_consistent();
+}
+
+TEST_F(EditorLayoutTest, ShowingADocumentMakesItTheMostRecentTab) {
+    const GroupId g = layout_.focused();
+    open(g, {"a", "b", "c"});
+    layout_.show(doc("a"));
+    EXPECT_EQ(layout_.group(g)->recent.front(), doc("a"));
+}
+
+TEST(EditorLayoutOptionsTest, ClosingTheActiveTabActivatesItsRightNeighborWhenTheOptionIsOff) {
+    EditorLayout layout({.focus_recent_after_close = false});
+    const GroupId g = layout.focused();
+    for (const char* name : {"a", "b", "c", "d"}) {
+        layout.open(g, doc(name));
+    }
+    layout.activate(g, 0);
+    layout.activate(g, 1);
+    EXPECT_TRUE(layout.close_tab(g, 1));
+    EXPECT_EQ(names(*layout.group(g))[*layout.group(g)->active], "c");
+    EXPECT_EQ(layout.group(g)->recent.front(), doc("c"));
+    EXPECT_TRUE(layout.close_tab(g, 2));
+    EXPECT_EQ(names(*layout.group(g))[*layout.group(g)->active], "c");
+    EXPECT_EQ(layout.find_inconsistency(), std::nullopt);
+}
+
+TEST(EditorLayoutOptionsTest, ClosingTheLastActiveTabActivatesItsLeftNeighborWhenTheOptionIsOff) {
+    EditorLayout layout({.focus_recent_after_close = false});
+    const GroupId g = layout.focused();
+    for (const char* name : {"a", "b", "c"}) {
+        layout.open(g, doc(name));
+    }
+    layout.activate(g, 0);
+    layout.activate(g, 2);
+    EXPECT_TRUE(layout.close_tab(g, 2));
+    EXPECT_EQ(names(*layout.group(g))[*layout.group(g)->active], "b");
+}
+
+TEST(EditorLayoutOptionsTest, TheOptionCanBeChangedForLaterCloses) {
+    EditorLayout layout;
+    const GroupId g = layout.focused();
+    for (const char* name : {"a", "b", "c", "d"}) {
+        layout.open(g, doc(name));
+    }
+    layout.activate(g, 0);
+    layout.activate(g, 1);
+    layout.set_focus_recent_after_close(false);
+    layout.close_tab(g, 1);
+    EXPECT_EQ(names(*layout.group(g))[*layout.group(g)->active], "c");
+    layout.set_focus_recent_after_close(true);
+    layout.activate(g, 0);
+    layout.activate(g, 2);
+    layout.close_tab(g, 2);
+    EXPECT_EQ(names(*layout.group(g))[*layout.group(g)->active], "a");
 }
 
 TEST_F(EditorLayoutTest, ClosingATabThatIsNotActiveKeepsTheActiveTab) {
@@ -375,7 +483,7 @@ TEST_F(EditorLayoutTest, ReplacingADocumentWithOneThatTheGroupHasClosesTheOldTab
     ASSERT_TRUE(layout_.activate(g, 0));
     EXPECT_EQ(layout_.replace_document(doc("a"), doc("c")), 1U);
     EXPECT_EQ(tabs(g), (Names{"b", "c"}));
-    EXPECT_EQ(layout_.group(g)->active, 0U);
+    EXPECT_EQ(names(*layout_.group(g))[*layout_.group(g)->active], "c");
     ASSERT_TRUE(layout_.activate(g, 1));
     EXPECT_EQ(layout_.replace_document(doc("b"), doc("c")), 1U);
     EXPECT_EQ(tabs(g), (Names{"c"}));
@@ -853,6 +961,58 @@ TEST(EditorLayoutJsonTest, ALayoutThatBreaksTheRulesIsRefused) {
     EXPECT_TRUE(refused([](json& j) { j["root"]["children"][0]["group"] = "one"; }));
     EXPECT_TRUE(refused([](json& j) { j["root"]["children"] = "none"; }));
     EXPECT_TRUE(refused([](json& j) { j["root"] = 3; }));
+}
+
+TEST(EditorLayoutJsonTest, TheRecentTabsAreSavedAndRestored) {
+    EditorLayout layout;
+    const GroupId g = layout.focused();
+    for (const char* name : {"a", "b", "c"}) {
+        layout.open(g, doc(name));
+    }
+    layout.activate(g, 0);
+    layout.activate(g, 2);
+    layout.activate(g, 1);
+    const json saved = layout.to_json();
+    EXPECT_EQ(saved["root"]["recent"], json::array({1, 2, 0}));
+    auto restored = EditorLayout::from_json(saved);
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->group(g)->recent, layout.group(g)->recent);
+    restored->close_tab(g, 1);
+    EXPECT_EQ(restored->group(g)->active, 1U);
+    EXPECT_EQ(restored->group(g)->tabs[1], doc("c"));
+}
+
+TEST(EditorLayoutJsonTest, ALayoutWithoutRecentTabsGetsTheActiveTabFirst) {
+    EditorLayout layout;
+    const GroupId g = layout.focused();
+    for (const char* name : {"a", "b", "c"}) {
+        layout.open(g, doc(name));
+    }
+    layout.activate(g, 1);
+    json saved = layout.to_json();
+    saved["root"].erase("recent");
+    const auto restored = EditorLayout::from_json(saved);
+    ASSERT_TRUE(restored) << restored.error().message;
+    EXPECT_EQ(restored->group(g)->recent, (std::vector<Uri>{doc("b"), doc("a"), doc("c")}));
+}
+
+TEST(EditorLayoutJsonTest, RecentTabsThatAreNotTheTabsOfTheGroupAreRefused) {
+    EditorLayout layout;
+    for (const char* name : {"a", "b"}) {
+        layout.open(layout.focused(), doc(name));
+    }
+    const auto refused = [&](const json& recent) {
+        json saved = layout.to_json();
+        saved["root"]["recent"] = recent;
+        return !EditorLayout::from_json(saved).has_value();
+    };
+    EXPECT_FALSE(refused(json::array({1, 0})));
+    EXPECT_TRUE(refused(json::array({0, 1})));
+    EXPECT_TRUE(refused(json::array({1})));
+    EXPECT_TRUE(refused(json::array({1, 1})));
+    EXPECT_TRUE(refused(json::array({1, 5})));
+    EXPECT_TRUE(refused(json::array({1, -1})));
+    EXPECT_TRUE(refused(json("1,0")));
 }
 
 TEST(EditorLayoutJsonTest, ASplitterWithOneChildOrOfItsParentsOrientationIsRefused) {

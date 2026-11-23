@@ -114,6 +114,18 @@ std::optional<core::Uri> active_uri(const EditorGroup& group) {
     return group.tabs[*group.active];
 }
 
+// Makes the tab the active one, and the most recently used.
+void activate_tab(EditorGroup& group, std::size_t index) {
+    group.active = index;
+    const core::Uri& uri = group.tabs[index];
+    const auto found = std::ranges::find(group.recent, uri);
+    if (found != group.recent.end()) {
+        std::rotate(group.recent.begin(), found, found + 1);
+    } else {
+        group.recent.insert(group.recent.begin(), uri);
+    }
+}
+
 std::optional<std::size_t> index_of(const EditorGroup& group, const core::Uri& uri) {
     const auto found = std::ranges::find(group.tabs, uri);
     if (found == group.tabs.end()) {
@@ -133,7 +145,7 @@ struct EditorLayout::Snapshot {
 EditorLayout::EditorLayout(EditorLayoutOptions options) : options_(options) {
     const GroupId first{next_id_++};
     root_ = group_node(first);
-    groups_.push_back({.id = first, .tabs = {}, .active = std::nullopt});
+    groups_.push_back({.id = first, .tabs = {}, .active = std::nullopt, .recent = {}});
     focused_ = first;
 }
 
@@ -213,21 +225,25 @@ void EditorLayout::notify(const Snapshot& before) const {
 
 std::optional<std::size_t> EditorLayout::open_in(EditorGroup& target, const core::Uri& uri) {
     if (const auto existing = index_of(target, uri)) {
-        target.active = *existing;
+        activate_tab(target, *existing);
         return existing;
     }
     const std::size_t position = target.active ? *target.active + 1 : target.tabs.size();
     target.tabs.insert(target.tabs.begin() + static_cast<std::ptrdiff_t>(position), uri);
-    target.active = position;
+    activate_tab(target, position);
     return position;
 }
 
-void EditorLayout::remove_tab(EditorGroup& target, std::size_t index) {
+void EditorLayout::remove_tab(EditorGroup& target, std::size_t index) const {
+    const bool was_active = target.active && index == *target.active;
+    std::erase(target.recent, target.tabs[index]);
     target.tabs.erase(target.tabs.begin() + static_cast<std::ptrdiff_t>(index));
     if (target.tabs.empty()) {
         target.active = std::nullopt;
-    } else if (index == *target.active) {
-        target.active = std::min(index, target.tabs.size() - 1);
+    } else if (was_active && options_.focus_recent_after_close) {
+        activate_tab(target, *index_of(target, target.recent.front()));
+    } else if (was_active) {
+        activate_tab(target, std::min(index, target.tabs.size() - 1));
     } else if (index < *target.active) {
         target.active = *target.active - 1;
     }
@@ -258,7 +274,7 @@ TabLocation EditorLayout::show(const core::Uri& uri) {
         location = {focused_, 0};
         location.index = *open_in(*mutable_group(focused_), uri);
     }
-    mutable_group(location.group)->active = location.index;
+    activate_tab(*mutable_group(location.group), location.index);
     notify(before);
     return location;
 }
@@ -269,7 +285,7 @@ bool EditorLayout::activate(GroupId id, std::size_t index) {
         return false;
     }
     const Snapshot before = snapshot();
-    target->active = index;
+    activate_tab(*target, index);
     notify(before);
     return true;
 }
@@ -312,12 +328,12 @@ bool EditorLayout::move_tab(GroupId from, std::size_t from_index, GroupId to,
         const core::Uri moved = source->tabs[from_index];
         remove_tab(*source, from_index);
         if (const auto existing = index_of(*destination, moved)) {
-            destination->active = existing;
+            activate_tab(*destination, *existing);
         } else {
             const std::size_t position = std::min(to_index, destination->tabs.size());
             destination->tabs.insert(
                 destination->tabs.begin() + static_cast<std::ptrdiff_t>(position), moved);
-            destination->active = position;
+            activate_tab(*destination, position);
         }
         focused_ = to;
         close_group_if_empty(from);
@@ -335,10 +351,10 @@ std::optional<GroupId> EditorLayout::split(GroupId id, Direction direction, Spli
     const Snapshot before = snapshot();
 
     const GroupId created{next_id_++};
-    EditorGroup added{.id = created, .tabs = {}, .active = std::nullopt};
+    EditorGroup added{.id = created, .tabs = {}, .active = std::nullopt, .recent = {}};
     if (content == SplitContent::copy_active && origin->active) {
         added.tabs.push_back(origin->tabs[*origin->active]);
-        added.active = 0;
+        activate_tab(added, 0);
     }
     groups_.push_back(std::move(added));
 
@@ -420,11 +436,16 @@ std::size_t EditorLayout::replace_document(const core::Uri& from, const core::Ur
             remove_tab(target, *old_index);
             close_group_if_empty(id);
         } else {
+            std::ranges::replace(target.recent, from, to);
             target.tabs[*old_index] = to;
         }
     }
     notify(before);
     return changed;
+}
+
+void EditorLayout::set_focus_recent_after_close(bool enabled) {
+    options_.focus_recent_after_close = enabled;
 }
 
 bool EditorLayout::focus(GroupId id) {
@@ -535,6 +556,13 @@ std::optional<std::string> EditorLayout::find_inconsistency() const {
         if (g.active.has_value() != !g.tabs.empty() || (g.active && *g.active >= g.tabs.size())) {
             return "the active tab of a group is wrong";
         }
+        auto sorted_tabs = g.tabs;
+        auto sorted_recent = g.recent;
+        std::ranges::sort(sorted_tabs);
+        std::ranges::sort(sorted_recent);
+        if (sorted_tabs != sorted_recent || (g.active && g.recent.front() != g.tabs[*g.active])) {
+            return "the recent tabs of a group are not its tabs with the active one first";
+        }
         for (std::size_t i = 0; i < g.tabs.size(); ++i) {
             if (std::ranges::find(g.tabs.begin() + static_cast<std::ptrdiff_t>(i) + 1, g.tabs.end(),
                                   g.tabs[i]) != g.tabs.end()) {
@@ -578,6 +606,10 @@ nlohmann::json EditorLayout::to_json() const {
                 json["tabs"].push_back(uri_to_json(uri));
             }
             json["active"] = g.active ? nlohmann::json(*g.active) : nlohmann::json(nullptr);
+            json["recent"] = nlohmann::json::array();
+            for (const core::Uri& uri : g.recent) {
+                json["recent"].push_back(*index_of(g, uri));
+            }
             return json;
         }
         json["orientation"] =
@@ -670,6 +702,25 @@ std::expected<EditorLayout, Error> EditorLayout::from_json(const nlohmann::json&
                         throw ParseFailure{"\"active\" is not a number"};
                     }
                     g.active = active->get<std::size_t>();
+                }
+                if (const auto recent = node.find("recent"); recent != node.end()) {
+                    if (!recent->is_array()) {
+                        throw ParseFailure{"\"recent\" is not an array"};
+                    }
+                    for (const nlohmann::json& position : *recent) {
+                        if (!position.is_number_integer() || position.get<std::int64_t>() < 0 ||
+                            position.get<std::uint64_t>() >= g.tabs.size()) {
+                            throw ParseFailure{"a recent tab is not a position of a tab"};
+                        }
+                        g.recent.push_back(g.tabs[position.get<std::size_t>()]);
+                    }
+                } else {
+                    g.recent = g.tabs;
+                    if (g.active && *g.active < g.tabs.size()) {
+                        std::rotate(g.recent.begin(),
+                                    g.recent.begin() + static_cast<std::ptrdiff_t>(*g.active),
+                                    g.recent.begin() + static_cast<std::ptrdiff_t>(*g.active) + 1);
+                    }
                 }
                 result.group = g.id;
                 layout.groups_.push_back(std::move(g));

@@ -33,6 +33,8 @@ struct EditorGroup {
     std::vector<core::Uri> tabs;
     // The position of the active tab; empty exactly when the group has no tabs.
     std::optional<std::size_t> active;
+    // The same tabs, the most recently active first, so that the first is the active tab.
+    std::vector<core::Uri> recent;
 
     bool operator==(const EditorGroup&) const = default;
 };
@@ -65,6 +67,10 @@ struct EditorLayoutOptions {
     // As VS Code's `workbench.editor.closeEmptyGroups`: a group that loses its last tab to closing
     // or to a move is closed, unless it is the only group.
     bool close_empty_groups = true;
+    // As VS Code's `workbench.editor.focusRecentEditorAfterClose`: closing the active tab activates
+    // the tab that was active before it. When off, the tab to its right becomes active, or the one
+    // to its left when it was the last.
+    bool focus_recent_after_close = true;
 };
 
 // The editor area as plain data: the groups of tabs, which of them has the focus, and the tree
@@ -122,14 +128,15 @@ public:
     TabLocation show(const core::Uri& uri);
     // Makes the tab the active one of its group. Returns false when there is no such tab.
     bool activate(GroupId group, std::size_t index);
-    // Closes the tab. When it was the active tab, the one to its right becomes active, or the one
-    // to its left when it was the last. Returns false when there is no such tab.
+    // Closes the tab. When it was the active tab, the tab that was active before it becomes active,
+    // or its right neighbor, or the left one for the last tab, as the options say. Returns false
+    // when there is no such tab.
     bool close_tab(GroupId group, std::size_t index);
     // Moves a tab within its group, to `to_index` in the order that results, or to another group,
     // at `to_index` there; an index past the end means the end. A tab moved to another group
     // becomes the active tab there and the group gets the focus; when that group has the document
     // already, the tab is closed in the source and the existing one activated. The source group
-    // activates a neighbor as when a tab closes. Returns false for a tab or group that does not
+    // activates a tab as when a tab closes. Returns false for a tab or group that does not
     // exist.
     bool move_tab(GroupId from, std::size_t from_index, GroupId to, std::size_t to_index);
 
@@ -150,6 +157,8 @@ public:
     std::size_t replace_document(const core::Uri& from, const core::Uri& to);
 
     bool focus(GroupId group);
+    // Changes `EditorLayoutOptions::focus_recent_after_close` for the tabs that close from now on.
+    void set_focus_recent_after_close(bool enabled);
     // Moves the focus to the next or previous group in the order they are shown, wrapping around.
     void focus_next();
     void focus_previous();
@@ -162,7 +171,8 @@ public:
     // A description of the first way the model breaks its rules, or nothing when it holds them:
     // the tree has splitters with fewer than two children or of the orientation of their parent,
     // ratios that are wrong, groups that are missing, repeated or not in the tree, a document twice
-    // in a group, an active tab out of range, or a focused group that does not exist.
+    // in a group, an active tab out of range, a list of recent tabs that is not the group's tabs
+    // with the active one first, or a focused group that does not exist.
     std::optional<std::string> find_inconsistency() const;
 
     nlohmann::json to_json() const;
@@ -175,7 +185,7 @@ private:
     Snapshot snapshot() const;
     void notify(const Snapshot& before) const;
     EditorGroup* mutable_group(GroupId id);
-    static void remove_tab(EditorGroup& group, std::size_t index);
+    void remove_tab(EditorGroup& group, std::size_t index) const;
     std::optional<std::size_t> open_in(EditorGroup& group, const core::Uri& uri);
     void erase_group(GroupId id);
     void close_group_if_empty(GroupId id);
