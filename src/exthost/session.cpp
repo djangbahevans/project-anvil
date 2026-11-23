@@ -27,6 +27,7 @@ RpcMessage to_reply_message(std::uint32_t req, HandlerResult result) {
         Overloaded{
             [&](Ok) -> RpcMessage { return EmptyReply{req}; },
             [&](OkJson& r) -> RpcMessage { return JsonReply{req, std::move(r.json)}; },
+            [&](OkBuffer& r) -> RpcMessage { return BufferReply{req, std::move(r.data)}; },
             [&](Failed& r) -> RpcMessage { return ErrorReply{req, std::move(r.error_json)}; },
         },
         result);

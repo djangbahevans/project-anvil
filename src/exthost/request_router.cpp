@@ -28,23 +28,34 @@ std::expected<nlohmann::json, Error> parse_arguments(const Request& request) {
             }
             result.push_back(std::move(*parsed));
         } else if (const auto* object = std::get_if<ObjectWithBuffersArg>(&arg)) {
-            if (!object->buffers.empty()) {
-                return std::unexpected(
-                    Error{ErrorCode::unsupported, "binary request arguments are not supported"});
-            }
             auto parsed = parse_json(object->json);
             if (!parsed) {
                 return std::unexpected(parsed.error());
             }
             result.push_back(std::move(*parsed));
-        } else if (std::holds_alternative<BufferArg>(arg)) {
-            return std::unexpected(
-                Error{ErrorCode::unsupported, "binary request arguments are not supported"});
         } else {
             result.push_back(nullptr);
         }
     }
     return result;
+}
+
+const Bytes* buffer_argument(const Request& request, std::size_t index) {
+    const auto* mixed = std::get_if<MixedArgs>(&request.args);
+    if (!mixed || index >= mixed->size()) {
+        return nullptr;
+    }
+    const auto* buffer = std::get_if<BufferArg>(&(*mixed)[index]);
+    return buffer ? &buffer->data : nullptr;
+}
+
+std::span<const Bytes> object_buffers(const Request& request, std::size_t index) {
+    const auto* mixed = std::get_if<MixedArgs>(&request.args);
+    if (!mixed || index >= mixed->size()) {
+        return {};
+    }
+    const auto* object = std::get_if<ObjectWithBuffersArg>(&(*mixed)[index]);
+    return object ? std::span<const Bytes>(object->buffers) : std::span<const Bytes>();
 }
 
 std::string error_json(std::string_view message) {

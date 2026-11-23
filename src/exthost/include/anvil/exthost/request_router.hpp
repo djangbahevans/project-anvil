@@ -11,14 +11,25 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 
 namespace anvil::exthost {
 
-// The arguments of a request as a JSON array. Undefined arguments become null; an argument that
-// carries binary buffers is not supported and makes the request fail.
+// The arguments of a request as a JSON array. Undefined arguments become null, and so does an
+// argument that is a buffer; an object with buffers is its JSON as it was sent, in which each
+// buffer is the placeholder `{"$$ref$$": n}` for the n-th of its buffers. The bytes are read with
+// `buffer_argument` and `object_buffers`.
 std::expected<nlohmann::json, Error> parse_arguments(const Request& request);
+
+// The buffer that the argument at `index` of the request is, or nullptr when there is no such
+// argument or it is not a buffer. The bytes belong to the request.
+const Bytes* buffer_argument(const Request& request, std::size_t index);
+
+// The buffers of the object with buffers at `index`, in the order that its `$$ref$$` placeholders
+// number them; empty for any other argument.
+std::span<const Bytes> object_buffers(const Request& request, std::size_t index);
 
 // The serialized form of an error that the extension host rethrows with `message`.
 std::string error_json(std::string_view message);
