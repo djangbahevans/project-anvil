@@ -115,6 +115,17 @@ TEST(EditorSettings, TheTitleBarStyleDefaultsToCustomAndIsReadFromTheSettings) {
               TitleBarStyle::native);
 }
 
+TEST(EditorSettings, TheCommandCenterAndTheLayoutControlsAreOnUnlessTheSettingsTurnThemOff) {
+    EXPECT_TRUE(read("{}")->command_center);
+    EXPECT_TRUE(read("{}")->layout_controls);
+    EXPECT_FALSE(read(R"j({"window.commandCenter": false})j")->command_center);
+    EXPECT_TRUE(read(R"j({"window.commandCenter": false})j")->layout_controls);
+    EXPECT_FALSE(read(R"j({"workbench.layoutControl.enabled": false})j")->layout_controls);
+    EXPECT_FALSE(
+        read(R"j({"workbench": {"layoutControl": {"enabled": false}}})j")->layout_controls);
+    EXPECT_TRUE(read(R"j({"window.commandCenter": true})j")->command_center);
+}
+
 TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
     for (const auto& [text, key] : std::vector<std::pair<std::string, std::string>>{
              {R"j({"editor.fontFamily": 3})j", "editor.fontFamily"},
@@ -127,6 +138,8 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
               "workbench.editor.focusRecentEditorAfterClose"},
              {R"j({"files.eol": 1})j", "files.eol"},
              {R"j({"window.titleBarStyle": 1})j", "window.titleBarStyle"},
+             {R"j({"window.commandCenter": "no"})j", "window.commandCenter"},
+             {R"j({"workbench.layoutControl.enabled": 0})j", "workbench.layoutControl.enabled"},
              {R"j({"window.titleBarStyle": "inherit"})j", "window.titleBarStyle"},
              {R"j({"window.titleBarStyle": "Native"})j", "window.titleBarStyle"},
              {R"j({"files.eol": "\r"})j", "files.eol"},

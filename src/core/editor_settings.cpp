@@ -67,6 +67,20 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             problems.emplace_back("workbench.colorTheme must be a string");
         }
     }
+    if (settings.contains("window.commandCenter")) {
+        if (const auto shown = settings.get<bool>("window.commandCenter")) {
+            result.command_center = *shown;
+        } else {
+            problems.emplace_back("window.commandCenter must be true or false");
+        }
+    }
+    if (settings.contains("workbench.layoutControl.enabled")) {
+        if (const auto shown = settings.get<bool>("workbench.layoutControl.enabled")) {
+            result.layout_controls = *shown;
+        } else {
+            problems.emplace_back("workbench.layoutControl.enabled must be true or false");
+        }
+    }
     if (settings.contains("window.titleBarStyle")) {
         const auto style = settings.get<std::string>("window.titleBarStyle");
         if (style && *style == "custom") {
