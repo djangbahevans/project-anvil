@@ -33,6 +33,8 @@ public:
         std::string label;
         core::ThemeKind kind = core::ThemeKind::dark;
         std::filesystem::path file;
+        // False when the file was missing as the theme was added; selecting it fails.
+        bool available = true;
     };
 
     // `directory` holds `themes.json` and the theme files; a missing or unreadable list leaves
@@ -44,6 +46,11 @@ public:
     const std::vector<Entry>& themes() const {
         return themes_;
     }
+
+    // Adds themes after the ones there are, such as those that extensions contribute. A theme with
+    // the id of one that is listed already is left out and logged, so the first of two themes of
+    // the same name wins; one whose file is missing is listed and logged as unavailable.
+    void add_themes(std::vector<Entry> themes);
 
     // The id of the applied theme; empty before one has been.
     const std::string& current() const {

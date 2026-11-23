@@ -229,6 +229,47 @@ void read_palette_rules(const json& contributes, const SectionReader& reader,
     }
 }
 
+void read_themes(const json& contributes, const SectionReader& reader,
+                 const Translations& translations, const std::filesystem::path& directory,
+                 const std::string& extension, Contributions& out) {
+    const json* section = reader.array(contributes, "themes");
+    if (!section) {
+        return;
+    }
+    std::size_t index = 0;
+    for (const json& entry : *section) {
+        const std::size_t at = index++;
+        if (!reader.object(entry, "themes", at)) {
+            continue;
+        }
+        const auto id = reader.text(entry, "id", "themes", at);
+        const auto ui_theme = reader.text(entry, "uiTheme", "themes", at);
+        const auto relative = reader.text(entry, "path", "themes", at);
+        const auto label =
+            entry.contains("label") ? localized(entry["label"], translations) : std::nullopt;
+        if (!id || !ui_theme || !relative) {
+            continue;
+        }
+        if (!label || label->empty()) {
+            reader.problem("contributes.themes[" + std::to_string(at) + "] has no label");
+            continue;
+        }
+        if (relative->empty()) {
+            reader.problem("contributes.themes[" + std::to_string(at) + "] has no path");
+            continue;
+        }
+        const std::filesystem::path path = (directory / *relative).lexically_normal();
+        const std::filesystem::path inside = path.lexically_relative(directory.lexically_normal());
+        if (inside.empty() || *inside.begin() == "..") {
+            reader.problem("contributes.themes[" + std::to_string(at) +
+                           "].path is outside the extension's directory");
+            continue;
+        }
+        out.themes.push_back(
+            {extension, *id, *label, ui_theme->empty() ? std::string("vs-dark") : *ui_theme, path});
+    }
+}
+
 } // namespace
 
 std::string ContributedCommand::label() const {
@@ -260,6 +301,7 @@ Contributions read_contributions(std::span<const std::filesystem::path> director
         read_commands(*found, reader, translations, extension, contributions);
         read_keybindings(*found, reader, extension, contributions);
         read_palette_rules(*found, reader, extension, contributions);
+        read_themes(*found, reader, translations, directory, extension, contributions);
     }
     return contributions;
 }

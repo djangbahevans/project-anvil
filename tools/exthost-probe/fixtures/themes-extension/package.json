@@ -1,0 +1,15 @@
+{
+  "name": "themes",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "contributes": {
+    "themes": [
+      { "label": "Fixture Light", "uiTheme": "vs", "path": "./themes/light.json" },
+      { "id": "fixture-included", "label": "%included.label%", "path": "./themes/included.json" },
+      { "label": "Fixture Missing", "path": "./themes/missing.json" },
+      { "label": "Dark 2026", "path": "./themes/light.json" },
+      { "label": "Fixture Escape", "path": "../outside.json" }
+    ]
+  }
+}

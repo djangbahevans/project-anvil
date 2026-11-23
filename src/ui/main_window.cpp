@@ -287,6 +287,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         } else {
             share_commands_with_extensions();
             read_extension_keybindings(*logger);
+            add_extension_themes();
         }
     }
 
@@ -297,6 +298,17 @@ MainWindow::MainWindow(Options options, QWidget* parent)
 MainWindow::~MainWindow() {
     // The area observes the layout, which is destroyed before the child widgets are.
     delete area_;
+}
+
+void MainWindow::add_extension_themes() {
+    std::vector<ThemeStore::Entry> entries;
+    for (const exthost::ContributedTheme& theme : bridge_.contributions().themes) {
+        entries.push_back({.id = theme.id,
+                           .label = theme.label,
+                           .kind = core::theme_kind_from_ui_theme(theme.ui_theme),
+                           .file = theme.path});
+    }
+    themes_->add_themes(std::move(entries));
 }
 
 void MainWindow::read_extension_keybindings(core::Logger& logger) {
