@@ -12,6 +12,7 @@
 #include <QTimer>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace anvil::ui {
@@ -64,6 +65,27 @@ public:
     // Deletes the selection, or the character before or after each caret.
     void delete_backward();
     void delete_forward();
+
+    // What the find bar says about the search, for the occurrence commands.
+    struct OccurrenceSource {
+        // The pattern of the find bar when the bar owns the search (it is shown, has the focus
+        // and has a pattern), which is then searched as plain text. Empty when the selection
+        // owns the search.
+        std::string find_text;
+        // The find bar's options.
+        bool match_case = false;
+        bool whole_word = false;
+    };
+    // "Add selection to next find match" (Ctrl+D): a lone caret selects the word at it, and each
+    // further call adds the next match of the same text. The search stays what the first call made
+    // it, whole words and case included, until the selections change by other means.
+    void add_next_occurrence(const OccurrenceSource& source);
+    // "Select all occurrences of find match" (Ctrl+Shift+L). Returns true when more than `limit`
+    // matches exist and only `limit` were selected.
+    bool select_all_occurrences(const OccurrenceSource& source, std::size_t limit);
+    // Selects every match of `search`, up to `limit`, as the find bar's Alt+Enter does. Returns
+    // true when there are more.
+    bool select_all_matches(const core::Search& search, std::size_t limit);
 
     // Call after something other than this view changed the document or its selections.
     void document_changed_elsewhere();
@@ -138,6 +160,19 @@ private:
     struct Colors;
     Colors current_colors() const;
 
+    // The search that Ctrl+D started and keeps while the selections are the ones it made.
+    struct OccurrenceSession {
+        std::optional<core::Selection> first;
+        core::Search search;
+        core::SelectionSet selections;
+        bool uses_find_options = false;
+        bool match_case = false;
+        bool whole_word = false;
+    };
+    // The session if it still describes the selections and the find options, otherwise none.
+    OccurrenceSession* occurrence_session(const OccurrenceSource& source);
+    std::optional<OccurrenceSession> begin_occurrence_session(const OccurrenceSource& source) const;
+
     const WorkbenchColors* colors_ = nullptr;
     QMetaObject::Connection colors_connection_;
     std::shared_ptr<core::Document> document_;
@@ -153,6 +188,7 @@ private:
     QElapsedTimer since_double_click_;
     QString preedit_;
     std::vector<core::Match> highlights_;
+    std::optional<OccurrenceSession> occurrence_session_;
 };
 
 } // namespace anvil::ui

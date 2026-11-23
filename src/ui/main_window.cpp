@@ -6,6 +6,7 @@
 #include "anvil/ui/default_keybindings.hpp"
 #include "anvil/ui/resources.hpp"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -335,6 +336,21 @@ void MainWindow::register_commands() {
     add("editor.action.clipboardCutAction", tr("Cut"), [this] { view()->cut(); });
     add("editor.action.clipboardCopyAction", tr("Copy"), [this] { view()->copy(); });
     add("editor.action.clipboardPasteAction", tr("Paste"), [this] { view()->paste(); });
+    add("editor.action.addSelectionToNextFindMatch", tr("Add Selection to Next Find Match"),
+        [this] { view()->add_next_occurrence(occurrence_source()); });
+    add("editor.action.selectHighlights", tr("Select All Occurrences of Find Match"), [this] {
+        report_truncated_selection(
+            view()->select_all_occurrences(occurrence_source(), FindBar::match_limit));
+    });
+    add("editor.action.selectAllMatches", tr("Select All Matches of the Find Bar"), [this] {
+        FindBar* bar = find_bar();
+        if (!bar->isVisible() || !bar->search()) {
+            return;
+        }
+        report_truncated_selection(
+            view()->select_all_matches(*bar->search(), FindBar::match_limit));
+        view()->setFocus();
+    });
     add("actions.find", tr("Find"), [this] { open_find_bar(false); });
     add("editor.action.startFindReplaceAction", tr("Replace"), [this] { open_find_bar(true); });
     add("editor.action.nextMatchFindAction", tr("Find Next"), [this] { find_bar()->find_next(); });
@@ -490,6 +506,7 @@ void MainWindow::fill_context(core::ContextKeys& keys) const {
     for (EditorGroupWidget* group : area_->groups()) {
         editor_focus = editor_focus || (focus && group->find_bar()->isAncestorOf(focus));
     }
+    const bool find_bar_visible = area_->focused_group()->find_bar()->isVisible();
     keys.set("editorFocus", editor_focus);
     keys.set("editorTextFocus", view != nullptr);
     keys.set("inputFocus", input);
@@ -512,6 +529,7 @@ void MainWindow::fill_context(core::ContextKeys& keys) const {
         keys.set("resourceLangId", std::string("plaintext"));
     }
     const workbench::EditorGroup* group = layout_.group(layout_.focused());
+    keys.set("findWidgetVisible", find_bar_visible);
     keys.set("activeEditorGroupEmpty", group && group->tabs.empty());
     keys.set("multipleEditorGroups", layout_.group_ids().size() > 1);
 }
@@ -577,6 +595,25 @@ void MainWindow::focus_current_editor() {
     EditorGroupWidget* group = area_->focused_group();
     if (group && !group->is_empty()) {
         group->view()->setFocus();
+    }
+}
+
+EditorView::OccurrenceSource MainWindow::occurrence_source() {
+    FindBar* bar = find_bar();
+    EditorView::OccurrenceSource source;
+    source.match_case = bar->match_case_button()->isChecked();
+    source.whole_word = bar->whole_word_button()->isChecked();
+    // The find bar owns the search while it is shown, has a pattern and the editor has no focus.
+    if (!view()->hasFocus() && bar->isVisible() && !bar->find_field()->text().isEmpty()) {
+        source.find_text = bar->find_field()->text().toStdString();
+    }
+    return source;
+}
+
+void MainWindow::report_truncated_selection(bool truncated) {
+    if (truncated) {
+        status_bar_->show_message(
+            tr("Only the first %1 occurrences were selected").arg(FindBar::match_limit), 8000);
     }
 }
 
@@ -817,7 +854,7 @@ void MainWindow::show_command_palette() {
     };
     std::vector<Entry> entries;
     for (const CommandRegistry::Command& command : commands_.commands()) {
-        if (command.id != "setContext") {
+        if (command.id != "setContext" && command.id != "editor.action.selectAllMatches") {
             entries.push_back({command.id, QString::fromStdString(command.title)});
         }
     }

@@ -58,6 +58,19 @@ const Row rows[] = {
      {"ctrl+v", "shift+insert"},
      {"cmd+v"}},
 
+    // Several cursors.
+    {"editor.action.addSelectionToNextFindMatch", "editorFocus", {"ctrl+d"}, {"ctrl+d"}, {"cmd+d"}},
+    {"editor.action.selectHighlights",
+     "editorFocus",
+     {"ctrl+shift+l"},
+     {"ctrl+shift+l"},
+     {"cmd+shift+l"}},
+    {"editor.action.selectAllMatches",
+     "editorFocus && findWidgetVisible",
+     {"alt+enter"},
+     {"alt+enter"},
+     {"alt+enter"}},
+
     // Find.
     {"actions.find", "", {"ctrl+f"}, {"ctrl+f"}, {"cmd+f"}},
     {"editor.action.startFindReplaceAction", "", {"ctrl+h"}, {"ctrl+h"}, {"cmd+alt+f"}},

@@ -176,6 +176,11 @@ private:
     // Takes the key bindings that the extensions declare in their manifests; problems go to
     // `logger`.
     void read_extension_keybindings(core::Logger& logger);
+    // What the occurrence commands search for: the find bar's pattern while it owns the search,
+    // and always its options.
+    EditorView::OccurrenceSource occurrence_source();
+    // Tells the user that a selection of all occurrences stopped at the find bar's match limit.
+    void report_truncated_selection(bool truncated);
     // Whether the `enablement` of the extension command allows it to run now.
     bool command_enabled(const std::string& id) const;
     // Adds an untitled document and shows it in `group`, or in the focused group.

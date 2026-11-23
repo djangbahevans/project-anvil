@@ -46,6 +46,12 @@ public:
     void replace_current();
     void replace_all();
 
+    // The search for the pattern and options now in the bar; none while the pattern is empty or
+    // does not compile.
+    const std::optional<core::Search>& search() const {
+        return search_;
+    }
+
     // What the counter shows: "3 of 41", "No results", an error, or nothing.
     QString status() const;
     // True when the pattern is an invalid regular expression.
