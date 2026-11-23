@@ -383,7 +383,7 @@ TEST_F(MainWindowTest, ClickingAStatusBarItemDoesNotChangeTheCommandPaletteRecen
                       window_->status_bar().item_rect("test.item").center());
     window_->commands().execute("workbench.action.showCommands");
     EXPECT_EQ(window_->command_palette()->list()->model()->index(0, 0).data().toString(),
-              "Close Editor");
+              "Add Selection to Next Find Match");
 }
 
 TEST_F(MainWindowTest, ShowsTheCursorCountForMultipleCursors) {
@@ -1898,6 +1898,9 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.newUntitledFile",
                                           "workbench.action.quit",
                                           "workbench.action.closeWindow",
+                                          "editor.action.addSelectionToNextFindMatch",
+                                          "editor.action.selectHighlights",
+                                          "editor.action.selectAllMatches",
                                           "setContext"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
@@ -2158,8 +2161,9 @@ TEST_F(MainWindowTest, TheCommandPaletteListsTheEditorsCommandsByTitle) {
     ui::QuickPick* palette = window_->command_palette();
     EXPECT_TRUE(palette->isVisible());
     EXPECT_EQ(palette->filter_field()->text(), ">");
-    // `setContext` is the commands of extensions' business and not on offer.
-    EXPECT_EQ(palette->shown_items().size(), window_->commands().commands().size() - 1);
+    // `setContext` is the commands of extensions' business, and selecting the matches of the find
+    // bar is its own key, so neither is on offer.
+    EXPECT_EQ(palette->shown_items().size(), window_->commands().commands().size() - 2);
 
     std::vector<QString> titles;
     for (std::size_t i = 0; i < palette->shown_items().size(); ++i) {
@@ -2228,7 +2232,7 @@ TEST_F(MainWindowTest, RecentlyUsedCommandsComeFirstInThePalette) {
         return window_->command_palette()->list()->model()->index(0, 0).data().toString();
     };
     window_->commands().execute("workbench.action.showCommands");
-    EXPECT_EQ(first_title(), "Close Editor");
+    EXPECT_EQ(first_title(), "Add Selection to Next Find Match");
     QTest::keyClicks(window_->command_palette()->filter_field(), "select all");
     QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
 
@@ -2987,6 +2991,240 @@ TEST_F(MainWindowKeysTest, AChordInProgressEndsWhenTheFileChanges) {
     ASSERT_TRUE(wait_until([&] { return window_->status_bar().message().isEmpty(); }));
     QTest::keyClick(window_->view(), Qt::Key_U, Qt::ControlModifier);
     EXPECT_FALSE(window_->workbench()->is_visible(Part::panel));
+}
+
+// --- several cursors ---
+
+class MainWindowOccurrencesTest : public MainWindowKeysTest {
+protected:
+    void open_text(const std::string& text) {
+        create_active_window();
+        type(QString::fromStdString(text));
+    }
+
+    void put_caret(std::size_t offset) {
+        ASSERT_TRUE(window_->current_document()
+                        ->set_selections(core::SelectionSet::from({core::Selection::caret(offset)}))
+                        .has_value());
+        window_->view()->document_changed_elsewhere();
+    }
+
+    void ctrl(Qt::Key key, Qt::KeyboardModifiers more = Qt::NoModifier) {
+        QTest::keyClick(window_->view(), key, Qt::ControlModifier | more);
+    }
+
+    std::vector<core::Selection> selections() const {
+        return window_->current_document()->selections().all();
+    }
+};
+
+TEST_F(MainWindowOccurrencesTest,
+       ControlDSelectsTheWordThenAddsTheNextOccurrencesAndTypingRenamesThemAll) {
+    open_text("foo bar foo baz foo");
+    put_caret(1);
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}}));
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}}));
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{8, 11}));
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}, {16, 19}}));
+
+    type("qux");
+    EXPECT_EQ(current_text(), "qux bar qux baz qux");
+}
+
+TEST_F(MainWindowOccurrencesTest, ControlDWrapsAroundAndStopsWhenEveryOccurrenceIsSelected) {
+    open_text("foo bar foo");
+    put_caret(9);
+    ctrl(Qt::Key_D);
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}}));
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{0, 3}));
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, TheSearchOfALoneCaretKeepsMatchingWholeWordsAcrossPresses) {
+    open_text("foo foobar foo");
+    put_caret(1);
+    ctrl(Qt::Key_D);
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {11, 14}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, ASelectionSearchesItsTextWithTheFindBarsOptions) {
+    open_text("foo foobar Foo foo");
+    ctrl(Qt::Key_Home);
+    QTest::keyClick(window_->view(), Qt::Key_Right, Qt::ShiftModifier);
+    QTest::keyClick(window_->view(), Qt::Key_Right, Qt::ShiftModifier);
+    QTest::keyClick(window_->view(), Qt::Key_Right, Qt::ShiftModifier);
+    ASSERT_EQ(selections(), (std::vector<core::Selection>{{0, 3}}));
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{4, 7}));
+
+    put_caret(0);
+    QTest::keyClick(window_->view(), Qt::Key_Right, Qt::ShiftModifier | Qt::ControlModifier);
+    window_->commands().execute("actions.find");
+    window_->find_bar()->match_case_button()->setChecked(true);
+    window_->find_bar()->whole_word_button()->setChecked(true);
+    window_->view()->setFocus();
+    ASSERT_EQ(selections(), (std::vector<core::Selection>{{0, 3}}));
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{15, 18}));
+}
+
+TEST_F(MainWindowOccurrencesTest, MovingTheCaretEndsTheSearch) {
+    open_text("foo foobar foo");
+    put_caret(1);
+    ctrl(Qt::Key_D);
+    QTest::keyClick(window_->view(), Qt::Key_Left);
+    QTest::keyClick(window_->view(), Qt::Key_Left);
+    ASSERT_EQ(selections(), (std::vector<core::Selection>{{0, 0}}));
+    ctrl(Qt::Key_D);
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {11, 14}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, LeavingTheEditorEndsTheSearch) {
+    open_text("foo foobar foo");
+    put_caret(1);
+    ctrl(Qt::Key_D);
+    window_->commands().execute("actions.find");
+    window_->view()->setFocus();
+    ASSERT_EQ(selections(), (std::vector<core::Selection>{{0, 3}}));
+    // The selection is searched with the find bar's options now, not as a whole word.
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{4, 7}));
+}
+
+TEST_F(MainWindowOccurrencesTest, ACaretOutsideAWordDoesNothing) {
+    open_text("foo  bar");
+    put_caret(4);
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{4, 4}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, SelectionsOfDifferentTextGrowToTheirWordsFirst) {
+    open_text("foo bar foo bar");
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(core::SelectionSet::from(
+                        {core::Selection::caret(1), core::Selection::caret(5)}))
+                    .has_value());
+    window_->view()->document_changed_elsewhere();
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {4, 7}}));
+    // Still two different texts: nothing to look for yet.
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {4, 7}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, SeveralSelectionsOfTheSameTextSearchForIt) {
+    open_text("foo bar foo foo");
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(
+                        core::SelectionSet::from({core::Selection{0, 3}, core::Selection{8, 11}}))
+                    .has_value());
+    window_->view()->document_changed_elsewhere();
+    ctrl(Qt::Key_D);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}, {12, 15}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, ControlShiftLSelectsEveryOccurrenceAtOnce) {
+    open_text("foo bar foo foobar foo");
+    put_caret(9);
+    ctrl(Qt::Key_L, Qt::ShiftModifier);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}, {19, 22}}));
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{8, 11}));
+    type("x");
+    EXPECT_EQ(current_text(), "x bar x foobar x");
+}
+
+TEST_F(MainWindowOccurrencesTest,
+       AltEnterInTheFindBarSelectsEveryMatchOfItsPatternAndFocusesTheEditor) {
+    open_text("a1 b22 c333");
+    window_->commands().execute("actions.find");
+    window_->find_bar()->regex_button()->setChecked(true);
+    window_->find_bar()->find_field()->setText("\\d+");
+    ASSERT_FALSE(window_->find_bar()->has_error());
+    ASSERT_TRUE(window_->find_bar()->find_field()->hasFocus());
+
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_Return, Qt::AltModifier);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{1, 2}, {4, 6}, {8, 11}}));
+    EXPECT_TRUE(window_->view()->hasFocus());
+    EXPECT_FALSE(window_->find_bar()->isHidden());
+}
+
+TEST_F(MainWindowOccurrencesTest, TheSelectAllMatchesCommandDoesNothingWhileTheFindBarIsClosed) {
+    open_text("a1 b22");
+    window_->commands().execute("editor.action.selectAllMatches");
+    EXPECT_EQ(selections().size(), 1U);
+}
+
+TEST_F(MainWindowOccurrencesTest, ControlDInTheFindBarAddsTheNextMatchOfItsPattern) {
+    open_text("one two one two one");
+    put_caret(0);
+    window_->commands().execute("actions.find");
+    window_->find_bar()->find_field()->clear();
+    window_->find_bar()->find_field()->setText("one");
+    ASSERT_TRUE(window_->find_bar()->find_field()->hasFocus());
+    ASSERT_EQ(selections(), (std::vector<core::Selection>{{0, 3}}));
+
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_D, Qt::ControlModifier);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}}));
+    EXPECT_EQ(window_->find_bar()->find_field()->text(), "one");
+}
+
+TEST_F(MainWindowOccurrencesTest, TheFindBarsPatternWinsOverTheSelectionWhileTheBarHasTheFocus) {
+    open_text("one two one two one");
+    window_->commands().execute("actions.find");
+    window_->find_bar()->find_field()->clear();
+    window_->find_bar()->find_field()->setText("two");
+    ASSERT_TRUE(window_->find_bar()->find_field()->hasFocus());
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(core::SelectionSet::from({core::Selection{8, 11}}))
+                    .has_value());
+    window_->view()->document_changed_elsewhere();
+
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_D, Qt::ControlModifier);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{8, 11}, {12, 15}}));
+
+    QTest::keyClick(window_->find_bar()->find_field(), Qt::Key_L,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{4, 7}, {12, 15}}));
+}
+
+TEST_F(MainWindowOccurrencesTest, SelectingMoreThanTheMatchLimitStopsAtItAndSaysSo) {
+    open_text("");
+    std::string text;
+    for (int i = 0; i < 20100; ++i) {
+        text += "a ";
+    }
+    const std::vector<core::Edit> insertion{{0, 0, text}};
+    ASSERT_TRUE(window_->current_document()->apply_edits(insertion).has_value());
+    window_->view()->document_changed_elsewhere();
+    put_caret(0);
+
+    ctrl(Qt::Key_L, Qt::ShiftModifier);
+    EXPECT_EQ(selections().size(), 20000U);
+    EXPECT_EQ(window_->status_bar().message(), "Only the first 20000 occurrences were selected");
+}
+
+TEST_F(MainWindowOccurrencesTest, RendersTheSelectedOccurrences) {
+    open_text("");
+    const std::vector<core::Edit> insertion{
+        {0, 0, "let count = 1;\nlet total = count + count;\nreturn count;"}};
+    ASSERT_TRUE(window_->current_document()->apply_edits(insertion).has_value());
+    window_->view()->document_changed_elsewhere();
+    put_caret(5);
+    ctrl(Qt::Key_D);
+    ctrl(Qt::Key_D);
+    ctrl(Qt::Key_D);
+    QApplication::processEvents();
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/occurrences.png");
+    }
+    EXPECT_EQ(selections().size(), 3U);
 }
 
 // --- extension contributions ---

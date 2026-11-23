@@ -98,6 +98,12 @@ TEST(DefaultKeybindingsTest, TheStandardShortcutsAreVsCodes) {
     EXPECT_EQ(keys_of(linux, "editor.action.previousMatchFindAction"), chords({"shift+f3"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.showCommands"), chords({"ctrl+shift+p", "f1"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.toggleSidebarVisibility"), chords({"ctrl+b"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.addSelectionToNextFindMatch"), chords({"ctrl+d"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.selectHighlights"), chords({"ctrl+shift+l"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.selectAllMatches"), chords({"alt+enter"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos),
+                      "editor.action.addSelectionToNextFindMatch"),
+              chords({"cmd+d"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.togglePanel"), chords({"ctrl+j"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.splitEditor"), chords({"ctrl+\\"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.closeActiveEditor"), chords({"ctrl+w"}));
@@ -143,6 +149,14 @@ TEST(DefaultKeybindingsTest, TheCommandsOfTheEditorApplyWhereTheEditorHasTheFocu
     EXPECT_EQ(resolved(table, "ctrl+s", context({})), "workbench.action.files.save");
     EXPECT_EQ(resolved(table, "f3", context({"editorFocus"})), "editor.action.nextMatchFindAction");
     EXPECT_EQ(resolved(table, "f3", context({})), "-");
+}
+
+TEST(DefaultKeybindingsTest, AltEnterSelectsTheFindMatchesOnlyWhileTheFindBarIsShown) {
+    const KeybindingTable table(default_keybindings(KeyPlatform::linux));
+    EXPECT_EQ(resolved(table, "alt+enter", context({"editorFocus", "findWidgetVisible"})),
+              "editor.action.selectAllMatches");
+    EXPECT_EQ(resolved(table, "alt+enter", context({"editorFocus"})), "-");
+    EXPECT_EQ(resolved(table, "alt+enter", context({"findWidgetVisible"})), "-");
 }
 
 TEST(DefaultKeybindingsTest, ControlWClosesAnEmptyGroupWhenThereIsMoreThanOne) {

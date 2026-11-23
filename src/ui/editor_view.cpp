@@ -414,6 +414,103 @@ void EditorView::paste() {
     }
 }
 
+EditorView::OccurrenceSession* EditorView::occurrence_session(const OccurrenceSource& source) {
+    if (occurrence_session_ && (document_->selections() != occurrence_session_->selections ||
+                                (occurrence_session_->uses_find_options &&
+                                 (occurrence_session_->match_case != source.match_case ||
+                                  occurrence_session_->whole_word != source.whole_word)))) {
+        occurrence_session_.reset();
+    }
+    return occurrence_session_ ? &*occurrence_session_ : nullptr;
+}
+
+std::optional<EditorView::OccurrenceSession>
+EditorView::begin_occurrence_session(const OccurrenceSource& source) const {
+    core::Query query;
+    std::optional<core::Selection> first;
+    bool uses_find_options = true;
+    if (!source.find_text.empty()) {
+        query = {.pattern = source.find_text,
+                 .match_case = source.match_case,
+                 .whole_word = source.whole_word};
+    } else {
+        auto occurrence = controller_->occurrence_query(source.match_case, source.whole_word);
+        if (!occurrence) {
+            return std::nullopt;
+        }
+        query = std::move(occurrence->query);
+        first = occurrence->first;
+        const auto& selections = document_->selections();
+        uses_find_options = !(selections.all().size() == 1 && selections.primary().empty());
+    }
+    auto search = core::Search::create(query);
+    if (!search) {
+        return std::nullopt;
+    }
+    return OccurrenceSession{.first = first,
+                             .search = std::move(*search),
+                             .selections = document_->selections(),
+                             .uses_find_options = uses_find_options,
+                             .match_case = source.match_case,
+                             .whole_word = source.whole_word};
+}
+
+void EditorView::add_next_occurrence(const OccurrenceSource& source) {
+    if (!controller_) {
+        return;
+    }
+    OccurrenceSession* session = occurrence_session(source);
+    if (!session) {
+        if (document_->selections().all().size() > 1 &&
+            !controller_->selections_share_text(source.match_case)) {
+            // Several selections of different text have no single thing to look for: each caret
+            // grows to its word, and the next press searches from there.
+            apply(controller_->expand_carets_to_words());
+            return;
+        }
+        occurrence_session_ = begin_occurrence_session(source);
+        if (!occurrence_session_) {
+            return;
+        }
+        session = &*occurrence_session_;
+    }
+    if (session->first) {
+        const core::Selection first = *session->first;
+        session->first.reset();
+        apply(controller_->add_selection(first));
+    } else {
+        apply(controller_->add_next_occurrence(session->search));
+    }
+    session->selections = document_->selections();
+}
+
+bool EditorView::select_all_occurrences(const OccurrenceSource& source, std::size_t limit) {
+    if (!controller_) {
+        return false;
+    }
+    const OccurrenceSession* session = occurrence_session(source);
+    std::optional<OccurrenceSession> started;
+    if (!session) {
+        started = begin_occurrence_session(source);
+        if (!started) {
+            return false;
+        }
+        session = &*started;
+    }
+    const bool truncated = select_all_matches(session->search, limit);
+    occurrence_session_.reset();
+    return truncated;
+}
+
+bool EditorView::select_all_matches(const core::Search& search, std::size_t limit) {
+    if (!controller_) {
+        return false;
+    }
+    const auto result = controller_->select_all_occurrences(search, limit);
+    apply(result.outcome);
+    return result.truncated;
+}
+
 void EditorView::select_all() {
     if (controller_) {
         apply(controller_->select_all());
@@ -604,6 +701,7 @@ void EditorView::focusInEvent(QFocusEvent* event) {
 
 void EditorView::focusOutEvent(QFocusEvent* event) {
     QAbstractScrollArea::focusOutEvent(event);
+    occurrence_session_.reset();
     caret_timer_.stop();
     caret_visible_ = true;
     viewport()->update();
