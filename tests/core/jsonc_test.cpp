@@ -144,3 +144,117 @@ TEST(Jsonc, BlankMeansOnlyWhitespaceAndComments) {
 }
 
 } // namespace
+
+namespace {
+
+using anvil::core::JsoncMember;
+using anvil::core::JsoncNode;
+using anvil::core::parse_jsonc_tree;
+
+std::string_view slice(std::string_view text, const JsoncNode& node) {
+    return text.substr(node.begin, node.end - node.begin);
+}
+
+TEST(JsoncTree, RecordsTheRangeOfEveryValueAndEveryName) {
+    const std::string text =
+        R"j({ /* c */ "a" : 1, "b": [true, "x", null], // t
+ "c": {"d": -2.5e3} })j";
+    const auto root = parse_jsonc_tree(text);
+    ASSERT_TRUE(root.has_value()) << root.error().message;
+    EXPECT_EQ(root->kind, JsoncNode::Kind::object);
+    EXPECT_EQ(root->begin, 0u);
+    EXPECT_EQ(root->end, text.size());
+    EXPECT_EQ(root->close, text.size() - 1);
+    ASSERT_EQ(root->members.size(), 3u);
+
+    const JsoncMember& a = root->members[0];
+    EXPECT_EQ(a.name, "a");
+    EXPECT_EQ(text.substr(a.name_begin, a.name_end - a.name_begin), "\"a\"");
+    EXPECT_EQ(a.value.kind, JsoncNode::Kind::number);
+    EXPECT_EQ(slice(text, a.value), "1");
+    EXPECT_EQ(text[a.comma], ',');
+
+    const JsoncMember& b = root->members[1];
+    EXPECT_EQ(b.value.kind, JsoncNode::Kind::array);
+    EXPECT_EQ(slice(text, b.value), R"j([true, "x", null])j");
+    EXPECT_EQ(text[b.value.close], ']');
+    ASSERT_EQ(b.value.elements.size(), 3u);
+    EXPECT_EQ(b.value.elements[0].kind, JsoncNode::Kind::boolean);
+    EXPECT_EQ(slice(text, b.value.elements[0]), "true");
+    EXPECT_EQ(b.value.elements[1].kind, JsoncNode::Kind::string);
+    EXPECT_EQ(slice(text, b.value.elements[1]), "\"x\"");
+    EXPECT_EQ(b.value.elements[2].kind, JsoncNode::Kind::null);
+    EXPECT_EQ(slice(text, b.value.elements[2]), "null");
+    EXPECT_EQ(text[b.comma], ',');
+
+    const JsoncMember& c = root->members[2];
+    EXPECT_EQ(c.value.kind, JsoncNode::Kind::object);
+    EXPECT_EQ(slice(text, c.value), R"j({"d": -2.5e3})j");
+    ASSERT_EQ(c.value.members.size(), 1u);
+    EXPECT_EQ(slice(text, c.value.members[0].value), "-2.5e3");
+    // The last property has no comma after it.
+    EXPECT_EQ(c.comma, JsoncMember::npos);
+    EXPECT_EQ(c.value.members[0].comma, JsoncMember::npos);
+}
+
+TEST(JsoncTree, ATrailingCommaBelongsToTheLastProperty) {
+    const std::string text = R"j({"a": 1, "b": 2, })j";
+    const auto root = parse_jsonc_tree(text);
+    ASSERT_TRUE(root.has_value());
+    ASSERT_EQ(root->members.size(), 2u);
+    EXPECT_EQ(text[root->members[0].comma], ',');
+    EXPECT_EQ(text[root->members[1].comma], ',');
+    EXPECT_EQ(root->members[1].comma, text.rfind(','));
+}
+
+TEST(JsoncTree, ARepeatedNameAppearsEachTime) {
+    const std::string text = R"j({"a": 1, "a": 2})j";
+    const auto root = parse_jsonc_tree(text);
+    ASSERT_TRUE(root.has_value());
+    ASSERT_EQ(root->members.size(), 2u);
+    EXPECT_EQ(slice(text, root->members[0].value), "1");
+    EXPECT_EQ(slice(text, root->members[1].value), "2");
+}
+
+TEST(JsoncTree, ARangeCountsFromTheStartOfTheTextByteOrderMarkIncluded) {
+    const std::string text = "\xEF\xBB\xBF  {\"é\": \"日本\"}";
+    const auto root = parse_jsonc_tree(text);
+    ASSERT_TRUE(root.has_value());
+    EXPECT_EQ(root->begin, 5u);
+    EXPECT_EQ(text[root->begin], '{');
+    EXPECT_EQ(slice(text, root->members[0].value), "\"日本\"");
+    EXPECT_EQ(text.substr(root->members[0].name_begin,
+                          root->members[0].name_end - root->members[0].name_begin),
+              "\"é\"");
+}
+
+TEST(JsoncTree, AScalarAtTheTopLevelHasItsRange) {
+    const auto root = parse_jsonc_tree(" // c\n 42 ");
+    ASSERT_TRUE(root.has_value());
+    EXPECT_EQ(root->kind, JsoncNode::Kind::number);
+    EXPECT_EQ(root->begin, 7u);
+    EXPECT_EQ(root->end, 9u);
+}
+
+TEST(JsoncTree, FailsLikeParseJsoncOnTheSameText) {
+    for (const char* text :
+         {"", "   ", "// only a comment", "{", "{\"a\" 1}", "{\"a\": }", "[1, 2", "{\"a\": 1} x",
+          "{\"a\": \"\\x\"}", "\"unterminated", "{\"a\": 1,, }", "tru", "{\"a\": 01}"}) {
+        const auto tree = parse_jsonc_tree(text);
+        const auto plain = anvil::core::parse_jsonc(text);
+        ASSERT_EQ(tree.has_value(), plain.has_value()) << text;
+        if (!tree) {
+            EXPECT_EQ(tree.error().message, plain.error().message) << text;
+        }
+    }
+}
+
+TEST(JsoncTree, AcceptsWhatParseJsoncAccepts) {
+    for (const char* text : {"{}", "[]", "{\"a\": [1, {\"b\": null}], \"c\": \"x\"} // end",
+                             "/* c */ {\"a\": 1,}", "\xEF\xBB\xBF{\"a\": 1}", "[1, 2,]"}) {
+        ASSERT_TRUE(parse_jsonc_tree(text).has_value()) << text;
+        ASSERT_TRUE(anvil::core::parse_jsonc(text).has_value()) << text;
+    }
+}
+
+} // namespace

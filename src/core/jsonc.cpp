@@ -57,7 +57,7 @@ public:
         start_ = offset_;
     }
 
-    Result<json> parse_document() {
+    Result<json> parse_document(JsoncNode* root = nullptr) {
         if (const auto invalid = find_invalid_utf8(text_.substr(start_))) {
             return fail(start_ + *invalid, "invalid UTF-8");
         }
@@ -67,7 +67,7 @@ public:
         if (at_end()) {
             return fail("expected a value");
         }
-        auto value = parse_value(0);
+        auto value = parse_value(0, root);
         if (!value) {
             return value;
         }
@@ -157,16 +157,38 @@ private:
         return {};
     }
 
-    Result<json> parse_value(int depth) {
+    // `node`, when given, receives the value's kind and range, and for an object or an array what
+    // it holds.
+    Result<json> parse_value(int depth, JsoncNode* node = nullptr) {
         if (depth > max_depth) {
             return fail("nesting is too deep");
         }
+        if (node) {
+            node->begin = offset_;
+        }
+        auto value = parse_value_of_kind(depth, node);
+        if (value && node) {
+            node->end = offset_;
+        }
+        return value;
+    }
+
+    Result<json> parse_value_of_kind(int depth, JsoncNode* node) {
+        using Kind = JsoncNode::Kind;
+        const auto kind = [&](Kind of) {
+            if (node) {
+                node->kind = of;
+            }
+        };
         switch (peek()) {
         case '{':
-            return parse_object(depth);
+            kind(Kind::object);
+            return parse_object(depth, node);
         case '[':
-            return parse_array(depth);
+            kind(Kind::array);
+            return parse_array(depth, node);
         case '"': {
+            kind(Kind::string);
             auto text = parse_string();
             if (!text) {
                 return std::unexpected(std::move(text.error()));
@@ -174,13 +196,17 @@ private:
             return json(std::move(*text));
         }
         case 't':
+            kind(Kind::boolean);
             return parse_literal("true", json(true));
         case 'f':
+            kind(Kind::boolean);
             return parse_literal("false", json(false));
         case 'n':
+            kind(Kind::null);
             return parse_literal("null", json(nullptr));
         default:
             if (peek() == '-' || is_digit(peek())) {
+                kind(Kind::number);
                 return parse_number();
             }
             return fail(std::format("unexpected {}, expected a value", describe_next()));
@@ -366,7 +392,7 @@ private:
         }
     }
 
-    Result<json> parse_array(int depth) {
+    Result<json> parse_array(int depth, JsoncNode* node) {
         ++offset_;
         json result = json::array();
         while (true) {
@@ -377,10 +403,17 @@ private:
                 return fail("unterminated array");
             }
             if (peek() == ']') {
+                if (node) {
+                    node->close = offset_;
+                }
                 ++offset_;
                 return result;
             }
-            auto element = parse_value(depth + 1);
+            JsoncNode* slot = nullptr;
+            if (node) {
+                slot = &node->elements.emplace_back();
+            }
+            auto element = parse_value(depth + 1, slot);
             if (!element) {
                 return element;
             }
@@ -399,7 +432,7 @@ private:
         }
     }
 
-    Result<json> parse_object(int depth) {
+    Result<json> parse_object(int depth, JsoncNode* node) {
         ++offset_;
         json result = json::object();
         while (true) {
@@ -410,6 +443,9 @@ private:
                 return fail("unterminated object");
             }
             if (peek() == '}') {
+                if (node) {
+                    node->close = offset_;
+                }
                 ++offset_;
                 return result;
             }
@@ -417,9 +453,17 @@ private:
                 return fail(
                     std::format("unexpected {}, expected a property name", describe_next()));
             }
+            const std::size_t name_begin = offset_;
             auto key = parse_string();
             if (!key) {
                 return std::unexpected(std::move(key.error()));
+            }
+            JsoncMember* member = nullptr;
+            if (node) {
+                member = &node->members.emplace_back();
+                member->name = *key;
+                member->name_begin = name_begin;
+                member->name_end = offset_;
             }
             if (auto skipped = skip_trivia(); !skipped) {
                 return std::unexpected(std::move(skipped.error()));
@@ -434,7 +478,7 @@ private:
             if (at_end()) {
                 return fail("expected a value");
             }
-            auto value = parse_value(depth + 1);
+            auto value = parse_value(depth + 1, member ? &member->value : nullptr);
             if (!value) {
                 return value;
             }
@@ -446,6 +490,9 @@ private:
                 return fail("unterminated object");
             }
             if (peek() == ',') {
+                if (member) {
+                    member->comma = offset_;
+                }
                 ++offset_;
             } else if (peek() != '}') {
                 return fail(std::format("unexpected {}, expected ',' or '}}'", describe_next()));
@@ -467,6 +514,16 @@ std::expected<json, Error> parse_jsonc(std::string_view text) {
         return std::unexpected(parser.to_error(result.error()));
     }
     return std::move(*result);
+}
+
+std::expected<JsoncNode, Error> parse_jsonc_tree(std::string_view text) {
+    Parser parser(text);
+    JsoncNode root;
+    auto result = parser.parse_document(&root);
+    if (!result) {
+        return std::unexpected(parser.to_error(result.error()));
+    }
+    return root;
 }
 
 bool is_blank_jsonc(std::string_view text) {
