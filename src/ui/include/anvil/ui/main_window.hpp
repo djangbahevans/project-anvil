@@ -150,6 +150,11 @@ public:
     SettingsStore& settings() {
         return *settings_;
     }
+    // Changes a setting as a command does: the settings file is edited in place when it can be,
+    // and otherwise the change is made for this window only, and the status bar says why. The
+    // `description` names the setting in that message, which is the key when it is empty.
+    SettingsStore::ChangeResult change_setting(const std::string& key, nlohmann::json value,
+                                               const QString& description = {});
     // The editor's commands: menus run them, and extensions can execute them by id.
     CommandRegistry& commands() {
         return commands_;
@@ -192,6 +197,8 @@ private:
     void share_commands_with_extensions();
     void build_menus();
     void apply_settings();
+    // Whether a document of the window shows the file and has changes that are not saved.
+    bool has_unsaved_changes_in(const std::filesystem::path& file) const;
     // Gives the key bindings the default ones followed by the user's.
     void apply_keybindings();
     // Lists the color themes that the extensions declare in their manifests after the built-in

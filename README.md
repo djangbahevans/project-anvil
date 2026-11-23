@@ -68,6 +68,8 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 
 The tab size and `insertSpaces` are also what extensions see in `TextEditor.options`. A file with a syntax error, or a value of the wrong type, leaves the previous settings in force; the problem is shown once in the status bar with its line and column or key name, and is written to standard error.
 
+A command that changes a setting edits `settings.json` in place, so your comments, order and formatting stay, and the change is in force at once. When the file cannot be edited safely (it has a syntax error, it is open in a tab with unsaved changes, or it changed while the command ran), the file is left as it is, the setting changes for the running window only, and the status bar says why.
+
 ## Key bindings
 
 The editor reads `keybindings.json` from the same directory as `settings.json` at startup and again whenever it changes. The file is JSON with comments and trailing commas, and an array of entries as in VS Code:
