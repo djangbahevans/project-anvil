@@ -256,20 +256,20 @@ core::ContextKeys with_settings(std::string_view jsonc) {
     return keys;
 }
 
-const MenuItem& item_of(const std::vector<MenuItem>& menu, std::string_view id) {
-    static const MenuItem none;
+// A copy, so that it outlives the temporary list of items that it was found in.
+MenuItem item_of(const std::vector<MenuItem>& menu, std::string_view id) {
     const MenuItem* found = find_id(menu, id);
     EXPECT_NE(found, nullptr) << id;
-    return found ? *found : none;
+    return found ? *found : MenuItem{};
 }
 
 TEST(MenuModel, AToggledItemIsCheckedWhileItsConditionHolds) {
-    const MenuItem& minimap_default =
+    const MenuItem minimap_default =
         item_of(menu_items("MenubarViewMenu", with_settings("{}")), "editor.action.toggleMinimap");
     EXPECT_TRUE(minimap_default.checkable);
     EXPECT_TRUE(minimap_default.checked) << "VS Code shows the minimap by default";
 
-    const MenuItem& minimap_off = item_of(
+    const MenuItem minimap_off = item_of(
         menu_items("MenubarViewMenu", with_settings(R"j({"editor.minimap.enabled": false})j")),
         "editor.action.toggleMinimap");
     EXPECT_TRUE(minimap_off.checkable);
@@ -285,7 +285,7 @@ TEST(MenuModel, AToggledItemIsCheckedWhileItsConditionHolds) {
 }
 
 TEST(MenuModel, AnItemWithoutAToggledConditionIsNotCheckable) {
-    const MenuItem& open =
+    const MenuItem open =
         item_of(menu_items("MenubarFileMenu", desktop()), "workbench.action.files.openFile");
     EXPECT_FALSE(open.checkable);
     EXPECT_FALSE(open.checked);
