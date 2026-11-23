@@ -1769,6 +1769,75 @@ TEST_F(MainWindowTest, TheSettingsFileDrivesTheEditorAtStartup) {
     EXPECT_EQ(current_text(), "   ");
 }
 
+TEST_F(MainWindowTest, ChangeSettingEditsTheFileAndTheWindowFollowsAtOnce) {
+    settings_file_ = write("settings.json", "{\n    // my size\n    \"editor.fontSize\": 14\n}\n");
+    create_window();
+    EXPECT_EQ(window_->view()->font().pixelSize(), 14);
+
+    const auto result = window_->change_setting("editor.fontSize", 20, "Font Size");
+    EXPECT_EQ(result.outcome, ui::SettingsStore::ChangeResult::Outcome::written);
+    EXPECT_EQ(*platform::read_file(settings_file_),
+              "{\n    // my size\n    \"editor.fontSize\": 20\n}\n");
+    EXPECT_EQ(window_->view()->font().pixelSize(), 20);
+    EXPECT_EQ(window_->status_bar().message(), "");
+}
+
+TEST_F(MainWindowTest, ChangeSettingSaysWhyWhenTheFileHasASyntaxError) {
+    const std::string broken = "{\n    \"editor.tabSize\": 2,\n    \"a\": \n}\n";
+    settings_file_ = write("settings.json", broken);
+    create_window();
+
+    const auto result = window_->change_setting("editor.fontSize", 22, "Font Size");
+    EXPECT_EQ(result.outcome, ui::SettingsStore::ChangeResult::Outcome::session);
+    EXPECT_EQ(*platform::read_file(settings_file_), broken);
+    EXPECT_EQ(window_->view()->font().pixelSize(), 22);
+    const QString message = window_->status_bar().message();
+    EXPECT_TRUE(
+        message.startsWith("Font Size is changed for this session only: settings.json: line 4"))
+        << message.toStdString();
+}
+
+TEST_F(MainWindowTest, ChangeSettingNamesTheKeyWithoutADescription) {
+    create_window();
+    settings_file_.clear();
+    const auto result = window_->change_setting("editor.fontSize", 22);
+    EXPECT_EQ(result.outcome, ui::SettingsStore::ChangeResult::Outcome::session);
+    EXPECT_EQ(window_->status_bar().message(),
+              "editor.fontSize is changed for this session only: there is no settings file");
+}
+
+TEST_F(MainWindowTest, ChangeSettingRejectsAValueThatIsNotValid) {
+    settings_file_ = write("settings.json", R"j({"editor.fontSize": 14})j");
+    create_window();
+    const auto result = window_->change_setting("editor.fontSize", "big", "Font Size");
+    EXPECT_EQ(result.outcome, ui::SettingsStore::ChangeResult::Outcome::rejected);
+    EXPECT_TRUE(window_->status_bar().message().startsWith("Font Size was not changed: "));
+    EXPECT_EQ(window_->view()->font().pixelSize(), 14);
+    EXPECT_EQ(*platform::read_file(settings_file_), R"j({"editor.fontSize": 14})j");
+}
+
+TEST_F(MainWindowTest, ChangeSettingDoesNotWriteOverASettingsFileOpenWithUnsavedChanges) {
+    settings_file_ = write("settings.json", "{\n    \"editor.fontSize\": 14\n}\n");
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(settings_file_.string())));
+    type("// my settings");
+    QTest::keyClick(window_->view(), Qt::Key_Return);
+    ASSERT_TRUE(window_->current_document()->is_dirty());
+
+    const auto result = window_->change_setting("editor.fontSize", 20, "Font Size");
+    EXPECT_EQ(result.outcome, ui::SettingsStore::ChangeResult::Outcome::session);
+    EXPECT_EQ(result.reason, "settings.json has unsaved changes in an editor");
+    EXPECT_EQ(*platform::read_file(settings_file_), "{\n    \"editor.fontSize\": 14\n}\n");
+    EXPECT_TRUE(window_->status_bar().message().contains("unsaved changes"));
+
+    // Once the tab is saved, a change goes to the file again.
+    ASSERT_TRUE(window_->save());
+    EXPECT_EQ(window_->change_setting("editor.fontSize", 18).outcome,
+              ui::SettingsStore::ChangeResult::Outcome::written);
+    EXPECT_EQ(*platform::read_file(settings_file_),
+              "// my settings\n{\n    \"editor.fontSize\": 18\n}\n");
+}
+
 TEST_F(MainWindowTest, ChangingTheFileChangesTheMetricsWithoutARestartAndKeepsTheCaret) {
     settings_file_ = write("settings.json", R"j({"editor.fontSize": 14})j");
     create_window();

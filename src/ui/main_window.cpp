@@ -125,7 +125,11 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     // The window's frame is chosen when it is created, so the settings are read first.
     auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
     settings_ = new SettingsStore(
-        {.file = options_.settings_file, .defaults = platform::editor_defaults(), .logger = logger},
+        {.file = options_.settings_file,
+         .defaults = platform::editor_defaults(),
+         .logger = logger,
+         .is_unsaved =
+             [this](const std::filesystem::path& file) { return has_unsaved_changes_in(file); }},
         this);
     connect(settings_, &SettingsStore::changed, this, &MainWindow::apply_settings);
     connect(settings_, &SettingsStore::load_failed, this, [this](const QString& message) {
@@ -331,6 +335,40 @@ void MainWindow::apply_keybindings() {
     bindings.insert(bindings.end(), user.begin(), user.end());
     keys_->set_bindings(std::move(bindings));
     update_title_bar_tooltips();
+}
+
+bool MainWindow::has_unsaved_changes_in(const std::filesystem::path& file) const {
+    for (const auto& [uri, document] : documents_) {
+        const auto path = uri.file_path();
+        if (!path || !document->is_dirty()) {
+            continue;
+        }
+        std::error_code error;
+        if (std::filesystem::equivalent(*path, file, error) ||
+            path->lexically_normal() == file.lexically_normal()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+SettingsStore::ChangeResult MainWindow::change_setting(const std::string& key, nlohmann::json value,
+                                                       const QString& description) {
+    const auto result = settings_->change(key, std::move(value));
+    const QString name = description.isEmpty() ? QString::fromStdString(key) : description;
+    const QString reason = QString::fromStdString(result.reason);
+    switch (result.outcome) {
+    case SettingsStore::ChangeResult::Outcome::written:
+        break;
+    case SettingsStore::ChangeResult::Outcome::session:
+        status_bar_->show_message(tr("%1 is changed for this session only: %2").arg(name, reason),
+                                  15000);
+        break;
+    case SettingsStore::ChangeResult::Outcome::rejected:
+        status_bar_->show_message(tr("%1 was not changed: %2").arg(name, reason), 15000);
+        break;
+    }
+    return result;
 }
 
 void MainWindow::apply_settings() {
