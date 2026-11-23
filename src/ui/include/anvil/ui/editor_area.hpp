@@ -87,6 +87,11 @@ public:
     // Describes the tab again, which does nothing when it is unchanged.
     void refresh_tab(workbench::GroupId group, std::size_t index);
 
+    // While a tab is dragged out of its strip: the part of the area that is shaded to show where
+    // the drop goes, empty when there is none, and whether the picture of the tab is shown.
+    QRect drop_shade() const;
+    bool drag_picture_visible() const;
+
     // The splitter that holds the groups, or null while there is only one group.
     QSplitter* root_splitter() const;
 
@@ -103,6 +108,15 @@ signals:
     void selections_changed(anvil::workbench::GroupId group);
     // The keyboard focus is in the group, which the layout may not know yet.
     void focus_requested(anvil::workbench::GroupId group);
+    // A tab was dragged out of its strip and dropped: on the strip of a group, at this position
+    // among its tabs; on the middle of a group; or on the edge of a group, which asks to split the
+    // group in that direction and to put the tab in the new group. The area changes nothing itself.
+    void tab_dropped_on_strip(anvil::workbench::GroupId from, int index,
+                              anvil::workbench::GroupId to, int position);
+    void tab_dropped_on_group(anvil::workbench::GroupId from, int index,
+                              anvil::workbench::GroupId to);
+    void tab_dropped_on_edge(anvil::workbench::GroupId from, int index,
+                             anvil::workbench::GroupId to, anvil::workbench::Direction direction);
 
 private:
     void structure_changed() override;
@@ -121,6 +135,13 @@ private:
     void apply_focus();
     void on_focus_changed(QWidget* now);
 
+    struct DropTarget;
+    // What dropping at a position of the screen would do for the tab dragged from `from`.
+    DropTarget drop_target_at(workbench::GroupId from, const QPoint& global) const;
+    void drag_out_moved(workbench::GroupId from, int index, const QPoint& global);
+    void drag_out_dropped(workbench::GroupId from, int index, const QPoint& global);
+    void end_drag_out();
+
     workbench::EditorLayout& layout_;
     const WorkbenchColors& colors_;
     TabInfo tab_info_;
@@ -128,6 +149,10 @@ private:
     core::EditorSettings settings_;
     std::vector<EditorGroupWidget*> groups_;
     QVBoxLayout* box_ = nullptr;
+    class DropOverlay;
+    class DragGhost;
+    DropOverlay* overlay_ = nullptr;
+    DragGhost* ghost_ = nullptr;
     QMetaObject::Connection focus_connection_;
     QPointer<QWidget> root_;
     // While the sizes of the splitters are being set from the layout, a splitter that moves is not

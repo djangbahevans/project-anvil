@@ -140,6 +140,27 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             });
     connect(area_, &EditorArea::text_changed, this, &MainWindow::on_text_changed);
     connect(area_, &EditorArea::selections_changed, this, &MainWindow::on_selections_changed);
+    connect(area_, &EditorArea::tab_dropped_on_strip, this,
+            [this](workbench::GroupId from, int index, workbench::GroupId to, int position) {
+                layout_.move_tab(from, static_cast<std::size_t>(index), to,
+                                 static_cast<std::size_t>(position));
+                focus_current_editor();
+            });
+    connect(area_, &EditorArea::tab_dropped_on_group, this,
+            [this](workbench::GroupId from, int index, workbench::GroupId to) {
+                const workbench::EditorGroup* target = layout_.group(to);
+                layout_.move_tab(from, static_cast<std::size_t>(index), to,
+                                 target ? target->tabs.size() : 0);
+                focus_current_editor();
+            });
+    connect(area_, &EditorArea::tab_dropped_on_edge, this,
+            [this](workbench::GroupId from, int index, workbench::GroupId to,
+                   workbench::Direction direction) {
+                if (const auto created = layout_.split(to, direction)) {
+                    layout_.move_tab(from, static_cast<std::size_t>(index), *created, 0);
+                }
+                focus_current_editor();
+            });
     connect(area_, &EditorArea::focus_requested, this,
             [this](workbench::GroupId group) { layout_.focus(group); });
 
