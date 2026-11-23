@@ -3,6 +3,7 @@
 #include "anvil/core/error.hpp"
 #include "anvil/exthost/commands_service.hpp"
 #include "anvil/exthost/documents_service.hpp"
+#include "anvil/exthost/file_system_service.hpp"
 #include "anvil/exthost/host_process.hpp"
 #include "anvil/exthost/logging_service.hpp"
 #include "anvil/exthost/request_router.hpp"
@@ -107,6 +108,7 @@ private:
     CommandsService commands_;
     DocumentsService documents_;
     LoggingService logging_;
+    FileSystemService file_system_;
     std::vector<Step> startup_steps_;
     HostState state_ = HostState::starting;
     std::string failure_;

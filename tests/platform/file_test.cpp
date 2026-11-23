@@ -59,3 +59,33 @@ TEST_F(FileTest, ReadsARangeOfAFile) {
     EXPECT_EQ(*read_file_range(directory_ / "r.txt", 50, 5), "");
     EXPECT_FALSE(read_file_range(directory_ / "missing", 0, 5).has_value());
 }
+
+TEST_F(FileTest, ReadingAFileThatCannotBeOpenedSaysWhy) {
+    const auto missing = read_file_range(directory_ / "missing.txt", 0, 10);
+    ASSERT_FALSE(missing.has_value());
+    EXPECT_EQ(missing.error().code, anvil::ErrorCode::not_found);
+
+    if (::geteuid() != 0) {
+        const auto path = directory_ / "secret.txt";
+        ASSERT_TRUE(write_file(path, "x").has_value());
+        std::filesystem::permissions(path, std::filesystem::perms::none);
+        const auto denied = read_file(path);
+        ASSERT_FALSE(denied.has_value());
+        EXPECT_EQ(denied.error().code, anvil::ErrorCode::permission_denied);
+        const auto denied_range = read_file_range(path, 0, 1);
+        ASSERT_FALSE(denied_range.has_value());
+        EXPECT_EQ(denied_range.error().code, anvil::ErrorCode::permission_denied);
+        std::filesystem::permissions(path, std::filesystem::perms::owner_all);
+    }
+}
+
+TEST_F(FileTest, WritingWhereTheDirectoryIsMissingOrAFileSaysWhy) {
+    const auto missing = write_file(directory_ / "no" / "such" / "a.txt", "x");
+    ASSERT_FALSE(missing.has_value());
+    EXPECT_EQ(missing.error().code, anvil::ErrorCode::not_found);
+
+    ASSERT_TRUE(write_file(directory_ / "file", "x").has_value());
+    const auto beyond_a_file = write_file(directory_ / "file" / "a.txt", "x");
+    ASSERT_FALSE(beyond_a_file.has_value());
+    EXPECT_EQ(beyond_a_file.error().code, anvil::ErrorCode::not_a_directory);
+}

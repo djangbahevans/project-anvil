@@ -33,6 +33,9 @@ std::span<const Bytes> object_buffers(const Request& request, std::size_t index)
 
 // The serialized form of an error that the extension host rethrows with `message`.
 std::string error_json(std::string_view message);
+// The same with the error's `name`, which the extension host reads for the errors it tells apart,
+// such as the codes of file system errors.
+std::string error_json(std::string_view name, std::string_view message);
 
 // Dispatches requests from the extension host to the handler registered for the service and
 // method. Requests nothing handles are answered with an empty reply and remembered by name, so
