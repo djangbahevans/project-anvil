@@ -29,6 +29,8 @@ build/linux-clang-debug/bin/anvil [file...]
 
 The editor opens the given files in one window with menus for files, editing and extension commands (Ctrl+Shift+P runs a command). Ctrl+F opens a find bar above the editor, with the selected text or the word at the caret already in its field: matches are highlighted and counted as the pattern is typed, Enter and Shift+Enter (or F3 and Shift+F3) step through them and wrap around, and the options match case, whole word and regular expression are toggles (Alt+C, Alt+W and Alt+R, Cmd+Alt on macOS, while the bar is open), and Escape closes the bar from the editor as well as from its fields. With nothing selected, Ctrl+C and Ctrl+X copy and cut the caret's line, and pasting that text inserts it above the line of the caret. Ctrl+H adds a replace field with Replace and Replace All, where regular expressions can use `$1`-style groups. It uses the extension host when a Node.js binary and the checkout from `scripts/fetch-vscode.sh` are found, and reads these environment variables:
 
+View > Split Editor Right (Ctrl+\) and Split Editor Down add an empty editor group next to the focused one, each group with its own tabs; Focus Next Group, Focus Previous Group and Close Editor Group move between groups and remove one. Opening a file that is open in another group focuses its tab there, because a document is shown in one group at a time.
+
 | Variable | Meaning |
 | --- | --- |
 | `ANVIL_EXTENSIONS` | unpacked extension directories, separated like `PATH` entries |
