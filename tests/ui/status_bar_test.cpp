@@ -1,6 +1,9 @@
+#include "accessibility_recorder.hpp"
 #include "anvil/ui/status_bar.hpp"
 
+#include <QAccessible>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QHelpEvent>
 #include <QImage>
 #include <QMouseEvent>
@@ -514,6 +517,169 @@ TEST_F(StatusBarTest, AToolTipShowsForTheItemUnderTheMouse) {
 
 TEST_F(StatusBarTest, IsNamedForAssistiveTechnology) {
     EXPECT_EQ(bar_->accessibleName(), "Status Bar");
+}
+
+// --- accessibility ---
+
+namespace {
+
+class StatusBarAccessibilityTest : public StatusBarTest {
+protected:
+    void SetUp() override {
+        StatusBarTest::SetUp();
+        recorder_ = std::make_unique<AccessibilityRecorder>();
+    }
+    void TearDown() override {
+        recorder_.reset();
+    }
+
+    QAccessibleInterface* bar_interface() {
+        return QAccessible::queryAccessibleInterface(bar_.get());
+    }
+
+    std::vector<QString> names() {
+        std::vector<QString> result;
+        QAccessibleInterface* bar = bar_interface();
+        for (int i = 0; i < bar->childCount(); ++i) {
+            result.push_back(bar->child(i)->text(QAccessible::Name));
+        }
+        return result;
+    }
+
+    bool signalled(QAccessible::Event type, int child) {
+        return recorder_->contains(type, bar_.get(), child);
+    }
+
+    std::unique_ptr<AccessibilityRecorder> recorder_;
+};
+
+} // namespace
+
+TEST_F(StatusBarAccessibilityTest, TheBarIsAStatusBarWithAnItemForEachItem) {
+    add("a", StatusBarSide::left, "A");
+    add("b", StatusBarSide::right, "B");
+    QAccessibleInterface* bar = bar_interface();
+    ASSERT_NE(bar, nullptr);
+    EXPECT_EQ(bar->role(), QAccessible::StatusBar);
+    EXPECT_EQ(bar->text(QAccessible::Name), "Status Bar");
+    EXPECT_EQ(bar->childCount(), 2);
+}
+
+TEST_F(StatusBarAccessibilityTest, ItemsFollowTheDisplayOrderLeftGroupThenRightGroup) {
+    add("right-low", StatusBarSide::right, "R1", 0);
+    add("left-low", StatusBarSide::left, "L2", 0);
+    add("right-high", StatusBarSide::right, "R2", 5);
+    add("left-high", StatusBarSide::left, "L1", 5);
+    EXPECT_EQ(names(), (std::vector<QString>{"L1", "L2", "R2", "R1"}));
+
+    QAccessibleInterface* bar = bar_interface();
+    for (int i = 0; i < bar->childCount(); ++i) {
+        EXPECT_EQ(bar->indexOfChild(bar->child(i)), i);
+        EXPECT_EQ(bar->child(i)->parent(), bar);
+    }
+}
+
+TEST_F(StatusBarAccessibilityTest, AnItemWithoutACommandIsStaticTextAndOneWithACommandIsAButton) {
+    bar_->set_item("plain", StatusBarSide::left, {.text = "Plain", .tooltip = "About plain"});
+    bar_->set_item("action", StatusBarSide::left,
+                   {.text = "Action", .tooltip = "Do it", .command = "do.it", .priority = -1});
+    QAccessibleInterface* bar = bar_interface();
+    QAccessibleInterface* plain = bar->child(0);
+    QAccessibleInterface* action = bar->child(1);
+    EXPECT_EQ(plain->role(), QAccessible::StaticText);
+    EXPECT_EQ(plain->text(QAccessible::Name), "Plain");
+    EXPECT_EQ(plain->text(QAccessible::Description), "About plain");
+    EXPECT_EQ(action->role(), QAccessible::Button);
+    EXPECT_EQ(action->text(QAccessible::Name), "Action");
+    EXPECT_EQ(action->text(QAccessible::Description), "Do it");
+}
+
+TEST_F(StatusBarAccessibilityTest, AnItemsRectangleIsWhereItIsPainted) {
+    add("a", StatusBarSide::left, "Alpha");
+    const QRect painted = bar_->item_rect("a");
+    const QRect reported = bar_interface()->child(0)->rect();
+    EXPECT_EQ(reported.size(), painted.size());
+    EXPECT_EQ(reported.topLeft(), bar_->mapToGlobal(painted.topLeft()));
+    EXPECT_EQ(bar_interface()->childAt(reported.center().x(), reported.center().y()),
+              bar_interface()->child(0));
+    EXPECT_EQ(bar_interface()->childAt(bar_->mapToGlobal(QPoint(595, 5)).x(),
+                                       bar_->mapToGlobal(QPoint(595, 5)).y()),
+              nullptr);
+}
+
+TEST_F(StatusBarAccessibilityTest, PressingAnItemWithACommandAsksForItsCommand) {
+    add("plain", StatusBarSide::left, "Plain", 1);
+    add("action", StatusBarSide::left, "Action", 0, "do.it");
+    QSignalSpy requests(bar_.get(), &StatusBar::command_requested);
+    QAccessibleInterface* bar = bar_interface();
+
+    QAccessibleActionInterface* plain = bar->child(0)->actionInterface();
+    QAccessibleActionInterface* action = bar->child(1)->actionInterface();
+    ASSERT_NE(action, nullptr);
+    EXPECT_EQ(action->actionNames(), QStringList{QAccessibleActionInterface::pressAction()});
+    action->doAction(QAccessibleActionInterface::pressAction());
+    ASSERT_EQ(requests.count(), 1);
+    EXPECT_EQ(requests.at(0).at(0).toString(), "do.it");
+
+    ASSERT_NE(plain, nullptr);
+    EXPECT_TRUE(plain->actionNames().isEmpty());
+    plain->doAction(QAccessibleActionInterface::pressAction());
+    EXPECT_EQ(requests.count(), 1);
+}
+
+TEST_F(StatusBarAccessibilityTest, ItemsThatAMessageHidesAreNotExposedWhileItShows) {
+    add("left", StatusBarSide::left, "Left");
+    add("right", StatusBarSide::right, "Right");
+    bar_->show_message("Saved");
+    EXPECT_EQ(names(), (std::vector<QString>{"Right"}));
+    bar_->clear_message();
+    EXPECT_EQ(names(), (std::vector<QString>{"Left", "Right"}));
+}
+
+TEST_F(StatusBarAccessibilityTest, TheInterfaceOfARemovedItemIsDropped) {
+    add("a", StatusBarSide::left, "A", 1);
+    add("b", StatusBarSide::left, "B", 0);
+    QAccessibleInterface* b = bar_interface()->child(1);
+    ASSERT_TRUE(b->isValid());
+    const QAccessible::Id id = QAccessible::uniqueId(b);
+    ASSERT_EQ(QAccessible::accessibleInterface(id), b);
+
+    bar_->remove_item("b");
+    EXPECT_EQ(names(), (std::vector<QString>{"A"}));
+    EXPECT_EQ(QAccessible::accessibleInterface(id), nullptr);
+}
+
+TEST_F(StatusBarAccessibilityTest, ChangingTheTextOfAnItemSignalsANameChange) {
+    add("a", StatusBarSide::left, "A", 1);
+    add("b", StatusBarSide::left, "B", 0);
+    recorder_->clear();
+    add("b", StatusBarSide::left, "Bee", 0);
+    EXPECT_TRUE(signalled(QAccessible::NameChanged, 1));
+    EXPECT_FALSE(signalled(QAccessible::NameChanged, 0));
+    EXPECT_EQ(names(), (std::vector<QString>{"A", "Bee"}));
+}
+
+TEST_F(StatusBarAccessibilityTest, ChangingTheTooltipSignalsADescriptionChange) {
+    add("a", StatusBarSide::left, "A");
+    recorder_->clear();
+    bar_->set_item("a", StatusBarSide::left, {.text = "A", .tooltip = "New tip"});
+    EXPECT_TRUE(signalled(QAccessible::DescriptionChanged, 0));
+    EXPECT_FALSE(signalled(QAccessible::NameChanged, 0));
+}
+
+TEST_F(StatusBarAccessibilityTest, SettingAnItemToWhatItAlreadyIsSignalsNothing) {
+    bar_->set_item("a", StatusBarSide::left, {.text = "A", .tooltip = "tip", .command = "x"});
+    recorder_->clear();
+    bar_->set_item("a", StatusBarSide::left, {.text = "A", .tooltip = "tip", .command = "x"});
+    EXPECT_TRUE(recorder_->events().empty());
+}
+
+TEST_F(StatusBarAccessibilityTest, ChangingOnlyTheColorSignalsNothing) {
+    add("a", StatusBarSide::left, "A");
+    recorder_->clear();
+    bar_->set_item("a", StatusBarSide::left,
+                   {.text = "A", .foreground = {.key = {}, .color = QColor("#ff0000")}});
+    EXPECT_TRUE(recorder_->events().empty());
 }
 
 TEST_F(StatusBarTest, RendersAStatusBarForReview) {

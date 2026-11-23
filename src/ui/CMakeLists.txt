@@ -22,6 +22,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/keybinding_service.hpp
   include/anvil/ui/keybindings_store.hpp
   include/anvil/ui/main_window.hpp
+  include/anvil/ui/painted_accessibility.hpp
   include/anvil/ui/panel.hpp
   include/anvil/ui/quick_pick.hpp
   include/anvil/ui/resources.hpp
@@ -39,6 +40,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
   main_window.cpp
+  painted_accessibility.cpp
   panel.cpp
   quick_pick.cpp
   resources.cpp

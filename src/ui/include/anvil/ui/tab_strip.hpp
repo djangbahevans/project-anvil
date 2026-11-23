@@ -1,5 +1,6 @@
 #pragma once
 
+#include "anvil/ui/painted_accessibility.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QRect>
@@ -25,7 +26,7 @@ namespace anvil::ui {
 //
 // The strip is a view: only what the user does emits a signal. Changing the model through
 // `add_tab`, `remove_tab`, `set_tab`, `move_tab` and `set_current_index` does not.
-class TabStrip : public QWidget {
+class TabStrip : public QWidget, public AccessibleItems {
     Q_OBJECT
 
 public:
@@ -107,6 +108,16 @@ public:
     bool is_dragging_out() const {
         return dragging_out_;
     }
+    // The name of the action of a tab that closes it, besides the one that selects it.
+    static QString close_action() {
+        return QStringLiteral("Close");
+    }
+    // The tabs as assistive technology reads them: a page tab named by its title and described by
+    // its tooltip (with "Unsaved changes" added while it is dirty) and selected when it is the
+    // current one, which can be pressed to select it and closed with `close_action()`.
+    std::vector<AccessibleItem> accessible_items() const override;
+    void do_accessible_action(const QString& key, const QString& action) override;
+
     // The menu for a right click on the tab. The caller owns it.
     std::unique_ptr<QMenu> build_context_menu(int index);
 
