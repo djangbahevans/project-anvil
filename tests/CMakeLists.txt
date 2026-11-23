@@ -128,6 +128,7 @@ if(TARGET anvil_ui)
     ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
     ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
     ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
-    ANVIL_CONTRIBUTIONS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/contributions-extension")
+    ANVIL_CONTRIBUTIONS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/contributions-extension"
+    ANVIL_THEMES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/themes-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()

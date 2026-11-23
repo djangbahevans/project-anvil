@@ -274,3 +274,48 @@ TEST_F(ContributionsTest, TheInitDataActivatesAnExtensionForEachCommandItContrib
     EXPECT_EQ(json::parse(*text)["extensions"]["activationEvents"]["acme.one"],
               (json{"onLanguage:x", "onCommand:one.a", "onCommand:one.b"}));
 }
+
+TEST_F(ContributionsTest, ThemesCarryTheirLabelKindAndAPathInsideTheExtension) {
+    const auto dir = extension(
+        "a", "one",
+        {{"themes",
+          {{{"label", "Plain"}, {"path", "./themes/plain.json"}},
+           {{"id", "light-id"}, {"label", "%light%"}, {"uiTheme", "vs"}, {"path", "light.json"}},
+           {{"label", "Contrast"}, {"uiTheme", "hc-black"}, {"path", "hc.json"}}}}},
+        json{{"light", "Translated Light"}});
+    const Contributions contributions = read({dir});
+    ASSERT_EQ(contributions.themes.size(), 3U);
+    EXPECT_EQ(contributions.themes[0].label, "Plain");
+    EXPECT_TRUE(contributions.themes[0].id.empty());
+    EXPECT_EQ(contributions.themes[0].ui_theme, "vs-dark");
+    EXPECT_EQ(contributions.themes[0].path, dir / "themes" / "plain.json");
+    EXPECT_EQ(contributions.themes[0].extension, "acme.one");
+    EXPECT_EQ(contributions.themes[1].id, "light-id");
+    EXPECT_EQ(contributions.themes[1].label, "Translated Light");
+    EXPECT_EQ(contributions.themes[1].ui_theme, "vs");
+    EXPECT_EQ(contributions.themes[2].ui_theme, "hc-black");
+}
+
+TEST_F(ContributionsTest, ThemesThatCannotBeUsedAreSkippedAndLogged) {
+    const auto dir = extension("a", "one",
+                               {{"themes",
+                                 {3,
+                                  {{"path", "a.json"}},
+                                  {{"label", "No path"}},
+                                  {{"label", "Escapes"}, {"path", "../outside.json"}},
+                                  {{"label", "Absolute"}, {"path", "/etc/passwd"}},
+                                  {{"label", "Fine"}, {"path", "fine.json"}}}}});
+    const Contributions contributions = read({dir});
+    ASSERT_EQ(contributions.themes.size(), 1U);
+    EXPECT_EQ(contributions.themes[0].label, "Fine");
+    EXPECT_TRUE(logger_->contains(LogLevel::warning, "contributes.themes[0] is not an object",
+                                  "extensions"));
+    EXPECT_TRUE(
+        logger_->contains(LogLevel::warning, "contributes.themes[1] has no label", "extensions"));
+    EXPECT_TRUE(
+        logger_->contains(LogLevel::warning, "contributes.themes[2] has no path", "extensions"));
+    EXPECT_TRUE(logger_->contains(LogLevel::warning, "contributes.themes[3].path is outside",
+                                  "extensions"));
+    EXPECT_TRUE(logger_->contains(LogLevel::warning, "contributes.themes[4].path is outside",
+                                  "extensions"));
+}

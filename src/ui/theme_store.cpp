@@ -3,6 +3,7 @@
 #include "anvil/core/jsonc.hpp"
 #include "anvil/platform/file.hpp"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 namespace anvil::ui {
@@ -33,6 +34,29 @@ ThemeStore::ThemeStore(WorkbenchColors& colors, const std::filesystem::path& dir
         entry.id = item.value("id", entry.label);
         entry.kind = core::theme_kind_from_ui_theme(item.value("uiTheme", std::string()));
         entry.file = directory / item["path"].get<std::string>();
+        themes_.push_back(std::move(entry));
+    }
+}
+
+void ThemeStore::add_themes(std::vector<Entry> themes) {
+    for (Entry& entry : themes) {
+        if (entry.id.empty()) {
+            entry.id = entry.label;
+        }
+        if (std::ranges::any_of(themes_,
+                                [&](const Entry& listed) { return listed.id == entry.id; })) {
+            logger_->log(core::LogLevel::warning, "theme",
+                         "The color theme '" + entry.id + "' from " + entry.file.string() +
+                             " is left out because a theme of that name is listed already");
+            continue;
+        }
+        std::error_code ignored;
+        entry.available = std::filesystem::exists(entry.file, ignored);
+        if (!entry.available) {
+            logger_->log(core::LogLevel::warning, "theme",
+                         "The color theme '" + entry.id +
+                             "' is unavailable: " + entry.file.string() + " does not exist");
+        }
         themes_.push_back(std::move(entry));
     }
 }

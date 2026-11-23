@@ -311,3 +311,92 @@ TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {
     EXPECT_EQ(colors_.color("sash.hoverBorder"), colors_.color("focusBorder"));
     EXPECT_EQ(colors_.color("sash.hoverBorder"), QColor(0x39, 0x94, 0xBC, 0xB3));
 }
+
+// --- themes of extensions ---
+
+namespace {
+
+ThemeStore::Entry contributed(std::string id, std::string label, core::ThemeKind kind,
+                              std::filesystem::path file) {
+    return {.id = std::move(id), .label = std::move(label), .kind = kind, .file = std::move(file)};
+}
+
+} // namespace
+
+TEST_F(ThemeStoreTest, ContributedThemesComeAfterTheBuiltInOnesAndAreSelectedByIdOrLabel) {
+    write("ext.json", R"j({"colors": {"editor.background": "#fdf6e3"}})j");
+    open_shipped();
+    store_->add_themes(
+        {contributed("", "Solarized", core::ThemeKind::light, scratch_ / "ext.json"),
+         contributed("sol-dark", "Solarized Dark", core::ThemeKind::dark, scratch_ / "ext.json")});
+    ASSERT_EQ(store_->themes().size(), 12U);
+    EXPECT_EQ(store_->themes()[10].id, "Solarized");
+    EXPECT_EQ(store_->themes()[10].kind, core::ThemeKind::light);
+    EXPECT_EQ(store_->themes()[11].id, "sol-dark");
+
+    ASSERT_TRUE(store_->select("Solarized"));
+    EXPECT_EQ(colors_.color("editor.background"), QColor("#fdf6e3"));
+    ASSERT_TRUE(store_->select("Solarized Dark"));
+    EXPECT_EQ(store_->current(), "sol-dark");
+}
+
+TEST_F(ThemeStoreTest, AContributedThemeTakesTheMissingKeysFromTheDefaultThemeOfItsKind) {
+    write("ext.json", R"j({"colors": {"editor.background": "#fdf6e3"}})j");
+    open_shipped();
+    store_->add_themes(
+        {contributed("Mine", "Mine", core::ThemeKind::light, scratch_ / "ext.json")});
+    ASSERT_TRUE(store_->select("Mine"));
+    ASSERT_TRUE(store_->select("Light 2026"));
+    const QColor light_foreground = colors_.color("editor.foreground");
+    ASSERT_TRUE(store_->select("Mine"));
+    EXPECT_EQ(colors_.color("editor.foreground"), light_foreground);
+}
+
+TEST_F(ThemeStoreTest, ATwiceListedNameKeepsTheFirstThemeAndLogsTheOther) {
+    write("a.json", R"j({"colors": {"editor.background": "#111111"}})j");
+    write("b.json", R"j({"colors": {"editor.background": "#222222"}})j");
+    open_shipped();
+    store_->add_themes(
+        {contributed("Dark 2026", "Dark 2026", core::ThemeKind::dark, scratch_ / "a.json"),
+         contributed("Twin", "Twin", core::ThemeKind::dark, scratch_ / "a.json"),
+         contributed("Twin", "Twin", core::ThemeKind::dark, scratch_ / "b.json")});
+    ASSERT_EQ(store_->themes().size(), 11U);
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "'Dark 2026'", "theme"));
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "'Twin'", "theme"));
+
+    ASSERT_TRUE(store_->select("Twin"));
+    EXPECT_EQ(colors_.color("editor.background"), QColor("#111111"));
+    ASSERT_TRUE(store_->select("Dark 2026"));
+    EXPECT_NE(colors_.color("editor.background"), QColor("#111111"));
+}
+
+TEST_F(ThemeStoreTest, AContributedThemeWithAMissingFileIsListedAsUnavailableAndFailsWhenSelected) {
+    write("ok.json", R"j({"colors": {"editor.background": "#333333"}})j");
+    open_shipped();
+    store_->add_themes({contributed("Gone", "Gone", core::ThemeKind::dark, scratch_ / "gone.json"),
+                        contributed("Fine", "Fine", core::ThemeKind::dark, scratch_ / "ok.json")});
+    ASSERT_EQ(store_->themes().size(), 12U);
+    EXPECT_FALSE(store_->themes()[10].available);
+    EXPECT_TRUE(store_->themes()[11].available);
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "unavailable", "theme"));
+
+    ASSERT_TRUE(store_->select("Fine"));
+    EXPECT_FALSE(store_->select("Gone"));
+    EXPECT_EQ(store_->current(), "Fine");
+    ASSERT_EQ(failures_->count(), 1);
+    EXPECT_TRUE(failures_->at(0).at(0).toString().contains("Gone"));
+}
+
+TEST_F(ThemeStoreTest, AnInvalidContributedThemeFileFailsAndTheOthersStillWork) {
+    write("bad.json", "{\n  \"colors\": {\"a\": }\n}");
+    write("ok.json", R"j({"include": "base.json"})j");
+    write("base.json", R"j({"colors": {"editor.background": "#444444"}})j");
+    open_shipped();
+    store_->add_themes(
+        {contributed("Bad", "Bad", core::ThemeKind::dark, scratch_ / "bad.json"),
+         contributed("Included", "Included", core::ThemeKind::dark, scratch_ / "ok.json")});
+    EXPECT_FALSE(store_->select("Bad"));
+    EXPECT_EQ(failures_->count(), 1);
+    ASSERT_TRUE(store_->select("Included"));
+    EXPECT_EQ(colors_.color("editor.background"), QColor("#444444"));
+}

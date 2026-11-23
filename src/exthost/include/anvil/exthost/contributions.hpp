@@ -49,16 +49,30 @@ struct PaletteRule {
     std::string when;
 };
 
+// A color theme from `contributes.themes`.
+struct ContributedTheme {
+    std::string extension;
+    // Empty when the manifest gives none, in which case the label names the theme.
+    std::string id;
+    std::string label;
+    // `vs-dark` (also when the manifest says nothing), `vs`, `hc-black` or `hc-light`.
+    std::string ui_theme;
+    // The theme file, inside the extension's directory.
+    std::filesystem::path path;
+};
+
 struct Contributions {
     std::vector<ContributedCommand> commands;
+    std::vector<ContributedTheme> themes;
     std::vector<ContributedKeybinding> keybindings;
     std::vector<PaletteRule> palette_rules;
 };
 
-// Reads the `contributes` sections of the manifests of the extensions in `directories`. A manifest
-// that cannot be read is left to `build_init_data` to report. A section that is not what VS Code
-// documents, and an entry of a section that cannot be used, is logged once, with the extension
-// that declares it, and skipped; the other sections and extensions are read as usual.
+// Reads the `contributes` sections (commands, key bindings, palette rules and themes) of the
+// manifests of the extensions in `directories`. A manifest that cannot be read is left to
+// `build_init_data` to report. A section that is not what VS Code documents, and an entry of a
+// section that cannot be used, is logged once, with the extension that declares it, and skipped;
+// the other sections and extensions are read as usual.
 Contributions read_contributions(std::span<const std::filesystem::path> directories,
                                  core::Logger& logger);
 

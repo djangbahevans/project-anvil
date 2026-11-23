@@ -173,6 +173,9 @@ private:
     void apply_settings();
     // Gives the key bindings the default ones followed by the user's.
     void apply_keybindings();
+    // Lists the color themes that the extensions declare in their manifests after the built-in
+    // ones.
+    void add_extension_themes();
     // Takes the key bindings that the extensions declare in their manifests; problems go to
     // `logger`.
     void read_extension_keybindings(core::Logger& logger);

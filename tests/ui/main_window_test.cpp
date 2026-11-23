@@ -3402,3 +3402,37 @@ TEST_F(MainWindowContributionsTest, TheUsersBindingsWinOverThoseOfAnExtension) {
     QTest::qWait(300);
     EXPECT_EQ(current_text(), "");
 }
+
+TEST_F(MainWindowTest, ThemesOfExtensionsAreListedAfterTheBuiltInOnesAndTheSettingSelectsOne) {
+    extension_dirs_ = {ANVIL_THEMES_EXTENSION};
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Fixture Light"})j");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto& themes = window_->themes().themes();
+    ASSERT_EQ(themes.size(), 13U);
+    EXPECT_EQ(themes[10].id, "Fixture Light");
+    EXPECT_EQ(themes[10].kind, core::ThemeKind::light);
+    EXPECT_EQ(themes[11].id, "fixture-included");
+    EXPECT_EQ(themes[11].label, "Fixture Included");
+    EXPECT_EQ(themes[11].kind, core::ThemeKind::dark);
+    EXPECT_EQ(themes[12].id, "Fixture Missing");
+    EXPECT_FALSE(themes[12].available);
+
+    EXPECT_EQ(window_->themes().current(), "Fixture Light");
+    EXPECT_EQ(window_->colors().color("editor.background"), QColor("#fdf6e3"));
+}
+
+TEST_F(MainWindowTest, AContributedThemeCanIncludeAFileAndAMissingOneFailsWithoutChangingTheTheme) {
+    extension_dirs_ = {ANVIL_THEMES_EXTENSION};
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(window_->themes().select("Fixture Included"));
+    EXPECT_EQ(window_->colors().color("editor.background"), QColor("#001122"));
+    EXPECT_EQ(window_->colors().color("editor.foreground"), QColor("#123456"));
+    EXPECT_FALSE(window_->themes().select("Fixture Missing"));
+    EXPECT_EQ(window_->themes().current(), "fixture-included");
+}
