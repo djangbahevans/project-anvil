@@ -450,6 +450,40 @@ TEST_F(MainWindowTest, ReorderingTabsKeepsTheShownDocument) {
     EXPECT_EQ(current_text(), "A");
 }
 
+TEST_F(MainWindowTest, ClosingTheShownTabShowsTheTabThatWasShownBeforeIt) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    click_tab(1);
+    click_tab(3);
+    ASSERT_TRUE(window_->close_document(3));
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1", "a.txt", "b.txt"}));
+    EXPECT_EQ(current_text(), "A");
+    EXPECT_EQ(window_->tab_strip()->current_index(), 1);
+}
+
+TEST_F(MainWindowTest, TheSettingDecidesWhetherClosingShowsTheRecentTabOrTheNeighbor) {
+    settings_file_ =
+        write("settings.json", R"j({"workbench.editor.focusRecentEditorAfterClose": false})j");
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("c.txt", "C").string())));
+    click_tab(1);
+    click_tab(3);
+    ASSERT_TRUE(window_->close_document(3));
+    EXPECT_EQ(current_text(), "B");
+
+    write("settings.json", R"j({"workbench.editor.focusRecentEditorAfterClose": true})j");
+    ASSERT_TRUE(
+        wait_until([&] { return window_->settings().editor().focus_recent_editor_after_close; }));
+    click_tab(0);
+    click_tab(2);
+    ASSERT_TRUE(window_->close_document(2));
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+}
+
 TEST_F(MainWindowTest, ClosingTheShownTabShowsItsNeighbour) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));

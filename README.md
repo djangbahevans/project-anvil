@@ -58,6 +58,8 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `editor.fontSize` | Font size in pixels, clamped to 6-100 | 14 (12 on macOS) |
 | `editor.tabSize` | Columns per tab stop, an integer of at least 1 (values above 1024 are treated as 1024) | 4 |
 | `editor.insertSpaces` | Tab inserts spaces up to the next tab stop when `true`, a tab character when `false` | `true` |
+| `workbench.colorTheme` | The color theme, by id or label: one of the ten that ship with the editor | `"Dark 2026"` |
+| `workbench.editor.focusRecentEditorAfterClose` | Closing the active tab shows the tab that was shown before it when `true`, its right neighbor (the left one for the last tab) when `false` | `true` |
 | `files.eol` | Line ending of new documents: `"\n"`, `"\r\n"` or `"auto"` (CRLF on Windows, LF elsewhere). Opened files keep their own | `"auto"` |
 
 The tab size and `insertSpaces` are also what extensions see in `TextEditor.options`. A file with a syntax error, or a value of the wrong type, leaves the previous settings in force; the problem is shown once in the status bar with its line and column or key name, and is written to standard error.
