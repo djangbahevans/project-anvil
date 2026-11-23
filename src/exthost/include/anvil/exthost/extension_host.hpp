@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/error.hpp"
+#include "anvil/core/workspace.hpp"
 #include "anvil/exthost/commands_service.hpp"
 #include "anvil/exthost/documents_service.hpp"
 #include "anvil/exthost/file_system_service.hpp"
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,6 +32,8 @@ struct ExtensionHostOptions {
     // Receives the extension host's own messages and everything extensions log. Messages are
     // discarded when unset.
     std::shared_ptr<core::Logger> logger{};
+    // The folder extensions work on, trusted. Extensions see no workspace when unset.
+    std::optional<core::Workspace> workspace{};
     std::chrono::milliseconds connect_timeout{15000};
 };
 
@@ -90,7 +94,8 @@ public:
     std::expected<bool, Error> pump(std::chrono::milliseconds timeout);
 
 private:
-    ExtensionHost(std::unique_ptr<HostProcess> host, std::shared_ptr<core::Logger> logger);
+    ExtensionHost(std::unique_ptr<HostProcess> host, std::shared_ptr<core::Logger> logger,
+                  std::optional<core::Workspace> workspace);
 
     struct Step {
         ProxyId target;
@@ -109,6 +114,7 @@ private:
     DocumentsService documents_;
     LoggingService logging_;
     FileSystemService file_system_;
+    std::optional<core::Workspace> workspace_;
     std::vector<Step> startup_steps_;
     HostState state_ = HostState::starting;
     std::string failure_;

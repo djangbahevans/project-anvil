@@ -1,4 +1,5 @@
 #include "anvil/core/log.hpp"
+#include "anvil/core/workspace.hpp"
 #include "anvil/platform/paths.hpp"
 #include "anvil/platform/working_directory.hpp"
 #include "anvil/ui/main_window.hpp"
@@ -9,6 +10,8 @@
 #include <QStandardPaths>
 #include <filesystem>
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -70,7 +73,17 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("Anvil");
 
+    std::vector<std::string> arguments;
+    for (const QString& argument : app.arguments().mid(1)) {
+        arguments.push_back(argument.toStdString());
+    }
+    anvil::core::LaunchArguments launch = anvil::core::parse_launch_arguments(arguments);
+    for (const std::string& problem : launch.problems) {
+        std::cerr << "anvil: " << problem << '\n';
+    }
+
     anvil::ui::MainWindowOptions options;
+    options.workspace = launch.workspace;
     options.extension_host = extension_host_config();
     if (const auto config_dir = anvil::platform::user_config_dir()) {
         options.settings_file = *config_dir / "settings.json";
@@ -80,8 +93,8 @@ int main(int argc, char* argv[]) {
         std::make_shared<anvil::core::StreamLogger>(std::cerr, anvil::core::LogLevel::info);
     anvil::ui::MainWindow window(std::move(options));
 
-    for (const QString& path : app.arguments().mid(1)) {
-        window.open_file(path);
+    for (const std::filesystem::path& file : launch.files) {
+        window.open_file(QString::fromStdString(file.string()));
     }
     window.show();
     return app.exec();

@@ -3,6 +3,7 @@
 #include "anvil/core/document.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/uri.hpp"
+#include "anvil/core/workspace.hpp"
 #include "anvil/ui/command_registry.hpp"
 #include "anvil/ui/editor_area.hpp"
 #include "anvil/ui/editor_view.hpp"
@@ -41,6 +42,9 @@ namespace anvil::ui {
 struct MainWindowOptions {
     // The extension host to run; none runs the editor without extension support.
     std::optional<ExtensionHostBridge::Config> extension_host;
+    // The folder the window works on: its name is in the window title, and the extension host
+    // reports it as the workspace folder.
+    std::optional<core::Workspace> workspace{};
     // Receives the extension host's messages; discarded when unset.
     std::shared_ptr<core::Logger> logger;
     // The user settings file, read at startup and whenever it changes. A missing file means the

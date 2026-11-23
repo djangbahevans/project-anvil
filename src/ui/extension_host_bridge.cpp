@@ -22,6 +22,7 @@ std::expected<void, Error> ExtensionHostBridge::start(const Config& config,
         .extension_dirs = config.extension_dirs,
         .storage_dir = config.storage_dir,
         .logger = std::move(logger),
+        .workspace = config.workspace,
     });
     if (!started) {
         return std::unexpected(std::move(started.error()));

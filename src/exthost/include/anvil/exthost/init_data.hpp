@@ -2,9 +2,11 @@
 
 #include "anvil/core/error.hpp"
 #include "anvil/core/log.hpp"
+#include "anvil/core/workspace.hpp"
 
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,7 +29,13 @@ struct InitDataOptions {
     std::filesystem::path storage_dir{};
     // Where the extension host writes its log files; `storage_dir`/logs when empty.
     std::filesystem::path logs_dir{};
+    // The folder extensions work on; they see no workspace when unset.
+    std::optional<core::Workspace> workspace{};
 };
+
+// The arguments of `ExtHostWorkspace.$initializeWorkspace`, as a JSON array: the workspace data
+// (null without a workspace) and whether the workspace is trusted.
+std::string workspace_initialization_args(const std::optional<core::Workspace>& workspace);
 
 // Builds the JSON text of the extension host's initialization data, reading each extension's
 // manifest. Fails if a manifest is missing or malformed.

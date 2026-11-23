@@ -27,6 +27,7 @@ add_executable(anvil_core_tests
   core/uri_test.cpp
   core/utf_test.cpp
   core/when_expression_test.cpp
+  core/workspace_test.cpp
 )
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)
 target_include_directories(anvil_core_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
@@ -88,6 +89,7 @@ add_executable(anvil_exthost_integration_tests
   exthost/host_process_test.cpp
   exthost/launch_integration_test.cpp
   exthost/logging_integration_test.cpp
+  exthost/workspace_integration_test.cpp
 )
 target_link_libraries(anvil_exthost_integration_tests
   PRIVATE anvil::exthost nlohmann_json::nlohmann_json GTest::gtest_main anvil_compile_options)
@@ -98,7 +100,8 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
   ANVIL_FILESYSTEM_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/filesystem-extension"
   ANVIL_LOGGING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/logging-extension"
-  ANVIL_FAILING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/failing-extension")
+  ANVIL_FAILING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/failing-extension"
+  ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
 
 if(TARGET anvil_ui)
@@ -137,6 +140,7 @@ if(TARGET anvil_ui)
     ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
     ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
     ANVIL_CONTRIBUTIONS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/contributions-extension"
-    ANVIL_THEMES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/themes-extension")
+    ANVIL_THEMES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/themes-extension"
+    ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()

@@ -1,0 +1,11 @@
+{
+  "name": "workspace",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "commands": [{ "command": "anvil.workspace.report", "title": "Anvil: Report Workspace" }]
+  }
+}

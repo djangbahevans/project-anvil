@@ -92,3 +92,48 @@ TEST_F(InitData, TheLogsLocationIsTheGivenSessionDirectoryWhenThereIsOne) {
     ASSERT_TRUE(text.has_value()) << text.error().message;
     EXPECT_EQ(json::parse(*text)["logsLocation"]["path"], "/storage/logs/20261121T143358Z-1234");
 }
+
+TEST_F(InitData, HasNoWorkspaceWithoutAFolder) {
+    const auto text = build_init_data({.app_root = "/app", .storage_dir = "/storage"});
+    ASSERT_TRUE(text.has_value()) << text.error().message;
+    EXPECT_TRUE(json::parse(*text)["workspace"].is_null());
+    EXPECT_EQ(workspace_initialization_args(std::nullopt), "[null,true]");
+}
+
+TEST_F(InitData, DescribesTheWorkspaceFolderForStorage) {
+    const auto folder = root_ / "project";
+    std::filesystem::create_directories(folder);
+    const auto workspace = anvil::core::Workspace::open(folder);
+    ASSERT_TRUE(workspace.has_value());
+
+    const auto text =
+        build_init_data({.app_root = "/app", .storage_dir = "/storage", .workspace = *workspace});
+    ASSERT_TRUE(text.has_value()) << text.error().message;
+    const json data = json::parse(*text)["workspace"];
+    EXPECT_EQ(data["id"], workspace->id);
+    EXPECT_EQ(data["name"], "project");
+    EXPECT_EQ(data["isUntitled"], false);
+    EXPECT_EQ(data["transient"], false);
+}
+
+TEST_F(InitData, SendsTheWorkspaceFolderAsTheOnlyFolderOfATrustedWorkspace) {
+    const auto folder = root_ / "project";
+    std::filesystem::create_directories(folder);
+    const auto workspace = anvil::core::Workspace::open(folder);
+    ASSERT_TRUE(workspace.has_value());
+
+    const json args = json::parse(workspace_initialization_args(*workspace));
+    ASSERT_EQ(args.size(), 2u);
+    EXPECT_EQ(args[1], true);
+    const json& data = args[0];
+    EXPECT_EQ(data["id"], workspace->id);
+    EXPECT_EQ(data["name"], "project");
+    EXPECT_EQ(data["isUntitled"], false);
+    EXPECT_EQ(data["transient"], false);
+    ASSERT_EQ(data["folders"].size(), 1u);
+    EXPECT_EQ(data["folders"][0]["name"], "project");
+    EXPECT_EQ(data["folders"][0]["index"], 0);
+    EXPECT_EQ(
+        data["folders"][0]["uri"],
+        (json{{"$mid", 1}, {"scheme", "file"}, {"path", workspace->folder.generic_string()}}));
+}
