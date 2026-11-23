@@ -6,6 +6,7 @@
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -29,6 +30,7 @@ const QColor match_highlight(255, 190, 0, 90);
 // else is copied.
 constexpr const char* line_marker_format = "application/x-anvil-editor-data";
 constexpr const char* line_marker_key = "isFromEmptySelection";
+constexpr const char* pieces_key = "multicursorText";
 
 QString to_qstring(const std::string& utf8) {
     return QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
@@ -92,6 +94,25 @@ bool is_marked_as_line(const QMimeData* data) {
                .object()
                .value(line_marker_key)
                .toBool();
+}
+
+std::vector<std::string> copied_pieces(const QMimeData* data) {
+    std::vector<std::string> pieces;
+    if (data == nullptr || !data->hasFormat(line_marker_format)) {
+        return pieces;
+    }
+    const QJsonValue value =
+        QJsonDocument::fromJson(data->data(line_marker_format)).object().value(pieces_key);
+    if (!value.isArray()) {
+        return pieces;
+    }
+    for (const QJsonValue piece : value.toArray()) {
+        if (!piece.isString()) {
+            return {};
+        }
+        pieces.push_back(piece.toString().toStdString());
+    }
+    return pieces;
 }
 
 } // namespace
@@ -386,10 +407,16 @@ void EditorView::copy() {
     }
     auto* data = new QMimeData;
     data->setText(to_qstring(copied.text));
-    if (copied.whole_line) {
-        data->setData(
-            line_marker_format,
-            QJsonDocument(QJsonObject{{line_marker_key, true}}).toJson(QJsonDocument::Compact));
+    if (copied.whole_line || !copied.pieces.empty()) {
+        QJsonObject metadata{{line_marker_key, copied.whole_line}};
+        if (!copied.pieces.empty()) {
+            QJsonArray pieces;
+            for (const std::string& piece : copied.pieces) {
+                pieces.append(to_qstring(piece));
+            }
+            metadata.insert(pieces_key, pieces);
+        }
+        data->setData(line_marker_format, QJsonDocument(metadata).toJson(QJsonDocument::Compact));
     }
     QGuiApplication::clipboard()->setMimeData(data);
 }
@@ -403,14 +430,15 @@ void EditorView::cut() {
         return;
     }
     copy();
-    apply(copied.whole_line ? controller_->delete_caret_line() : controller_->delete_selection());
+    apply(controller_->delete_cut());
 }
 
 void EditorView::paste() {
     if (controller_) {
         const QClipboard* clipboard = QGuiApplication::clipboard();
         apply(controller_->paste(clipboard->text().toUtf8().toStdString(),
-                                 is_marked_as_line(clipboard->mimeData())));
+                                 is_marked_as_line(clipboard->mimeData()),
+                                 copied_pieces(clipboard->mimeData())));
     }
 }
 

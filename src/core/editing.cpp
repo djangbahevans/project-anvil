@@ -217,12 +217,42 @@ EditOutcome EditController::type(std::string_view text) {
     return replace_selections(text, EditKind::typing, !has_line_break);
 }
 
-EditOutcome EditController::paste(std::string_view text, bool whole_line) {
+EditOutcome EditController::paste(std::string_view text, bool whole_line,
+                                  const std::vector<std::string>& pieces) {
     if (text.empty()) {
         return {};
     }
     const std::string normalized = normalize_line_endings(text);
     const auto& selections = document_.selections().all();
+    if (selections.size() > 1) {
+        std::vector<std::string> distributed;
+        if (pieces.size() == selections.size()) {
+            for (const std::string& piece : pieces) {
+                distributed.push_back(normalize_line_endings(piece));
+            }
+        } else if (!whole_line) {
+            std::string_view lines = normalized;
+            if (lines.ends_with('\n')) {
+                lines.remove_suffix(1);
+            }
+            std::size_t start = 0;
+            for (;;) {
+                const std::size_t end = lines.find('\n', start);
+                distributed.emplace_back(lines.substr(start, end - start));
+                if (end == std::string_view::npos) {
+                    break;
+                }
+                start = end + 1;
+            }
+            if (distributed.size() != selections.size()) {
+                distributed.clear();
+            }
+        }
+        if (!distributed.empty()) {
+            return replace_each_selection(distributed);
+        }
+    }
+
     const bool all_carets = std::ranges::all_of(
         selections, [](const Selection& selection) { return selection.empty(); });
     if (!whole_line || !all_carets || normalized.find('\n') != normalized.size() - 1) {
@@ -238,6 +268,23 @@ EditOutcome EditController::paste(std::string_view text, bool whole_line) {
         edits.push_back({line_start, line_start, normalized});
         shift += normalized.size();
         after.push_back(Selection::caret(caret.active + shift));
+    }
+    return apply(std::move(edits), std::move(after), EditKind::none, false);
+}
+
+EditOutcome EditController::replace_each_selection(const std::vector<std::string>& texts) {
+    std::vector<Edit> edits;
+    std::vector<Selection> after;
+    Signed shift = 0;
+    std::size_t index = 0;
+    for (const Selection& selection : document_.selections().all()) {
+        const std::string& text = texts[index++];
+        edits.push_back({selection.start(), selection.end(), text});
+        after.push_back(Selection::caret(
+            static_cast<std::size_t>(static_cast<Signed>(selection.start()) + shift) +
+            text.size()));
+        shift += static_cast<Signed>(text.size()) -
+                 static_cast<Signed>(selection.end() - selection.start());
     }
     return apply(std::move(edits), std::move(after), EditKind::none, false);
 }
@@ -329,24 +376,49 @@ EditOutcome EditController::delete_selection() {
     return delete_with(DeleteMode::selections_only);
 }
 
-EditOutcome EditController::delete_caret_line() {
-    const auto& selections = document_.selections().all();
-    if (selections.size() != 1 || !selections[0].empty()) {
-        return {};
-    }
+EditOutcome EditController::delete_cut() {
     const Text& text = document_.text();
-    const std::size_t line = text.position_at(selections[0].active).line;
-    std::size_t start = text.line_start(line);
-    std::size_t end = text.line_end(line);
-    if (line + 1 < text.line_count()) {
-        ++end;
-    } else if (line > 0) {
-        --start;
+    std::vector<Match> ranges;
+    for (const Selection& selection : document_.selections().all()) {
+        if (!selection.empty()) {
+            ranges.push_back({selection.start(), selection.end()});
+            continue;
+        }
+        const std::size_t line = text.position_at(selection.active).line;
+        std::size_t start = text.line_start(line);
+        std::size_t end = text.line_end(line);
+        if (line + 1 < text.line_count()) {
+            ++end;
+        } else if (line > 0) {
+            --start;
+        }
+        if (start == end) {
+            continue;
+        }
+        ranges.push_back({start, end});
     }
-    if (start == end) {
+    if (ranges.empty()) {
         return {};
     }
-    return apply({{start, end, {}}}, {Selection::caret(start)}, EditKind::none, false);
+
+    std::ranges::sort(ranges, [](const Match& a, const Match& b) { return a.begin < b.begin; });
+    std::vector<Match> merged;
+    for (const Match& range : ranges) {
+        if (!merged.empty() && range.begin < merged.back().end) {
+            merged.back().end = std::max(merged.back().end, range.end);
+        } else {
+            merged.push_back(range);
+        }
+    }
+    std::vector<Edit> edits;
+    std::vector<Selection> after;
+    std::size_t removed = 0;
+    for (const Match& range : merged) {
+        edits.push_back({range.begin, range.end, {}});
+        after.push_back(Selection::caret(range.begin - removed));
+        removed += range.end - range.begin;
+    }
+    return apply(std::move(edits), std::move(after), EditKind::none, false);
 }
 
 EditOutcome
@@ -543,15 +615,28 @@ std::string EditController::selected_text() const {
 }
 
 CopiedText EditController::copied_text() const {
-    if (std::string selected = selected_text(); !selected.empty()) {
-        return {std::move(selected), false};
-    }
-    const auto& selections = document_.selections().all();
-    if (selections.size() != 1) {
-        return {};
-    }
     const Text& text = document_.text();
-    return {text.line(text.position_at(selections[0].active).line) + '\n', true};
+    const auto& selections = document_.selections().all();
+    CopiedText copied;
+    std::optional<std::size_t> previous_line;
+    std::vector<std::string> pieces;
+    for (const Selection& selection : selections) {
+        const std::size_t line = text.position_at(selection.start()).line;
+        if (!selection.empty()) {
+            pieces.push_back(text.slice(selection.start(), selection.end() - selection.start()));
+        } else if (previous_line != line) {
+            pieces.push_back(text.line(line) + '\n');
+        }
+        previous_line = line;
+    }
+    copied.whole_line = selections.size() == 1 && selections[0].empty();
+    for (std::size_t i = 0; i < pieces.size(); ++i) {
+        copied.text += (i > 0 ? "\n" : "") + pieces[i];
+    }
+    if (pieces.size() > 1) {
+        copied.pieces = std::move(pieces);
+    }
+    return copied;
 }
 
 } // namespace anvil::core

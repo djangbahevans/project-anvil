@@ -5,6 +5,9 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -26,6 +29,12 @@ std::shared_ptr<core::Document> make_document(std::string_view text) {
 
 class EditorViewTest : public ::testing::Test {
 protected:
+    void set_selections(std::vector<core::Selection> selections) {
+        ASSERT_TRUE(
+            document_->set_selections(core::SelectionSet::from(std::move(selections))).has_value());
+        view_.document_changed_elsewhere();
+    }
+
     void open(std::string_view text) {
         document_ = make_document(text);
         view_.resize(640, 320);
@@ -444,16 +453,87 @@ TEST_F(EditorViewTest, CopyOfASelectionIsPlainTextWithoutTheMarker) {
     EXPECT_FALSE(clipboard_marks_a_line());
 }
 
-TEST_F(EditorViewTest, CopyWithSeveralCaretsLeavesTheClipboardAlone) {
+TEST_F(EditorViewTest, CopyWithSeveralCaretsPutsTheirLinesOnTheClipboardWithTheSeparatePieces) {
     open("one\ntwo\nthree");
-    QGuiApplication::clipboard()->setText("keep");
     click(1);
-    click(5, Qt::AltModifier);
+    click(10, Qt::AltModifier);
     ASSERT_EQ(document_->selections().all().size(), 2u);
     view_.copy();
-    view_.cut();
-    EXPECT_EQ(clipboard_text(), "keep");
+    EXPECT_EQ(clipboard_text(), "one\n\nthree\n");
+    ASSERT_TRUE(clipboard_marks_a_line());
+    const QJsonObject metadata =
+        QJsonDocument::fromJson(QGuiApplication::clipboard()->mimeData()->data(line_marker_format))
+            .object();
+    EXPECT_FALSE(metadata.value("isFromEmptySelection").toBool());
+    EXPECT_EQ(metadata.value("multicursorText").toArray(),
+              (QJsonArray{QStringLiteral("one\n"), QStringLiteral("three\n")}));
     EXPECT_EQ(text(), "one\ntwo\nthree");
+}
+
+TEST_F(EditorViewTest, CopyOfSeveralSelectionsPastesOnePieceIntoEachCursor) {
+    open("aa bb cc");
+    set_selections({{0, 2}, {6, 8}});
+    view_.copy();
+    EXPECT_EQ(clipboard_text(), "aa\ncc");
+    set_selections({core::Selection::caret(2), core::Selection{3, 5}});
+    view_.paste();
+    EXPECT_EQ(text(), "aaaa cc cc");
+}
+
+TEST_F(EditorViewTest, PiecesThatSpanLinesStillGoOneToEachCursor) {
+    open("a\nb c d\ne");
+    set_selections({core::Selection{0, 3}, core::Selection{8, 9}});
+    view_.copy();
+    EXPECT_EQ(clipboard_text(), "a\nb\ne");
+    set_selections({core::Selection::caret(4), core::Selection::caret(9)});
+    view_.paste();
+    EXPECT_EQ(text(), "a\nb a\nbc d\nee");
+}
+
+TEST_F(EditorViewTest, CutWithSeveralCaretsRemovesTheirLinesAndCopiesThem) {
+    open("one\ntwo\nthree\nfour");
+    set_selections({core::Selection::caret(1), core::Selection::caret(9)});
+    QSignalSpy changes(&view_, &EditorView::text_changed);
+    view_.cut();
+    EXPECT_EQ(text(), "two\nfour");
+    EXPECT_EQ(clipboard_text(), "one\n\nthree\n");
+    EXPECT_EQ(changes.count(), 1);
+    view_.undo();
+    EXPECT_EQ(text(), "one\ntwo\nthree\nfour");
+}
+
+TEST_F(EditorViewTest, CutWithASelectionAndACaretRemovesBoth) {
+    open("one\ntwo\nthree");
+    set_selections({core::Selection{0, 2}, core::Selection::caret(9)});
+    view_.cut();
+    EXPECT_EQ(text(), "e\ntwo");
+    EXPECT_EQ(clipboard_text(), "on\nthree\n");
+}
+
+TEST_F(EditorViewTest, TextFromAnotherProgramWithAsManyLinesAsCursorsGoesOneLineToEach) {
+    open("a b c");
+    set_selections(
+        {core::Selection::caret(1), core::Selection::caret(3), core::Selection::caret(5)});
+    QGuiApplication::clipboard()->setText("1\n2\n3\n");
+    view_.paste();
+    EXPECT_EQ(text(), "a1 b2 c3");
+}
+
+TEST_F(EditorViewTest, TextWithAnotherNumberOfLinesGoesToEveryCursor) {
+    open("a b");
+    set_selections({core::Selection::caret(1), core::Selection::caret(3)});
+    QGuiApplication::clipboard()->setText("x\ny\nz");
+    view_.paste();
+    EXPECT_EQ(text(), "ax\ny\nz bx\ny\nz");
+}
+
+TEST_F(EditorViewTest, ALoneCaretsLineStillPastesAboveEveryCaretLine) {
+    open("one\ntwo\nthree");
+    view_.select_range({9, 9});
+    view_.copy();
+    set_selections({core::Selection::caret(1), core::Selection::caret(5)});
+    view_.paste();
+    EXPECT_EQ(text(), "three\none\nthree\ntwo\nthree");
 }
 
 TEST_F(EditorViewTest, CutWithACaretRemovesTheLineAndCopiesIt) {
