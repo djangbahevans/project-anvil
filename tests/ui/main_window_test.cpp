@@ -55,6 +55,7 @@ protected:
         options.settings_file = settings_file_;
         options.keybindings_file = keybindings_file_;
         options.themes_directory = themes_directory_;
+        options.custom_title_bar = custom_title_bar_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
             const std::filesystem::path node = ANVIL_NODE_EXECUTABLE;
@@ -210,7 +211,7 @@ protected:
     // Opens the menus as the user does, which fills them, and finds the item that runs `command`.
     // Opening a menu again replaces its items, so the result is good until the next call.
     QAction* menu_action(const std::string& command) {
-        for (QAction* top : window_->menuBar()->actions()) {
+        for (QAction* top : window_->menu_bar()->actions()) {
             if (QMenu* menu = top->menu()) {
                 emit menu->aboutToShow();
                 if (QAction* found = find_command_action(menu, command)) {
@@ -236,6 +237,8 @@ protected:
     std::filesystem::path scratch_;
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
+    // The tests keep the system frame except those about the title bar.
+    bool custom_title_bar_ = false;
     std::vector<std::filesystem::path> extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION};
     // Unset: the themes that ship with the editor.
     std::optional<std::filesystem::path> themes_directory_;
@@ -1731,7 +1734,7 @@ TEST_F(MainWindowTest, TheOptionShortcutsDoNothingWhileTheBarIsClosed) {
 // A shortcut that is also a menu mnemonic is ambiguous, and Qt then triggers neither.
 TEST_F(MainWindowTest, NoMenuUsesAnOptionShortcutAsItsMnemonic) {
     create_window();
-    for (const QAction* menu : window_->menuBar()->actions()) {
+    for (const QAction* menu : window_->menu_bar()->actions()) {
         const QKeySequence mnemonic = QKeySequence::mnemonic(menu->text());
         for (const Qt::Key key : {Qt::Key_C, Qt::Key_W, Qt::Key_R}) {
             EXPECT_NE(mnemonic, QKeySequence(Qt::ALT | key)) << menu->text().toStdString();
@@ -2083,10 +2086,199 @@ TEST_F(MainWindowTest, CloseWindowClosesTheWindow) {
     EXPECT_FALSE(window_->isVisible());
 }
 
+// --- title bar ---
+
+class MainWindowTitleBarTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        custom_title_bar_ = true;
+    }
+    void TearDown() override {
+        qunsetenv("ANVIL_NATIVE_FRAME");
+        MainWindowTest::TearDown();
+    }
+
+    // A mouse move over the editor, at the position in the window.
+    void move_pointer(QPoint in_window) {
+        QWidget* target = window_->view();
+        QMouseEvent event(QEvent::MouseMove, target->mapFrom(window_.get(), in_window),
+                          window_->mapToGlobal(in_window), Qt::NoButton, Qt::NoButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(target, &event);
+    }
+};
+
+TEST_F(MainWindowTitleBarTest, TheWindowHasNoFrameAndTheTitleBarIsItsTopRow) {
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+    EXPECT_TRUE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
+    ASSERT_NE(window_->title_bar(), nullptr);
+    EXPECT_TRUE(window_->workbench()->isAncestorOf(window_->title_bar()));
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::title_bar));
+    EXPECT_EQ(window_->title_bar()->mapTo(window_.get(), QPoint(0, 0)), QPoint(0, 0));
+    EXPECT_EQ(window_->title_bar()->width(), window_->width());
+    EXPECT_EQ(window_->title_bar()->height(), 35);
+}
+
+TEST_F(MainWindowTitleBarTest, TheMenuBarIsInTheTitleBarAndItsMenusWork) {
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+    EXPECT_EQ(window_->menu_bar()->parentWidget(), window_->title_bar());
+    EXPECT_EQ(window_->menu_bar()->actions().size(), 8);
+
+    int saved = 0;
+    window_->commands().add("workbench.action.files.save", "Save",
+                            [&saved](const json&) { ++saved; });
+    QAction* save = menu_action("workbench.action.files.save");
+    ASSERT_NE(save, nullptr);
+    save->trigger();
+    EXPECT_EQ(saved, 1);
+}
+
+TEST_F(MainWindowTitleBarTest, WithoutTheOptionTheWindowHasTheSystemsFrame) {
+    custom_title_bar_ = false;
+    create_window();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+    EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
+    EXPECT_EQ(window_->title_bar(), nullptr);
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::title_bar));
+    EXPECT_EQ(window_->menu_bar()->parentWidget(), window_.get());
+}
+
+TEST_F(MainWindowTitleBarTest, TheEnvironmentCanKeepTheSystemsFrame) {
+    qputenv("ANVIL_NATIVE_FRAME", "1");
+    create_window();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+    EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
+}
+
+TEST_F(MainWindowTitleBarTest, TheTitleFollowsTheShownDocumentAndItsChanges) {
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+    EXPECT_EQ(window_->title_bar()->title(), "Untitled-1 — Anvil");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
+    EXPECT_EQ(window_->title_bar()->title(), "a.txt — Anvil");
+    type("X");
+    EXPECT_EQ(window_->title_bar()->title(), "a.txt — Anvil*");
+}
+
+TEST_F(MainWindowTitleBarTest, TheTitleBarShowsWhetherTheWindowIsActive) {
+    create_window();
+    const QPoint at(window_->width() / 2, 4);
+    const auto background = [&] { return window_->title_bar()->grab().toImage().pixelColor(at); };
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    const QColor active = background();
+    EXPECT_EQ(active, window_->colors().color("titleBar.activeBackground"));
+
+    QWidget other;
+    other.show();
+    other.activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(&other));
+    QApplication::processEvents();
+    EXPECT_EQ(background(), window_->colors().color("titleBar.inactiveBackground"));
+}
+
+TEST_F(MainWindowTitleBarTest, TheMaximizeButtonMaximizesAndRestoresTheWindow) {
+    create_window();
+    auto* border = window_->findChild<ui::FrameBorder*>();
+    ASSERT_NE(border, nullptr);
+    EXPECT_TRUE(border->isVisible());
+
+    window_->title_bar()->maximize_button()->click();
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->isMaximized());
+    EXPECT_EQ(window_->title_bar()->maximize_button()->accessibleName(), "Restore");
+    EXPECT_FALSE(border->isVisible());
+
+    window_->title_bar()->maximize_button()->click();
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->isMaximized());
+    EXPECT_EQ(window_->title_bar()->maximize_button()->accessibleName(), "Maximize");
+    EXPECT_TRUE(border->isVisible());
+}
+
+TEST_F(MainWindowTitleBarTest, ADoubleClickOnTheTitleMaximizesTheWindow) {
+    create_window();
+    QMouseEvent double_click(QEvent::MouseButtonDblClick, QPointF(window_->width() / 2, 4),
+                             window_->title_bar()->mapToGlobal(QPointF(window_->width() / 2, 4)),
+                             Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(window_->title_bar(), &double_click);
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->isMaximized());
+}
+
+TEST_F(MainWindowTitleBarTest, TheCloseButtonClosesTheWindow) {
+    create_window();
+    ASSERT_TRUE(window_->isVisible());
+    window_->title_bar()->close_button()->click();
+    EXPECT_FALSE(window_->isVisible());
+}
+
+TEST_F(MainWindowTitleBarTest, TheMinimizeButtonMinimizesTheWindow) {
+    create_window();
+    window_->title_bar()->minimize_button()->click();
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->isMinimized());
+}
+
+TEST_F(MainWindowTitleBarTest, FullscreenHidesTheTitleBarUntilThePointerReachesTheTopEdge) {
+    create_window();
+    window_->showFullScreen();
+    QApplication::processEvents();
+    ASSERT_TRUE(window_->isFullScreen());
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::title_bar));
+
+    move_pointer(QPoint(200, 300));
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::title_bar));
+    move_pointer(QPoint(200, 0));
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::title_bar));
+    move_pointer(QPoint(200, 20));
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::title_bar));
+    move_pointer(QPoint(200, 300));
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::title_bar));
+
+    window_->showNormal();
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->workbench()->is_visible(Part::title_bar));
+}
+
+TEST_F(MainWindowTitleBarTest, TheSystemsFrameReturnsWhenTheWindowSystemCannotMoveTheWindow) {
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+    QMenuBar* menu_bar = window_->menu_bar();
+    // The offscreen platform has no window manager to ask.
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(window_->width() / 2, 4),
+                      window_->title_bar()->mapToGlobal(QPointF(window_->width() / 2, 4)),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(window_->title_bar(), &press);
+    QApplication::processEvents();
+
+    EXPECT_FALSE(window_->has_custom_title_bar());
+    EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
+    EXPECT_FALSE(window_->workbench()->is_visible(Part::title_bar));
+    EXPECT_EQ(window_->menu_bar(), menu_bar);
+    EXPECT_EQ(menu_bar->parentWidget(), window_.get());
+    EXPECT_TRUE(window_->isVisible());
+    EXPECT_EQ(menu_bar->actions().size(), 8);
+}
+
+TEST_F(MainWindowTitleBarTest, TheSystemsFrameReturnsWhenTheWindowSystemCannotResizeTheWindow) {
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(2, 300),
+                      window_->mapToGlobal(QPointF(2, 300)), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QApplication::sendEvent(window_->view(), &press);
+    QApplication::processEvents();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+}
+
 TEST_F(MainWindowTest, TheMenuBarHasVSCodesMenus) {
     create_window();
     QStringList titles;
-    for (const QAction* top : window_->menuBar()->actions()) {
+    for (const QAction* top : window_->menu_bar()->actions()) {
         titles << top->text();
     }
     EXPECT_EQ(titles, (QStringList{"&File", "&Edit", "&Selection", "&View", "&Go", "Run",

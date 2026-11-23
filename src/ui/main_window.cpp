@@ -19,6 +19,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <algorithm>
 #include <functional>
 #include <set>
@@ -120,6 +121,16 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     status_bar_ = new StatusBar(colors_, this);
     workbench_->set_status_bar(status_bar_);
     setCentralWidget(workbench_);
+    custom_title_bar_ =
+        options_.custom_title_bar && !qEnvironmentVariableIsSet("ANVIL_NATIVE_FRAME");
+#if defined(Q_OS_MACOS)
+    custom_title_bar_ = false;
+#endif
+    if (custom_title_bar_) {
+        set_up_title_bar();
+    } else {
+        menu_bar_ = menuBar();
+    }
     sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
     panel_ = new Panel(*workbench_, view_containers_, colors_, this);
 
@@ -476,7 +487,7 @@ void MainWindow::build_menus() {
             QStringLiteral("cwr").contains(QChar(top.label.text[top.label.mnemonic]).toLower())) {
             top.label.mnemonic = workbench::MenuLabel::npos;
         }
-        QMenu* menu = menuBar()->addMenu(menu_text(top.label));
+        QMenu* menu = menu_bar_->addMenu(menu_text(top.label));
         menu->setToolTipsVisible(true);
         // The entries depend on the context and on the commands that exist, and the key bindings
         // can change while the window runs, so a menu is filled when it opens.
@@ -888,7 +899,7 @@ void MainWindow::show_command_palette() {
         items.push_back({entry.title, {}, {}, {}, entry.disabled});
     }
     palette_->set_items(std::move(items));
-    palette_->set_top_offset(menuBar()->height());
+    palette_->set_top_offset(has_custom_title_bar() ? title_bar_->height() : menu_bar_->height());
     palette_->open(">");
 }
 
@@ -1013,8 +1024,98 @@ bool MainWindow::resolve_unsaved_changes() {
 
 void MainWindow::changeEvent(QEvent* event) {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange) {
+    switch (event->type()) {
+    case QEvent::PaletteChange:
         colors_.set_palette(palette());
+        break;
+    case QEvent::WindowTitleChange:
+    case QEvent::ModifiedChange:
+        if (has_custom_title_bar()) {
+            title_bar_->set_title(title_text());
+        }
+        break;
+    case QEvent::ActivationChange:
+        if (has_custom_title_bar()) {
+            title_bar_->set_active(isActiveWindow());
+        }
+        break;
+    case QEvent::WindowStateChange:
+        update_chrome();
+        break;
+    default:
+        break;
+    }
+}
+
+QString MainWindow::title_text() const {
+    QString title = windowTitle();
+    title.replace(QStringLiteral("[*]"), isWindowModified() ? QStringLiteral("*") : QString());
+    return title;
+}
+
+void MainWindow::set_up_title_bar() {
+    setWindowFlag(Qt::FramelessWindowHint, true);
+    title_bar_ = new TitleBar(colors_, this);
+    workbench_->set_title_bar(title_bar_);
+    menu_bar_ = new QMenuBar;
+    title_bar_->set_menu_bar(menu_bar_);
+    window_frame_ = new WindowFrame(this);
+    frame_border_ = new FrameBorder(colors_, this);
+
+    connect(title_bar_, &TitleBar::move_requested, this, [this] {
+        if (!windowHandle() || !windowHandle()->startSystemMove()) {
+            use_native_frame();
+        }
+    });
+    connect(title_bar_, &TitleBar::toggle_maximized_requested, this, [this] {
+        if (isMaximized()) {
+            showNormal();
+        } else {
+            showMaximized();
+        }
+    });
+    connect(title_bar_, &TitleBar::minimize_requested, this, &QWidget::showMinimized);
+    connect(title_bar_, &TitleBar::close_requested, this, &QWidget::close);
+    connect(window_frame_, &WindowFrame::resize_failed, this, &MainWindow::use_native_frame);
+    // In fullscreen the title bar is out of the way until the pointer reaches the top edge.
+    connect(window_frame_, &WindowFrame::fullscreen_pointer_moved, this, [this](int y) {
+        if (!isFullScreen()) {
+            return;
+        }
+        if (y <= 1) {
+            workbench_->set_visible(Part::title_bar, true);
+        } else if (y > TitleBar::bar_height) {
+            workbench_->set_visible(Part::title_bar, false);
+        }
+    });
+    title_bar_->set_title(title_text());
+    update_chrome();
+}
+
+void MainWindow::update_chrome() {
+    if (!has_custom_title_bar()) {
+        return;
+    }
+    const bool fullscreen = isFullScreen();
+    title_bar_->set_maximized(isMaximized());
+    workbench_->set_visible(Part::title_bar, !fullscreen);
+    frame_border_->setVisible(!isMaximized() && !fullscreen);
+}
+
+void MainWindow::use_native_frame() {
+    if (!custom_title_bar_) {
+        return;
+    }
+    custom_title_bar_ = false;
+    window_frame_->set_enabled(false);
+    frame_border_->hide();
+    workbench_->set_visible(Part::title_bar, false);
+    menu_bar_->setParent(nullptr);
+    setMenuBar(menu_bar_);
+    const bool shown = isVisible();
+    setWindowFlag(Qt::FramelessWindowHint, false);
+    if (shown) {
+        show();
     }
 }
 
