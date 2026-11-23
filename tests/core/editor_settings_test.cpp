@@ -94,6 +94,16 @@ TEST(EditorSettings, TheColorThemeDefaultsToVsCodesDefaultAndIsReadFromTheSettin
               "Light 2026");
 }
 
+TEST(EditorSettings, FocusingTheRecentEditorAfterClosingDefaultsToOnAndIsReadFromTheSettings) {
+    EXPECT_TRUE(read("{}")->focus_recent_editor_after_close);
+    EXPECT_FALSE(read(R"j({"workbench.editor.focusRecentEditorAfterClose": false})j")
+                     ->focus_recent_editor_after_close);
+    EXPECT_FALSE(read(R"j({"workbench": {"editor": {"focusRecentEditorAfterClose": false}}})j")
+                     ->focus_recent_editor_after_close);
+    EXPECT_TRUE(read(R"j({"workbench.editor.focusRecentEditorAfterClose": true})j")
+                    ->focus_recent_editor_after_close);
+}
+
 TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
     for (const auto& [text, key] : std::vector<std::pair<std::string, std::string>>{
              {R"j({"editor.fontFamily": 3})j", "editor.fontFamily"},
@@ -102,6 +112,8 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"editor.tabSize": 2.5})j", "editor.tabSize"},
              {R"j({"editor.insertSpaces": "yes"})j", "editor.insertSpaces"},
              {R"j({"workbench.colorTheme": 5})j", "workbench.colorTheme"},
+             {R"j({"workbench.editor.focusRecentEditorAfterClose": "no"})j",
+              "workbench.editor.focusRecentEditorAfterClose"},
              {R"j({"files.eol": 1})j", "files.eol"},
              {R"j({"files.eol": "\r"})j", "files.eol"},
          }) {

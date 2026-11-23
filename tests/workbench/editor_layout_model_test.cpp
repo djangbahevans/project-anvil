@@ -22,11 +22,20 @@ Uri doc(std::size_t number) {
 struct RefGroup {
     std::vector<Uri> tabs;
     std::optional<std::size_t> active;
+    // The tabs, most recently active first.
+    std::vector<Uri> recent;
+
+    void touch(std::size_t index) {
+        active = index;
+        std::erase(recent, tabs[index]);
+        recent.insert(recent.begin(), tabs[index]);
+    }
 };
 
 // The semantics of EditorLayout without the tree: the groups in display order, each with its tabs.
 struct Reference {
     bool close_empty = true;
+    bool focus_recent = true;
     std::vector<GroupId> order;
     std::map<GroupId, RefGroup> groups;
     GroupId focused{};
@@ -44,22 +53,25 @@ struct Reference {
     void open(GroupId group, const Uri& uri) {
         RefGroup& g = groups.at(group);
         if (const auto existing = find(group, uri)) {
-            g.active = existing;
+            g.touch(*existing);
             return;
         }
         const std::size_t at = g.active ? *g.active + 1 : g.tabs.size();
         g.tabs.insert(g.tabs.begin() + static_cast<std::ptrdiff_t>(at), uri);
-        g.active = at;
+        g.touch(at);
     }
 
     void drop(GroupId group, std::size_t index) {
         RefGroup& g = groups.at(group);
         const std::size_t active = *g.active;
+        std::erase(g.recent, g.tabs[index]);
         g.tabs.erase(g.tabs.begin() + static_cast<std::ptrdiff_t>(index));
         if (g.tabs.empty()) {
             g.active.reset();
+        } else if (index == active && focus_recent) {
+            g.touch(*find(group, g.recent.front()));
         } else if (index == active) {
-            g.active = index < g.tabs.size() ? index : g.tabs.size() - 1;
+            g.touch(index < g.tabs.size() ? index : g.tabs.size() - 1);
         } else if (index < active) {
             g.active = active - 1;
         }
@@ -94,6 +106,7 @@ struct Reference {
                 drop(group, *old_index);
                 close_if_empty(group);
             } else {
+                std::ranges::replace(groups.at(group).recent, from, to);
                 groups.at(group).tabs[*old_index] = to;
             }
         }
@@ -118,11 +131,11 @@ struct Reference {
         drop(from, index);
         RefGroup& target = groups.at(to);
         if (const auto existing = find(to, moved)) {
-            target.active = existing;
+            target.touch(*existing);
         } else {
             const std::size_t at = std::min(to_index, target.tabs.size());
             target.tabs.insert(target.tabs.begin() + static_cast<std::ptrdiff_t>(at), moved);
-            target.active = at;
+            target.touch(at);
         }
         focused = to;
         close_if_empty(from);
@@ -133,7 +146,7 @@ struct Reference {
         const RefGroup& origin = groups.at(group);
         if (content == SplitContent::copy_active && origin.active) {
             added.tabs.push_back(origin.tabs[*origin.active]);
-            added.active = 0;
+            added.touch(0);
         }
         const auto at = std::ranges::find(order, group) - order.begin();
         const bool after = direction == Direction::right || direction == Direction::down;
@@ -165,14 +178,17 @@ void expect_same(const EditorLayout& layout, const Reference& reference, const s
         ASSERT_NE(group, nullptr) << step;
         ASSERT_EQ(group->tabs, expected.tabs) << step;
         ASSERT_EQ(group->active, expected.active) << step;
+        ASSERT_EQ(group->recent, expected.recent) << step;
     }
 }
 
-void run(unsigned seed, bool close_empty) {
+void run(unsigned seed, bool close_empty, bool focus_recent) {
     Random random(seed);
-    EditorLayout layout({.close_empty_groups = close_empty});
+    EditorLayout layout(
+        {.close_empty_groups = close_empty, .focus_recent_after_close = focus_recent});
     Reference reference;
     reference.close_empty = close_empty;
+    reference.focus_recent = focus_recent;
     reference.order = layout.group_ids();
     reference.focused = layout.focused();
     reference.groups[reference.focused] = {};
@@ -214,7 +230,7 @@ void run(unsigned seed, bool close_empty) {
             if (!g.tabs.empty()) {
                 const std::size_t index = random.below(g.tabs.size());
                 layout.activate(group, index);
-                reference.groups.at(group).active = index;
+                reference.groups.at(group).touch(index);
             }
             break;
         case 4:
@@ -302,7 +318,8 @@ void run(unsigned seed, bool close_empty) {
         }
         }
         expect_same(layout, reference,
-                    "seed " + std::to_string(seed) + " step " + std::to_string(step) + " " + what);
+                    "seed " + std::to_string(seed) + (focus_recent ? " recent" : " neighbor") +
+                        " step " + std::to_string(step) + " " + what);
         if (::testing::Test::HasFatalFailure()) {
             return;
         }
@@ -313,7 +330,8 @@ void run(unsigned seed, bool close_empty) {
 
 TEST(EditorLayoutModelTest, RandomOperationsMatchTheReferenceAndKeepTheRules) {
     for (unsigned seed = 1; seed <= 60; ++seed) {
-        run(seed, true);
+        run(seed, true, true);
+        run(seed + 1000, true, false);
         if (::testing::Test::HasFatalFailure()) {
             return;
         }
@@ -322,7 +340,8 @@ TEST(EditorLayoutModelTest, RandomOperationsMatchTheReferenceAndKeepTheRules) {
 
 TEST(EditorLayoutModelTest, RandomOperationsMatchTheReferenceWhenEmptyGroupsStay) {
     for (unsigned seed = 100; seed <= 140; ++seed) {
-        run(seed, false);
+        run(seed, false, true);
+        run(seed + 1000, false, false);
         if (::testing::Test::HasFatalFailure()) {
             return;
         }

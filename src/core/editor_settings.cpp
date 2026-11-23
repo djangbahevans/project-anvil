@@ -67,6 +67,15 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             problems.emplace_back("workbench.colorTheme must be a string");
         }
     }
+    if (settings.contains("workbench.editor.focusRecentEditorAfterClose")) {
+        if (const auto recent =
+                settings.get<bool>("workbench.editor.focusRecentEditorAfterClose")) {
+            result.focus_recent_editor_after_close = *recent;
+        } else {
+            problems.emplace_back(
+                "workbench.editor.focusRecentEditorAfterClose must be true or false");
+        }
+    }
     if (settings.contains("files.eol")) {
         const auto eol = settings.get<std::string>("files.eol");
         if (eol == "\n") {

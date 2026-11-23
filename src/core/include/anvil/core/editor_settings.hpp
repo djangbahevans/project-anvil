@@ -40,6 +40,9 @@ struct EditorSettings {
     LineEnding line_ending = LineEnding::lf;
     // workbench.colorTheme: the `id` of a color theme, or its label when it has no id
     std::string color_theme;
+    // workbench.editor.focusRecentEditorAfterClose: closing the active tab activates the tab used
+    // before it, and not the neighbor
+    bool focus_recent_editor_after_close = true;
 
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 

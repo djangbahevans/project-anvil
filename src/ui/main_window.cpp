@@ -195,6 +195,7 @@ MainWindow::~MainWindow() {
 void MainWindow::apply_settings() {
     const core::EditorSettings& editor = settings_->editor();
     area_->apply_settings(editor);
+    layout_.set_focus_recent_after_close(editor.focus_recent_editor_after_close);
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
                                 .insert_spaces = editor.insert_spaces});
