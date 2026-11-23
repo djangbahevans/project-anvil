@@ -60,7 +60,7 @@ const Row rows[] = {
 
     // Find.
     {"actions.find", "", {"ctrl+f"}, {"ctrl+f"}, {"cmd+f"}},
-    {"editor.action.startFindReplace", "", {"ctrl+h"}, {"ctrl+h"}, {"cmd+alt+f"}},
+    {"editor.action.startFindReplaceAction", "", {"ctrl+h"}, {"ctrl+h"}, {"cmd+alt+f"}},
     {"editor.action.nextMatchFindAction", "editorFocus", {"f3"}, {"f3"}, {"cmd+g", "f3"}},
     {"editor.action.previousMatchFindAction",
      "editorFocus",

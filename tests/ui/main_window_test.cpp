@@ -193,6 +193,34 @@ protected:
         ADD_FAILURE() << "no menu item " << text.toStdString();
     }
 
+    static QAction* find_command_action(QMenu* menu, const std::string& command) {
+        for (QAction* action : menu->actions()) {
+            if (action->data().toString().toStdString() == command) {
+                return action;
+            }
+            if (action->menu()) {
+                if (QAction* found = find_command_action(action->menu(), command)) {
+                    return found;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    // Opens the menus as the user does, which fills them, and finds the item that runs `command`.
+    // Opening a menu again replaces its items, so the result is good until the next call.
+    QAction* menu_action(const std::string& command) {
+        for (QAction* top : window_->menuBar()->actions()) {
+            if (QMenu* menu = top->menu()) {
+                emit menu->aboutToShow();
+                if (QAction* found = find_command_action(menu, command)) {
+                    return found;
+                }
+            }
+        }
+        return nullptr;
+    }
+
     std::vector<QString> tab_titles() const {
         std::vector<QString> titles;
         for (int i = 0; i < window_->tab_strip()->count(); ++i) {
@@ -1400,35 +1428,6 @@ TEST_F(MainWindowTest, GroupsThatAreCreatedLaterGetTheSettings) {
     EXPECT_GT(groups[1]->view()->line_height(), 20);
 }
 
-TEST_F(MainWindowTest, TheWindowMenuListsTheDocumentsOfEveryGroup) {
-    create_window();
-    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
-    window_->commands().execute("workbench.action.splitEditor");
-    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "B").string())));
-    QMenu* menu = nullptr;
-    for (QAction* action : window_->menuBar()->actions()) {
-        if (action->text().contains("ndow")) {
-            menu = action->menu();
-        }
-    }
-    ASSERT_NE(menu, nullptr);
-    emit menu->aboutToShow();
-    QStringList names;
-    QString checked;
-    for (const QAction* action : menu->actions()) {
-        names << action->text();
-        if (action->isChecked()) {
-            checked = action->text();
-        }
-    }
-    EXPECT_EQ(names, (QStringList{"Untitled-1", "a.txt", "b.txt"}));
-    EXPECT_EQ(checked, "b.txt");
-
-    menu->actions().at(1)->trigger();
-    EXPECT_EQ(current_text(), "A");
-    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[0]);
-}
-
 TEST_F(MainWindowTest, SavingADocumentUnderANewNameRenamesItsTabInItsGroup) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
@@ -1882,18 +1881,23 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "actions.find",
                                           "editor.action.nextMatchFindAction",
                                           "editor.action.previousMatchFindAction",
-                                          "editor.action.startFindReplace",
+                                          "editor.action.startFindReplaceAction",
                                           "workbench.action.showCommands",
                                           "workbench.action.toggleSidebarVisibility",
                                           "workbench.action.togglePanel",
                                           "workbench.action.toggleActivityBarVisibility",
                                           "workbench.action.toggleMaximizedPanel",
                                           "workbench.action.splitEditor",
+                                          "workbench.action.splitEditorRight",
                                           "workbench.action.splitEditorDown",
+                                          "workbench.action.splitEditorLeft",
+                                          "workbench.action.splitEditorUp",
                                           "workbench.action.focusNextGroup",
                                           "workbench.action.focusPreviousGroup",
                                           "workbench.action.closeGroup",
+                                          "workbench.action.files.newUntitledFile",
                                           "workbench.action.quit",
+                                          "workbench.action.closeWindow",
                                           "setContext"};
     for (const std::string& id : ids) {
         const auto* command = window_->commands().find(id);
@@ -1964,7 +1968,7 @@ TEST_F(MainWindowTest, FindCommandsOpenTheFindBarAndStepThroughMatches) {
     window_->commands().execute("actions.find");
     EXPECT_FALSE(window_->find_bar()->isHidden());
     EXPECT_FALSE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
-    window_->commands().execute("editor.action.startFindReplace");
+    window_->commands().execute("editor.action.startFindReplaceAction");
     EXPECT_TRUE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
 
     type("a b a b");
@@ -1993,21 +1997,31 @@ TEST_F(MainWindowTest, SaveAndCloseCommandsActOnTheShownDocument) {
 
 TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
     create_window();
-    const std::vector<std::pair<QString, std::string>> menu_items = {
-        {"&Open…", "workbench.action.files.openFile"},
-        {"&Save", "workbench.action.files.save"},
-        {"Save &As…", "workbench.action.files.saveAs"},
-        {"&Close Tab", "workbench.action.closeActiveEditor"},
-        {"&Undo", "undo"},
-        {"&Redo", "redo"},
-        {"Cu&t", "editor.action.clipboardCutAction"},
-        {"&Copy", "editor.action.clipboardCopyAction"},
-        {"&Paste", "editor.action.clipboardPasteAction"},
-        {"Select &All", "editor.action.selectAll"},
-        {"&Find…", "actions.find"},
-        {"Find &Next", "editor.action.nextMatchFindAction"},
-        {"Find Pre&vious", "editor.action.previousMatchFindAction"},
-        {"&Replace…", "editor.action.startFindReplace"},
+    const std::vector<std::string> command_ids = {
+        "workbench.action.files.newUntitledFile",
+        "workbench.action.files.openFile",
+        "workbench.action.files.save",
+        "workbench.action.files.saveAs",
+        "workbench.action.closeActiveEditor",
+        "workbench.action.closeWindow",
+        "workbench.action.quit",
+        "undo",
+        "redo",
+        "editor.action.clipboardCutAction",
+        "editor.action.clipboardCopyAction",
+        "editor.action.clipboardPasteAction",
+        "editor.action.selectAll",
+        "actions.find",
+        "editor.action.startFindReplaceAction",
+        "workbench.action.togglePanel",
+        "workbench.action.toggleSidebarVisibility",
+        "workbench.action.splitEditorRight",
+        "workbench.action.splitEditorDown",
+        "workbench.action.splitEditorLeft",
+        "workbench.action.splitEditorUp",
+        "workbench.action.focusNextGroup",
+        "workbench.action.focusPreviousGroup",
+        "workbench.action.showCommands",
     };
     std::vector<std::string> executed;
     const auto commands = window_->commands().commands();
@@ -2017,23 +2031,104 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
             [&executed, id = command.id](const json&) { executed.push_back(id); });
     }
 
-    for (const auto& [text, id] : menu_items) {
-        QAction* found = nullptr;
-        for (QAction* top : window_->menuBar()->actions()) {
-            if (!top->menu()) {
-                continue;
-            }
-            for (QAction* action : top->menu()->actions()) {
-                if (action->property("anvil.title").toString() == text || action->text() == text) {
-                    found = action;
-                }
-            }
-        }
-        ASSERT_NE(found, nullptr) << text.toStdString();
+    for (const std::string& id : command_ids) {
+        QAction* found = menu_action(id);
+        ASSERT_NE(found, nullptr) << id;
+        EXPECT_TRUE(found->isEnabled()) << id;
         executed.clear();
         found->trigger();
-        EXPECT_EQ(executed, std::vector<std::string>{id}) << text.toStdString();
+        EXPECT_EQ(executed, std::vector<std::string>{id}) << id;
     }
+}
+
+TEST_F(MainWindowTest, TheSplitCommandsSplitTheFocusedGroupInEveryDirection) {
+    struct Case {
+        const char* id;
+        workbench::Orientation orientation;
+        bool new_group_first;
+    };
+    const std::vector<Case> cases = {
+        {"workbench.action.splitEditorRight", workbench::Orientation::horizontal, false},
+        {"workbench.action.splitEditorDown", workbench::Orientation::vertical, false},
+        {"workbench.action.splitEditorLeft", workbench::Orientation::horizontal, true},
+        {"workbench.action.splitEditorUp", workbench::Orientation::vertical, true},
+    };
+    for (const Case& c : cases) {
+        create_window();
+        const workbench::GroupId original = window_->editor_layout().group_ids().front();
+        window_->commands().execute(c.id);
+        const auto ids = window_->editor_layout().group_ids();
+        ASSERT_EQ(ids.size(), 2u) << c.id;
+        EXPECT_EQ(window_->editor_layout().root().orientation, c.orientation) << c.id;
+        EXPECT_EQ(ids[c.new_group_first ? 1 : 0], original) << c.id;
+    }
+}
+
+TEST_F(MainWindowTest, NewUntitledFileOpensAnotherUntitledDocument) {
+    create_window();
+    const std::size_t before = window_->open_document_count();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    EXPECT_EQ(window_->open_document_count(), before + 1);
+    EXPECT_TRUE(window_->current_document()->text().empty());
+}
+
+TEST_F(MainWindowTest, CloseWindowClosesTheWindow) {
+    create_window();
+    window_->show();
+    ASSERT_TRUE(window_->isVisible());
+    window_->commands().execute("workbench.action.closeWindow");
+    EXPECT_FALSE(window_->isVisible());
+}
+
+TEST_F(MainWindowTest, TheMenuBarHasVSCodesMenus) {
+    create_window();
+    QStringList titles;
+    for (const QAction* top : window_->menuBar()->actions()) {
+        titles << top->text();
+    }
+    EXPECT_EQ(titles, (QStringList{"&File", "&Edit", "&Selection", "&View", "&Go", "Run",
+                                   "&Terminal", "&Help"}));
+}
+
+TEST_F(MainWindowTest, AnItemWhoseCommandDoesNotExistIsShownDisabled) {
+    create_window();
+    ASSERT_EQ(window_->commands().find("workbench.action.debug.start"), nullptr);
+    QAction* start = menu_action("workbench.action.debug.start");
+    ASSERT_NE(start, nullptr);
+    EXPECT_FALSE(start->isEnabled());
+    EXPECT_EQ(start->text(), "&Start Debugging");
+    EXPECT_TRUE(start->toolTip().contains("not available yet")) << start->toolTip().toStdString();
+    EXPECT_TRUE(menu_action("workbench.action.files.save")->isEnabled());
+}
+
+TEST_F(MainWindowTest, RegisteringACommandEnablesItsMenuItem) {
+    create_window();
+    ASSERT_FALSE(menu_action("workbench.action.debug.start")->isEnabled());
+
+    int runs = 0;
+    window_->commands().add("workbench.action.debug.start", "Start Debugging",
+                            [&runs](const json&) { ++runs; });
+    QAction* start = menu_action("workbench.action.debug.start");
+    ASSERT_NE(start, nullptr);
+    EXPECT_TRUE(start->isEnabled());
+    start->trigger();
+    EXPECT_EQ(runs, 1);
+}
+
+TEST_F(MainWindowTest, SubmenusHoldTheirItems) {
+    create_window();
+    QAction* reopen = menu_action("workbench.action.reopenClosedEditor");
+    ASSERT_NE(reopen, nullptr);
+    const auto* recent = qobject_cast<QMenu*>(reopen->associatedObjects().value(0));
+    ASSERT_NE(recent, nullptr);
+    EXPECT_EQ(recent->menuAction()->text(), "Open &Recent");
+}
+
+TEST_F(MainWindowTest, MenuEntriesAreHiddenByTheirWhenClauses) {
+    create_window();
+    EXPECT_EQ(menu_action("workbench.action.closeFolder"), nullptr);
+    EXPECT_EQ(menu_action("workbench.action.toggleConfirmBeforeClose"), nullptr);
+    EXPECT_NE(menu_action("workbench.action.files.openFolder"), nullptr);
 }
 
 TEST_F(MainWindowTest, ExtensionsCanRunEditorCommandsByTheirId) {
@@ -2108,16 +2203,7 @@ TEST_F(MainWindowTest, TheShortcutsAndTheMenuOpenThePalette) {
     EXPECT_TRUE(window_->command_palette()->isVisible());
     QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
 
-    QAction* menu_item = nullptr;
-    for (QAction* top : window_->menuBar()->actions()) {
-        if (top->menu()) {
-            for (QAction* action : top->menu()->actions()) {
-                if (action->property("anvil.title").toString() == "&Show All Commands…") {
-                    menu_item = action;
-                }
-            }
-        }
-    }
+    QAction* menu_item = menu_action("workbench.action.showCommands");
     ASSERT_NE(menu_item, nullptr);
     menu_item->trigger();
     EXPECT_TRUE(window_->command_palette()->isVisible());
@@ -2285,24 +2371,14 @@ TEST_F(MainWindowTest, TheWindowIsAWorkbenchWithTheEditorInItsEditorArea) {
 
 TEST_F(MainWindowTest, TheViewMenuTogglesTheSidebarAndThePanel) {
     create_window();
-    const auto find_action = [&](const QString& text) {
-        for (QAction* top : window_->menuBar()->actions()) {
-            if (top->menu() && top->text() == "&View") {
-                for (QAction* action : top->menu()->actions()) {
-                    if (action->property("anvil.title").toString() == text ||
-                        action->text() == text) {
-                        return action;
-                    }
-                }
-            }
-        }
-        return static_cast<QAction*>(nullptr);
-    };
-    QAction* sidebar = find_action("Toggle &Sidebar");
-    QAction* panel = find_action("Toggle &Panel");
+    QAction* sidebar = menu_action("workbench.action.toggleSidebarVisibility");
     ASSERT_NE(sidebar, nullptr);
-    ASSERT_NE(panel, nullptr);
     EXPECT_TRUE(sidebar->text().endsWith("\tCtrl+B")) << sidebar->text().toStdString();
+    const auto* appearance = qobject_cast<QMenu*>(sidebar->associatedObjects().value(0));
+    ASSERT_NE(appearance, nullptr);
+    QAction* panel =
+        find_command_action(const_cast<QMenu*>(appearance), "workbench.action.togglePanel");
+    ASSERT_NE(panel, nullptr);
     EXPECT_TRUE(panel->text().endsWith("\tCtrl+J")) << panel->text().toStdString();
 
     const int editor_width = window_->view()->width();
@@ -2578,20 +2654,6 @@ protected:
         window_->view()->setFocus();
         ASSERT_TRUE(window_->view()->hasFocus());
     }
-
-    QAction* menu_action(const QString& title) {
-        for (QAction* top : window_->menuBar()->actions()) {
-            if (!top->menu()) {
-                continue;
-            }
-            for (QAction* action : top->menu()->actions()) {
-                if (action->property("anvil.title").toString() == title) {
-                    return action;
-                }
-            }
-        }
-        return nullptr;
-    }
 };
 
 TEST_F(MainWindowKeysTest, TypedCharactersAreNotTakenByTheBindings) {
@@ -2806,30 +2868,28 @@ TEST_F(MainWindowKeysTest, AnotherMessageSurvivesTheEndOfAChord) {
 
 TEST_F(MainWindowKeysTest, TheMenusShowTheShortcutsOfTheirCommands) {
     create_window();
-    const auto shows = [&](const QString& title, const QString& shortcut) {
-        QAction* action = menu_action(title);
-        ASSERT_NE(action, nullptr) << title.toStdString();
+    const auto shows = [&](const std::string& command, const QString& shortcut) {
+        QAction* action = menu_action(command);
+        ASSERT_NE(action, nullptr) << command;
         EXPECT_TRUE(action->text().endsWith("\t" + shortcut))
-            << title.toStdString() << ": " << action->text().toStdString();
+            << command << ": " << action->text().toStdString();
     };
-    shows("&Save", "Ctrl+S");
-    shows("&Open…", "Ctrl+O");
-    shows("&Undo", "Ctrl+Z");
-    shows("&Show All Commands…", "Ctrl+Shift+P");
+    shows("workbench.action.files.save", "Ctrl+S");
+    shows("workbench.action.files.openFile", "Ctrl+O");
+    shows("undo", "Ctrl+Z");
+    shows("workbench.action.showCommands", "Ctrl+Shift+P");
 }
 
 TEST_F(MainWindowKeysTest, ARebindingChangesWhatTheMenuShows) {
     create_window();
-    QAction* save = menu_action("&Save");
-    ASSERT_NE(save, nullptr);
+    ASSERT_TRUE(menu_action("workbench.action.files.save")->text().endsWith("\tCtrl+S"));
     core::Keybinding rebound;
     rebound.chord = *core::parse_key_chord("ctrl+alt+s");
     rebound.command = "workbench.action.files.save";
     window_->keybindings().set_bindings({rebound});
 
-    QMenu* menu = qobject_cast<QMenu*>(save->associatedObjects().value(0));
-    ASSERT_NE(menu, nullptr);
-    emit menu->aboutToShow();
+    QAction* save = menu_action("workbench.action.files.save");
+    ASSERT_NE(save, nullptr);
     EXPECT_TRUE(save->text().endsWith("\tCtrl+Alt+S")) << save->text().toStdString();
 }
 
@@ -2846,9 +2906,9 @@ TEST_F(MainWindowKeysTest, AUserBindingOverridesADefaultOneAndTheMenuFollows) {
     EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
     EXPECT_EQ(*platform::read_file(path), "abc");
 
-    EXPECT_EQ(menu_action("&Save")->text(), "&Save");
-    EXPECT_TRUE(menu_action("Toggle &Panel")->text().endsWith("\tCtrl+S"))
-        << menu_action("Toggle &Panel")->text().toStdString();
+    EXPECT_EQ(menu_action("workbench.action.files.save")->text(), "&Save");
+    EXPECT_TRUE(menu_action("workbench.action.togglePanel")->text().endsWith("\tCtrl+S"))
+        << menu_action("workbench.action.togglePanel")->text().toStdString();
 }
 
 TEST_F(MainWindowKeysTest, AUserRemovalTakesADefaultBindingAway) {
@@ -2860,7 +2920,7 @@ TEST_F(MainWindowKeysTest, AUserRemovalTakesADefaultBindingAway) {
 
     QTest::keyClick(window_->view(), Qt::Key_B, Qt::ControlModifier);
     EXPECT_EQ(window_->workbench()->is_visible(Part::sidebar), shown);
-    EXPECT_FALSE(menu_action("Toggle &Sidebar")->text().contains('\t'));
+    EXPECT_FALSE(menu_action("workbench.action.toggleSidebarVisibility")->text().contains('\t'));
 }
 
 TEST_F(MainWindowKeysTest, AUserBindingHasItsWhenAndItsArguments) {
@@ -2888,14 +2948,15 @@ TEST_F(MainWindowKeysTest, AFileThatAppearsLaterIsAppliedAndTheMenuFollows) {
 
     write("keybindings.json",
           R"j([{"key": "ctrl+alt+y", "command": "workbench.action.togglePanel"}])j");
-    ASSERT_TRUE(
-        wait_until([&] { return menu_action("Toggle &Panel")->text().endsWith("\tCtrl+Alt+Y"); }));
+    ASSERT_TRUE(wait_until([&] {
+        return menu_action("workbench.action.togglePanel")->text().endsWith("\tCtrl+Alt+Y");
+    }));
     QTest::keyClick(window_->view(), Qt::Key_Y, Qt::ControlModifier | Qt::AltModifier);
     EXPECT_TRUE(window_->workbench()->is_visible(Part::panel));
 
     std::filesystem::remove(keybindings_file_);
-    ASSERT_TRUE(
-        wait_until([&] { return menu_action("Toggle &Panel")->text().endsWith("\tCtrl+J"); }));
+    ASSERT_TRUE(wait_until(
+        [&] { return menu_action("workbench.action.togglePanel")->text().endsWith("\tCtrl+J"); }));
 }
 
 TEST_F(MainWindowKeysTest, AFileWithASyntaxErrorKeepsTheBindingsAndSaysSo) {

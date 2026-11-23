@@ -71,11 +71,11 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, color themes, key chords, fuzzy matching, UTF-8/UTF-16, URIs, JSON with comments, settings, logging interface |
 | `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services, the commands, key bindings and palette rules that extension manifests contribute |
-| `src/workbench` | the editor layout: groups of tabs, the split tree, focus, saving and restoring it (no Qt) |
+| `src/workbench` | the editor layout: groups of tabs, the split tree, focus, saving and restoring it, and the menu bar of VS Code with the rules that show its entries (no Qt) |
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, tab strip, splitter, editor area and its groups, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
-| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the token theme matcher and the key binding parser, generating the key and icon tables, copying the color themes, formatting |
+| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the token theme matcher and the key binding parser, generating the key, icon and menu tables, copying the color themes, formatting |
 
 ## Conventions
 

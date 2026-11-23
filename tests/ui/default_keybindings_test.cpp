@@ -93,7 +93,7 @@ TEST(DefaultKeybindingsTest, TheStandardShortcutsAreVsCodes) {
     EXPECT_EQ(keys_of(linux, "undo"), chords({"ctrl+z"}));
     EXPECT_EQ(keys_of(linux, "redo"), chords({"ctrl+y", "ctrl+shift+z"}));
     EXPECT_EQ(keys_of(linux, "actions.find"), chords({"ctrl+f"}));
-    EXPECT_EQ(keys_of(linux, "editor.action.startFindReplace"), chords({"ctrl+h"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.startFindReplaceAction"), chords({"ctrl+h"}));
     EXPECT_EQ(keys_of(linux, "editor.action.nextMatchFindAction"), chords({"f3"}));
     EXPECT_EQ(keys_of(linux, "editor.action.previousMatchFindAction"), chords({"shift+f3"}));
     EXPECT_EQ(keys_of(linux, "workbench.action.showCommands"), chords({"ctrl+shift+p", "f1"}));
@@ -126,7 +126,7 @@ TEST(DefaultKeybindingsTest, MacUsesCommandWhereVsCodeUsesCtrlCmdAndControlForEm
     EXPECT_EQ(keys_of(mac, "cursorHome"), chords({"home", "cmd+left"}));
     EXPECT_EQ(keys_of(mac, "deleteLeft"),
               chords({"backspace", "shift+backspace", "ctrl+h", "ctrl+backspace"}));
-    EXPECT_EQ(keys_of(mac, "editor.action.startFindReplace"), chords({"cmd+alt+f"}));
+    EXPECT_EQ(keys_of(mac, "editor.action.startFindReplaceAction"), chords({"cmd+alt+f"}));
     EXPECT_EQ(keys_of(mac, "editor.action.nextMatchFindAction"), chords({"cmd+g", "f3"}));
     EXPECT_EQ(keys_of(mac, "workbench.action.quit"), chords({"cmd+q"}));
 }
