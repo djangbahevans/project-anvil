@@ -59,6 +59,11 @@ jobs:
       - name: Check the Codicons font and its table
         run: node scripts/generate-codicons.mjs --check
 
+      - name: Check the key table and the recorded key binding cases
+        run: |
+          node scripts/generate-key-table.mjs --check
+          node scripts/generate-key-chord-cases.mjs --check
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
