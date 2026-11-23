@@ -303,11 +303,6 @@ void MainWindow::apply_keybindings() {
     const auto& user = user_keybindings_->bindings();
     bindings.insert(bindings.end(), user.begin(), user.end());
     keys_->set_bindings(std::move(bindings));
-    for (const QAction* top : menuBar()->actions()) {
-        if (top->menu()) {
-            show_menu_shortcuts(top->menu());
-        }
-    }
 }
 
 void MainWindow::apply_settings() {
@@ -341,7 +336,7 @@ void MainWindow::register_commands() {
     add("editor.action.clipboardCopyAction", tr("Copy"), [this] { view()->copy(); });
     add("editor.action.clipboardPasteAction", tr("Paste"), [this] { view()->paste(); });
     add("actions.find", tr("Find"), [this] { open_find_bar(false); });
-    add("editor.action.startFindReplace", tr("Replace"), [this] { open_find_bar(true); });
+    add("editor.action.startFindReplaceAction", tr("Replace"), [this] { open_find_bar(true); });
     add("editor.action.nextMatchFindAction", tr("Find Next"), [this] { find_bar()->find_next(); });
     add("editor.action.previousMatchFindAction", tr("Find Previous"),
         [this] { find_bar()->find_previous(); });
@@ -354,7 +349,10 @@ void MainWindow::register_commands() {
             close_tab_at(group->id, *group->active);
         }
     });
+    add("workbench.action.files.newUntitledFile", tr("New Untitled Text File"),
+        [this] { add_untitled_document(); });
     add("workbench.action.quit", tr("Quit"), [this] { close(); });
+    add("workbench.action.closeWindow", tr("Close Window"), [this] { close(); });
     commands_.add(
         "setContext", tr("Set Context").toStdString(), [this](const nlohmann::json& args) {
             if (args.is_array() && args.size() >= 1 && args[0].is_string()) {
@@ -364,8 +362,14 @@ void MainWindow::register_commands() {
         });
     add("workbench.action.splitEditor", tr("Split Editor"),
         [this] { layout_.split(layout_.focused(), workbench::Direction::right); });
+    add("workbench.action.splitEditorRight", tr("Split Editor Right"),
+        [this] { layout_.split(layout_.focused(), workbench::Direction::right); });
     add("workbench.action.splitEditorDown", tr("Split Editor Down"),
         [this] { layout_.split(layout_.focused(), workbench::Direction::down); });
+    add("workbench.action.splitEditorLeft", tr("Split Editor Left"),
+        [this] { layout_.split(layout_.focused(), workbench::Direction::left); });
+    add("workbench.action.splitEditorUp", tr("Split Editor Up"),
+        [this] { layout_.split(layout_.focused(), workbench::Direction::up); });
     add("workbench.action.focusNextGroup", tr("Focus Next Editor Group"),
         [this] { layout_.focus_next(); });
     add("workbench.action.focusPreviousGroup", tr("Focus Previous Editor Group"),
@@ -394,97 +398,86 @@ void MainWindow::share_commands_with_extensions() {
     }
 }
 
-QAction* MainWindow::add_command_action(QMenu* menu, const QString& title,
-                                        const std::string& command) {
-    QAction* action = menu->addAction(title);
-    action->setData(QString::fromStdString(command));
-    action->setProperty("anvil.title", title);
-    connect(action, &QAction::triggered, this, [this, command] { commands_.execute(command); });
-    return action;
+namespace {
+
+// Qt marks the mnemonic with a single `&` before it and writes a literal ampersand as `&&`.
+QString menu_text(const workbench::MenuLabel& label) {
+    const auto escaped = [](const std::string& text) {
+        return QString::fromStdString(text).replace(QLatin1Char('&'), QStringLiteral("&&"));
+    };
+    if (label.mnemonic == workbench::MenuLabel::npos) {
+        return escaped(label.text);
+    }
+    return escaped(label.text.substr(0, label.mnemonic)) + QLatin1Char('&') +
+           escaped(label.text.substr(label.mnemonic));
 }
 
-void MainWindow::show_menu_shortcuts(QMenu* menu) {
-    for (QAction* action : menu->actions()) {
-        const QString command = action->data().toString();
-        if (command.isEmpty()) {
-            continue;
+} // namespace
+
+core::ContextKeys MainWindow::menu_context() const {
+    core::ContextKeys keys;
+    workbench::set_menu_context_defaults(keys);
+    fill_context(keys);
+    return keys;
+}
+
+void MainWindow::populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items) {
+    for (const workbench::MenuItem& item : items) {
+        switch (item.kind) {
+        case workbench::MenuEntryKind::separator:
+            menu->addSeparator();
+            break;
+        case workbench::MenuEntryKind::submenu:
+            populate_menu(menu->addMenu(menu_text(item.label)), item.items);
+            break;
+        case workbench::MenuEntryKind::item: {
+            const QString title = menu_text(item.label);
+            const QString label = keys_->shortcut_label(item.id);
+            QAction* action =
+                menu->addAction(label.isEmpty() ? title : title + QLatin1Char('\t') + label);
+            action->setData(QString::fromStdString(item.id));
+            action->setProperty("anvil.title", title);
+            if (commands_.find(item.id)) {
+                connect(action, &QAction::triggered, this,
+                        [this, id = item.id] { commands_.execute(id); });
+            } else {
+                action->setEnabled(false);
+                action->setToolTip(
+                    tr("%1 is not available yet").arg(QString::fromStdString(item.label.text)));
+            }
+            break;
         }
-        const QString title = action->property("anvil.title").toString();
-        const QString label = keys_->shortcut_label(command.toStdString());
-        action->setText(label.isEmpty() ? title : title + QLatin1Char('\t') + label);
+        }
     }
 }
 
 void MainWindow::build_menus() {
-    const auto add = [this](QMenu* menu, const QString& title, const std::string& command) {
-        add_command_action(menu, title, command);
-    };
-
-    QMenu* file = menuBar()->addMenu(tr("&File"));
-    add(file, tr("&Open…"), "workbench.action.files.openFile");
-    add(file, tr("&Save"), "workbench.action.files.save");
-    add(file, tr("Save &As…"), "workbench.action.files.saveAs");
-    add(file, tr("&Close Tab"), "workbench.action.closeActiveEditor");
-    file->addSeparator();
-    add(file, tr("&Quit"), "workbench.action.quit");
-
-    QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-    add(edit, tr("&Undo"), "undo");
-    add(edit, tr("&Redo"), "redo");
-    edit->addSeparator();
-    add(edit, tr("Cu&t"), "editor.action.clipboardCutAction");
-    add(edit, tr("&Copy"), "editor.action.clipboardCopyAction");
-    add(edit, tr("&Paste"), "editor.action.clipboardPasteAction");
-    edit->addSeparator();
-    add(edit, tr("Select &All"), "editor.action.selectAll");
-    edit->addSeparator();
-    add(edit, tr("&Find…"), "actions.find");
-    add(edit, tr("Find &Next"), "editor.action.nextMatchFindAction");
-    add(edit, tr("Find Pre&vious"), "editor.action.previousMatchFindAction");
-    add(edit, tr("&Replace…"), "editor.action.startFindReplace");
-
-    QMenu* view = menuBar()->addMenu(tr("&View"));
-    add(view, tr("Toggle &Sidebar"), "workbench.action.toggleSidebarVisibility");
-    add(view, tr("Toggle &Panel"), "workbench.action.togglePanel");
-    view->addSeparator();
-    add(view, tr("Split Editor &Right"), "workbench.action.splitEditor");
-    add(view, tr("Split Editor &Down"), "workbench.action.splitEditorDown");
-    add(view, tr("Focus &Next Group"), "workbench.action.focusNextGroup");
-    add(view, tr("Focus Pre&vious Group"), "workbench.action.focusPreviousGroup");
-    add(view, tr("&Close Editor Group"), "workbench.action.closeGroup");
-
-    QMenu* commands = menuBar()->addMenu(tr("Comm&ands"));
-    add(commands, tr("&Show All Commands…"), "workbench.action.showCommands");
-
-    // The key bindings can change while the window runs, so a menu shows them when it opens.
-    for (QMenu* menu : {file, edit, view, commands}) {
-        connect(menu, &QMenu::aboutToShow, this, [this, menu] { show_menu_shortcuts(menu); });
-    }
-
-    window_menu_ = menuBar()->addMenu(tr("Wi&ndow"));
-    connect(window_menu_, &QMenu::aboutToShow, this, [this] {
-        window_menu_->clear();
-        auto* choices = new QActionGroup(window_menu_);
-        const core::Uri* current = current_uri_ptr();
-        for (const workbench::GroupId group : layout_.group_ids()) {
-            for (const core::Uri& uri : layout_.group(group)->tabs) {
-                QAction* action = window_menu_->addAction(display_name(uri));
-                action->setCheckable(true);
-                action->setChecked(current && *current == uri);
-                choices->addAction(action);
-                connect(action, &QAction::triggered, this, [this, uri] {
-                    if (const auto found = documents_.find(uri); found != documents_.end()) {
-                        show_document(uri, found->second);
-                    }
-                });
-            }
+    const core::ContextKeys context = menu_context();
+    for (workbench::MenuItem top : workbench::top_level_menus(context)) {
+        // Alt+C, Alt+W and Alt+R are the find bar's option shortcuts, and a menu that shares one
+        // makes Qt trigger neither, so VS Code's Alt+R for Run is left out.
+        if (top.label.mnemonic != workbench::MenuLabel::npos &&
+            QStringLiteral("cwr").contains(QChar(top.label.text[top.label.mnemonic]).toLower())) {
+            top.label.mnemonic = workbench::MenuLabel::npos;
         }
-    });
+        QMenu* menu = menuBar()->addMenu(menu_text(top.label));
+        menu->setToolTipsVisible(true);
+        // The entries depend on the context and on the commands that exist, and the key bindings
+        // can change while the window runs, so a menu is filled when it opens.
+        connect(menu, &QMenu::aboutToShow, this, [this, menu, id = top.id] {
+            for (QMenu* submenu : menu->findChildren<QMenu*>(Qt::FindDirectChildrenOnly)) {
+                submenu->deleteLater();
+            }
+            menu->clear();
+            populate_menu(menu, workbench::menu_items(id, menu_context()));
+        });
+    }
 }
 
 void MainWindow::fill_context(core::ContextKeys& keys) const {
 #if defined(Q_OS_MACOS)
     keys.set("isMac", true);
+    keys.set("isMacNative", true);
 #elif defined(Q_OS_WIN)
     keys.set("isWindows", true);
 #else

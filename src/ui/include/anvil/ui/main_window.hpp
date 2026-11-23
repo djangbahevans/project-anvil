@@ -21,6 +21,7 @@
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/workbench/editor_layout.hpp"
+#include "anvil/workbench/menu_model.hpp"
 
 #include <QMainWindow>
 #include <filesystem>
@@ -161,9 +162,11 @@ private:
     void fill_context(core::ContextKeys& keys) const;
     // Runs the command of a key binding: the editor's own at once, an extension's through the host.
     void run_bound_command(const std::string& command, const nlohmann::json* args);
-    // Adds a menu item that runs a command and shows its key binding.
-    QAction* add_command_action(QMenu* menu, const QString& title, const std::string& command);
-    void show_menu_shortcuts(QMenu* menu);
+    // The context keys that the `when` clauses of the menus read.
+    core::ContextKeys menu_context() const;
+    // Fills `menu` with `items`. An item runs its command and shows its key binding, and is
+    // disabled while no command has its id.
+    void populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items);
     // Lets extensions execute the registered commands, once the extension host is running.
     void share_commands_with_extensions();
     void build_menus();
@@ -251,7 +254,6 @@ private:
     StatusBar* status_bar_ = nullptr;
     KeybindingService* keys_ = nullptr;
     QString chord_text_;
-    QMenu* window_menu_ = nullptr;
 };
 
 } // namespace anvil::ui
