@@ -20,6 +20,7 @@
 #include <QSplitterHandle>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 #include <chrono>
 #include <functional>
 #include <gtest/gtest.h>
@@ -2170,6 +2171,42 @@ TEST_F(MainWindowTitleBarTest, TheEnvironmentCanKeepTheSystemsFrame) {
     EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
 }
 
+TEST_F(MainWindowTitleBarTest, TheTitleBarStyleSettingChoosesTheFrame) {
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "native"})j");
+    create_window();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+    EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
+    EXPECT_EQ(window_->menu_bar()->parentWidget(), window_.get());
+
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "custom"})j");
+    create_window();
+    EXPECT_TRUE(window_->has_custom_title_bar());
+    EXPECT_EQ(window_->menu_bar()->parentWidget(), window_->title_bar());
+}
+
+TEST_F(MainWindowTitleBarTest, ChangingTheStyleAppliesAfterARestart) {
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "custom"})j");
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+
+    write("settings.json", R"j({"window.titleBarStyle": "native"})j");
+    ASSERT_TRUE(wait_until([&] {
+        return window_->settings().editor().title_bar_style == core::TitleBarStyle::native;
+    }));
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->has_custom_title_bar());
+
+    create_window();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+}
+
+TEST_F(MainWindowTitleBarTest, ASettingThatIsNotAStyleLeavesTheCustomTitleBar) {
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "inherit"})j");
+    create_window();
+    EXPECT_TRUE(window_->has_custom_title_bar());
+    EXPECT_TRUE(window_->status_bar().message().contains("window.titleBarStyle"));
+}
+
 TEST_F(MainWindowTitleBarTest, TheTitleFollowsTheShownDocumentAndItsChanges) {
     create_window();
     ASSERT_TRUE(window_->has_custom_title_bar());
@@ -2259,6 +2296,213 @@ TEST_F(MainWindowTitleBarTest, FullscreenHidesTheTitleBarUntilThePointerReachesT
     window_->showNormal();
     QApplication::processEvents();
     EXPECT_TRUE(window_->workbench()->is_visible(Part::title_bar));
+}
+
+// The menu bar in the title bar is used with the keyboard and the pointer as VS Code's is.
+class MainWindowMenuBarTest : public MainWindowTitleBarTest {
+protected:
+    void create_active_window() {
+        create_window();
+        ASSERT_TRUE(window_->has_custom_title_bar());
+        window_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+        window_->view()->setFocus();
+        QApplication::processEvents();
+    }
+    QMenu* menu(int index) const {
+        return window_->menu_bar()->actions().at(index)->menu();
+    }
+    QWidget* popup() const {
+        return QApplication::activePopupWidget();
+    }
+    // Opens a menu as the user does with Alt and its mnemonic.
+    void open_with_mnemonic(Qt::Key key) {
+        QTest::keyClick(window_.get(), key, Qt::AltModifier);
+        QApplication::processEvents();
+    }
+};
+
+TEST_F(MainWindowMenuBarTest, AltAndAMnemonicOpenAMenuAndEscapeClosesIt) {
+    create_active_window();
+    EXPECT_EQ(popup(), nullptr);
+    open_with_mnemonic(Qt::Key_F);
+    EXPECT_EQ(popup(), menu(0));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+    QApplication::processEvents();
+    EXPECT_EQ(popup(), nullptr);
+
+    open_with_mnemonic(Qt::Key_E);
+    EXPECT_EQ(popup(), menu(1));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+    open_with_mnemonic(Qt::Key_H);
+    EXPECT_EQ(popup(), menu(7));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, TheArrowKeysMoveBetweenTheMenusAndTheirItems) {
+    create_active_window();
+    open_with_mnemonic(Qt::Key_F);
+    ASSERT_EQ(popup(), menu(0));
+
+    QTest::keyClick(popup(), Qt::Key_Right);
+    QApplication::processEvents();
+    EXPECT_EQ(popup(), menu(1));
+    QTest::keyClick(popup(), Qt::Key_Right);
+    QApplication::processEvents();
+    EXPECT_EQ(popup(), menu(2));
+    QTest::keyClick(popup(), Qt::Key_Left);
+    QApplication::processEvents();
+    EXPECT_EQ(popup(), menu(1));
+
+    // Arriving by key chooses the first item.
+    const QAction* first = menu(1)->activeAction();
+    ASSERT_NE(first, nullptr);
+    QTest::keyClick(popup(), Qt::Key_Down);
+    EXPECT_NE(menu(1)->activeAction(), first);
+    QTest::keyClick(popup(), Qt::Key_Up);
+    EXPECT_EQ(menu(1)->activeAction(), first);
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, AltAloneFocusesTheFirstMenuAndEscapeLeavesTheBar) {
+    create_active_window();
+    QTest::keyClick(window_.get(), Qt::Key_Alt);
+    QApplication::processEvents();
+    EXPECT_EQ(window_->menu_bar()->activeAction(), window_->menu_bar()->actions().at(0));
+    QTest::keyClick(window_->menu_bar(), Qt::Key_Right);
+    EXPECT_EQ(window_->menu_bar()->activeAction(), window_->menu_bar()->actions().at(1));
+    QTest::keyClick(window_->menu_bar(), Qt::Key_Escape);
+    QApplication::processEvents();
+    EXPECT_EQ(window_->menu_bar()->activeAction(), nullptr);
+}
+
+TEST_F(MainWindowMenuBarTest, WhileAMenuIsOpenThePointerOpensTheMenuItIsOver) {
+    create_active_window();
+    open_with_mnemonic(Qt::Key_F);
+    ASSERT_EQ(popup(), menu(0));
+
+    QAction* edit = window_->menu_bar()->actions().at(1);
+    const QPoint over_edit =
+        window_->menu_bar()->mapToGlobal(window_->menu_bar()->actionGeometry(edit).center());
+    QMouseEvent move(QEvent::MouseMove, menu(0)->mapFromGlobal(over_edit), over_edit, Qt::NoButton,
+                     Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(popup(), &move);
+    QApplication::processEvents();
+    EXPECT_EQ(popup(), menu(1));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, TheMenusFollowTheMenuColorsOfTheTheme) {
+    create_active_window();
+    window_->colors().set_colors({{"menu.background", QColor("#202020")},
+                                  {"menu.foreground", QColor("#dddddd")},
+                                  {"menu.border", QColor("#404040")},
+                                  {"menu.selectionBackground", QColor("#0078d4")},
+                                  {"menu.selectionForeground", QColor("#ffffff")},
+                                  {"menu.separatorBackground", QColor("#ff00ff")}});
+    open_with_mnemonic(Qt::Key_F);
+    ASSERT_EQ(popup(), menu(0));
+
+    const auto first_separator = [&]() -> QAction* {
+        for (QAction* action : menu(0)->actions()) {
+            if (action->isSeparator()) {
+                return action;
+            }
+        }
+        return nullptr;
+    };
+    QImage image = menu(0)->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() / 2, 3), QColor("#202020"));
+    EXPECT_EQ(image.pixelColor(0, image.height() / 2), QColor("#404040"));
+    QAction* separator = first_separator();
+    ASSERT_NE(separator, nullptr);
+    EXPECT_EQ(image.pixelColor(image.width() / 2, menu(0)->actionGeometry(separator).center().y()),
+              QColor("#ff00ff"));
+
+    QTest::keyClick(popup(), Qt::Key_Down);
+    ASSERT_NE(menu(0)->activeAction(), nullptr);
+    image = menu(0)->grab().toImage();
+    const QRect chosen = menu(0)->actionGeometry(menu(0)->activeAction());
+    EXPECT_EQ(image.pixelColor(chosen.right() - 4, chosen.center().y()), QColor("#0078d4"));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+    QApplication::processEvents();
+
+    window_->colors().set_colors({{"menu.background", QColor("#ff0000")}});
+    open_with_mnemonic(Qt::Key_F);
+    image = menu(0)->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() / 2, 3), QColor("#ff0000"));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, ADisabledItemIsDimmerThanAnEnabledOne) {
+    create_active_window();
+    window_->colors().set_colors(
+        {{"menu.background", QColor("#202020")}, {"menu.foreground", QColor("#dddddd")}});
+    open_with_mnemonic(Qt::Key_F);
+    const QImage image = menu(0)->grab().toImage();
+    const auto brightest = [&](const std::string& command) {
+        QAction* action = nullptr;
+        for (QAction* candidate : menu(0)->actions()) {
+            if (candidate->data().toString().toStdString() == command) {
+                action = candidate;
+            }
+        }
+        EXPECT_NE(action, nullptr) << command;
+        int best = 0;
+        const QRect row = menu(0)->actionGeometry(action);
+        for (int y = row.top(); y <= row.bottom(); ++y) {
+            for (int x = row.left(); x < row.left() + row.width() / 2; ++x) {
+                best = std::max(best, image.pixelColor(x, y).lightness());
+            }
+        }
+        return best;
+    };
+    // Open File exists and Open Folder does not.
+    const int enabled = brightest("workbench.action.files.openFile");
+    const int disabled = brightest("workbench.action.files.openFolder");
+    EXPECT_GT(enabled, 180);
+    EXPECT_LT(disabled, enabled - 60);
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, TheSubmenusFollowTheirMenu) {
+    create_active_window();
+    window_->colors().set_colors({{"menu.background", QColor("#202020")}});
+    open_with_mnemonic(Qt::Key_F);
+    QAction* recent = nullptr;
+    for (QAction* action : menu(0)->actions()) {
+        if (action->menu() && action->text().contains("Recent")) {
+            recent = action;
+        }
+    }
+    ASSERT_NE(recent, nullptr);
+    recent->menu()->popup(menu(0)->mapToGlobal(menu(0)->actionGeometry(recent).topRight()));
+    QApplication::processEvents();
+    const QImage image = recent->menu()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(image.width() / 2, 3), QColor("#202020"));
+    recent->menu()->close();
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, MenusThatDoNotFitCollapseIntoTheExtensionMenu) {
+    create_active_window();
+    const QMenuBar* bar = window_->menu_bar();
+    const auto extension_shown = [&] {
+        for (const QToolButton* button : bar->findChildren<QToolButton*>()) {
+            if (button->isVisible()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    window_->resize(1000, 600);
+    QApplication::processEvents();
+    EXPECT_FALSE(extension_shown());
+
+    window_->resize(420, 600);
+    QApplication::processEvents();
+    EXPECT_TRUE(extension_shown());
+    EXPECT_LE(bar->x() + bar->width(), window_->title_bar()->minimize_button()->x());
 }
 
 TEST_F(MainWindowTitleBarTest, TheSystemsFrameReturnsWhenTheWindowSystemCannotMoveTheWindow) {

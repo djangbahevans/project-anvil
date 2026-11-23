@@ -186,6 +186,8 @@ private:
     // Fills `menu` with `items`. An item runs its command and shows its key binding, and is
     // disabled while no command has its id.
     void populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items);
+    // Colors the menus from the theme; a menu's submenus follow it.
+    void style_menus();
     // Lets extensions execute the registered commands, once the extension host is running.
     void share_commands_with_extensions();
     void build_menus();

@@ -104,6 +104,17 @@ TEST(EditorSettings, FocusingTheRecentEditorAfterClosingDefaultsToOnAndIsReadFro
                     ->focus_recent_editor_after_close);
 }
 
+TEST(EditorSettings, TheTitleBarStyleDefaultsToCustomAndIsReadFromTheSettings) {
+    using anvil::core::TitleBarStyle;
+    EXPECT_EQ(read("{}")->title_bar_style, TitleBarStyle::custom);
+    EXPECT_EQ(read(R"j({"window.titleBarStyle": "custom"})j")->title_bar_style,
+              TitleBarStyle::custom);
+    EXPECT_EQ(read(R"j({"window.titleBarStyle": "native"})j")->title_bar_style,
+              TitleBarStyle::native);
+    EXPECT_EQ(read(R"j({"window": {"titleBarStyle": "native"}})j")->title_bar_style,
+              TitleBarStyle::native);
+}
+
 TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
     for (const auto& [text, key] : std::vector<std::pair<std::string, std::string>>{
              {R"j({"editor.fontFamily": 3})j", "editor.fontFamily"},
@@ -115,6 +126,9 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"workbench.editor.focusRecentEditorAfterClose": "no"})j",
               "workbench.editor.focusRecentEditorAfterClose"},
              {R"j({"files.eol": 1})j", "files.eol"},
+             {R"j({"window.titleBarStyle": 1})j", "window.titleBarStyle"},
+             {R"j({"window.titleBarStyle": "inherit"})j", "window.titleBarStyle"},
+             {R"j({"window.titleBarStyle": "Native"})j", "window.titleBarStyle"},
              {R"j({"files.eol": "\r"})j", "files.eol"},
          }) {
         const auto result = read(text);
