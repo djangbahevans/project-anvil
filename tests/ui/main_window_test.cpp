@@ -2171,6 +2171,42 @@ TEST_F(MainWindowTitleBarTest, TheEnvironmentCanKeepTheSystemsFrame) {
     EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
 }
 
+TEST_F(MainWindowTitleBarTest, TheTitleBarStyleSettingChoosesTheFrame) {
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "native"})j");
+    create_window();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+    EXPECT_FALSE(window_->windowFlags().testFlag(Qt::FramelessWindowHint));
+    EXPECT_EQ(window_->menu_bar()->parentWidget(), window_.get());
+
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "custom"})j");
+    create_window();
+    EXPECT_TRUE(window_->has_custom_title_bar());
+    EXPECT_EQ(window_->menu_bar()->parentWidget(), window_->title_bar());
+}
+
+TEST_F(MainWindowTitleBarTest, ChangingTheStyleAppliesAfterARestart) {
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "custom"})j");
+    create_window();
+    ASSERT_TRUE(window_->has_custom_title_bar());
+
+    write("settings.json", R"j({"window.titleBarStyle": "native"})j");
+    ASSERT_TRUE(wait_until([&] {
+        return window_->settings().editor().title_bar_style == core::TitleBarStyle::native;
+    }));
+    QApplication::processEvents();
+    EXPECT_TRUE(window_->has_custom_title_bar());
+
+    create_window();
+    EXPECT_FALSE(window_->has_custom_title_bar());
+}
+
+TEST_F(MainWindowTitleBarTest, ASettingThatIsNotAStyleLeavesTheCustomTitleBar) {
+    settings_file_ = write("settings.json", R"j({"window.titleBarStyle": "inherit"})j");
+    create_window();
+    EXPECT_TRUE(window_->has_custom_title_bar());
+    EXPECT_TRUE(window_->status_bar().message().contains("window.titleBarStyle"));
+}
+
 TEST_F(MainWindowTitleBarTest, TheTitleFollowsTheShownDocumentAndItsChanges) {
     create_window();
     ASSERT_TRUE(window_->has_custom_title_bar());
@@ -2395,6 +2431,37 @@ TEST_F(MainWindowMenuBarTest, TheMenusFollowTheMenuColorsOfTheTheme) {
     open_with_mnemonic(Qt::Key_F);
     image = menu(0)->grab().toImage();
     EXPECT_EQ(image.pixelColor(image.width() / 2, 3), QColor("#ff0000"));
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MainWindowMenuBarTest, ADisabledItemIsDimmerThanAnEnabledOne) {
+    create_active_window();
+    window_->colors().set_colors(
+        {{"menu.background", QColor("#202020")}, {"menu.foreground", QColor("#dddddd")}});
+    open_with_mnemonic(Qt::Key_F);
+    const QImage image = menu(0)->grab().toImage();
+    const auto brightest = [&](const std::string& command) {
+        QAction* action = nullptr;
+        for (QAction* candidate : menu(0)->actions()) {
+            if (candidate->data().toString().toStdString() == command) {
+                action = candidate;
+            }
+        }
+        EXPECT_NE(action, nullptr) << command;
+        int best = 0;
+        const QRect row = menu(0)->actionGeometry(action);
+        for (int y = row.top(); y <= row.bottom(); ++y) {
+            for (int x = row.left(); x < row.left() + row.width() / 2; ++x) {
+                best = std::max(best, image.pixelColor(x, y).lightness());
+            }
+        }
+        return best;
+    };
+    // Open File exists and Open Folder does not.
+    const int enabled = brightest("workbench.action.files.openFile");
+    const int disabled = brightest("workbench.action.files.openFolder");
+    EXPECT_GT(enabled, 180);
+    EXPECT_LT(disabled, enabled - 60);
     QTest::keyClick(popup(), Qt::Key_Escape);
 }
 

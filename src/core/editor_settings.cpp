@@ -67,6 +67,16 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             problems.emplace_back("workbench.colorTheme must be a string");
         }
     }
+    if (settings.contains("window.titleBarStyle")) {
+        const auto style = settings.get<std::string>("window.titleBarStyle");
+        if (style && *style == "custom") {
+            result.title_bar_style = TitleBarStyle::custom;
+        } else if (style && *style == "native") {
+            result.title_bar_style = TitleBarStyle::native;
+        } else {
+            problems.emplace_back("window.titleBarStyle must be \"custom\" or \"native\"");
+        }
+    }
     if (settings.contains("workbench.editor.focusRecentEditorAfterClose")) {
         if (const auto recent =
                 settings.get<bool>("workbench.editor.focusRecentEditorAfterClose")) {

@@ -121,8 +121,22 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     status_bar_ = new StatusBar(colors_, this);
     workbench_->set_status_bar(status_bar_);
     setCentralWidget(workbench_);
-    custom_title_bar_ =
-        options_.custom_title_bar && !qEnvironmentVariableIsSet("ANVIL_NATIVE_FRAME");
+
+    // The window's frame is chosen when it is created, so the settings are read first.
+    auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
+    settings_ = new SettingsStore(
+        {.file = options_.settings_file, .defaults = platform::editor_defaults(), .logger = logger},
+        this);
+    connect(settings_, &SettingsStore::changed, this, &MainWindow::apply_settings);
+    connect(settings_, &SettingsStore::load_failed, this, [this](const QString& message) {
+        status_bar_->show_message(
+            tr("Settings not applied, keeping the previous ones: %1").arg(message), 15000);
+    });
+    settings_->start();
+
+    custom_title_bar_ = options_.custom_title_bar &&
+                        settings_->editor().title_bar_style == core::TitleBarStyle::custom &&
+                        !qEnvironmentVariableIsSet("ANVIL_NATIVE_FRAME");
 #if defined(Q_OS_MACOS)
     custom_title_bar_ = false;
 #endif
@@ -159,17 +173,6 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                 }
             });
     build_menus();
-
-    auto logger = options_.logger ? options_.logger : std::make_shared<core::NullLogger>();
-    settings_ = new SettingsStore(
-        {.file = options_.settings_file, .defaults = platform::editor_defaults(), .logger = logger},
-        this);
-    connect(settings_, &SettingsStore::changed, this, &MainWindow::apply_settings);
-    connect(settings_, &SettingsStore::load_failed, this, [this](const QString& message) {
-        status_bar_->show_message(
-            tr("Settings not applied, keeping the previous ones: %1").arg(message), 15000);
-    });
-    settings_->start();
 
     user_keybindings_ =
         new KeybindingsStore({.file = options_.keybindings_file, .logger = logger}, this);
