@@ -25,7 +25,7 @@ struct Modifiers {
 
 // One press: some modifiers held and a key.
 struct KeyStep {
-    Modifiers modifiers;
+    Modifiers modifiers = {};
     Key key = Key::backspace;
 
     auto operator<=>(const KeyStep&) const = default;

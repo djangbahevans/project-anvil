@@ -248,3 +248,25 @@ TEST_F(KeyDispatcherTest, ANewTableIsUsedFromTheNextPress) {
     dispatcher_->set_table(replacement);
     EXPECT_EQ(press("ctrl+a").command, "new");
 }
+
+TEST_F(KeyDispatcherTest, WouldHandleSaysWhatDispatchWillDoWithoutDoingIt) {
+    use({binding("ctrl+k ctrl+c", "chord"), binding("ctrl+s", "save"), binding("ctrl+b", "^bubble"),
+         binding("ctrl+d", "")});
+    const auto asks = [&](std::string_view key) {
+        return dispatcher_->would_handle(step_of(key), context_);
+    };
+    EXPECT_TRUE(asks("ctrl+s"));
+    EXPECT_TRUE(asks("ctrl+k"));
+    EXPECT_FALSE(dispatcher_->in_chord());
+    EXPECT_FALSE(asks("ctrl+b"));
+    EXPECT_FALSE(asks("ctrl+d"));
+    EXPECT_FALSE(asks("x"));
+    EXPECT_FALSE(asks("ctrl"));
+
+    press("ctrl+k");
+    EXPECT_TRUE(asks("x"));
+    EXPECT_TRUE(asks("ctrl+d"));
+    EXPECT_TRUE(asks("ctrl+c"));
+    EXPECT_FALSE(asks("shift"));
+    EXPECT_TRUE(dispatcher_->in_chord());
+}

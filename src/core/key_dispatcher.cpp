@@ -71,6 +71,25 @@ KeyDispatch KeyDispatcher::dispatch(const KeyStep& press, const ContextKeys& con
     return result;
 }
 
+bool KeyDispatcher::would_handle(const KeyStep& press, const ContextKeys& context) const {
+    if (is_modifier_key(press.key)) {
+        return false;
+    }
+    const Resolution resolution = table_->resolve(pending_, press, context);
+    switch (resolution.kind) {
+    case Resolution::Kind::none:
+        return in_chord();
+    case Resolution::Kind::more_keys_needed:
+        return true;
+    case Resolution::Kind::found:
+        if (resolution.command.empty()) {
+            return in_chord();
+        }
+        return !resolution.bubble;
+    }
+    return false;
+}
+
 KeyDispatch KeyDispatcher::check_timeout(Time now) {
     if (in_chord() && now - last_press_ > chord_timeout) {
         return leave();
