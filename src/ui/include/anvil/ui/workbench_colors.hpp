@@ -1,8 +1,11 @@
 #pragma once
 
+#include "anvil/core/token_theme.hpp"
+
 #include <QColor>
 #include <QObject>
 #include <QPalette>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -58,15 +61,27 @@ public:
     // Derives the fallbacks from another palette; `changed` is emitted when it differs.
     void set_palette(const QPalette& palette);
 
+    // How the theme styles the scopes that a highlighter gives (its `tokenColors`); null when
+    // there is none. `changed` is emitted when the theme is another one.
+    std::shared_ptr<const core::TokenTheme> token_theme() const {
+        return token_theme_;
+    }
+    void set_token_theme(std::shared_ptr<const core::TokenTheme> theme);
+    // Replaces the colors and the token theme together: `changed` is emitted once, and not at all
+    // when neither differs.
+    void set_theme(const Colors& theme, std::shared_ptr<const core::TokenTheme> token_theme);
+
 signals:
     void changed();
 
 private:
+    static std::vector<std::optional<QColor>> themed_values(const Colors& theme);
     QColor resolve(std::size_t index, int depth) const;
 
     QPalette palette_;
     // Parallel to the table.
     std::vector<std::optional<QColor>> themed_;
+    std::shared_ptr<const core::TokenTheme> token_theme_;
 };
 
 } // namespace anvil::ui

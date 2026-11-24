@@ -21,6 +21,10 @@
 namespace anvil::ui {
 namespace {
 
+QColor to_color(const core::Rgba& color) {
+    return QColor(color.red, color.green, color.blue, color.alpha);
+}
+
 constexpr int text_padding = 6;
 constexpr int gutter_padding = 8;
 const QColor match_highlight(255, 190, 0, 90);
@@ -246,6 +250,19 @@ void EditorView::replace_ranges(std::vector<core::Edit> edits,
     }
 }
 
+void EditorView::set_highlighter(std::shared_ptr<const core::Highlighter> highlighter) {
+    highlighter_ = std::move(highlighter);
+    painted_highlighter_version_ = highlighter_ ? highlighter_->version() : 0;
+    viewport()->update();
+}
+
+void EditorView::refresh_highlighting() {
+    if (highlighter_ && highlighter_->version() != painted_highlighter_version_) {
+        painted_highlighter_version_ = highlighter_->version();
+        viewport()->update();
+    }
+}
+
 void EditorView::set_highlights(std::vector<core::Match> highlights) {
     highlights_ = std::move(highlights);
     viewport()->update();
@@ -262,6 +279,39 @@ int EditorView::gutter_width() const {
 
 int EditorView::text_origin_x() const {
     return gutter_width() + text_padding - horizontalScrollBar()->value();
+}
+
+QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenTheme& token_theme,
+                                                           std::size_t line, qsizetype size) const {
+    QList<QTextLayout::FormatRange> formats;
+    const std::string_view root = highlighter_->root_scope();
+    for (const core::HighlightSpan& span : highlighter_->spans(line)) {
+        const qsizetype begin = static_cast<qsizetype>(span.begin);
+        const qsizetype end = std::min(static_cast<qsizetype>(span.end), size);
+        if (begin >= end) {
+            continue;
+        }
+        const std::string_view stack[] = {root, span.scope};
+        const core::TokenStyle style = token_theme.style_for(stack);
+        QTextCharFormat format;
+        if (style.foreground) {
+            format.setForeground(to_color(*style.foreground));
+        }
+        if (style.background) {
+            format.setBackground(to_color(*style.background));
+        }
+        if (const std::uint8_t bits = style.font_style.value_or(0); bits != 0) {
+            format.setFontWeight((bits & core::FontStyle::bold) ? QFont::Bold : QFont::Normal);
+            format.setFontItalic((bits & core::FontStyle::italic) != 0);
+            format.setFontUnderline((bits & core::FontStyle::underline) != 0);
+            format.setFontStrikeOut((bits & core::FontStyle::strikethrough) != 0);
+        }
+        if (format.properties().isEmpty()) {
+            continue;
+        }
+        formats.push_back({static_cast<int>(begin), static_cast<int>(end - begin), format});
+    }
+    return formats;
 }
 
 std::unique_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line) const {
@@ -287,6 +337,11 @@ std::unique_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line
     result->layout.setText(result->text);
     result->layout.setFont(font());
     result->layout.setTextOption(option);
+    if (highlighter_ && colors_ && colors_->token_theme()) {
+        // Set before the layout, since only then do font styles such as bold and italic apply.
+        result->layout.setFormats(
+            syntax_formats(*colors_->token_theme(), line, result->text.size()));
+    }
     result->layout.beginLayout();
     QTextLine text_line = result->layout.createLine();
     if (text_line.isValid()) {
@@ -933,7 +988,7 @@ EditorView::Colors EditorView::current_colors() const {
             foreground,
             colors_->color("editor.selectionBackground"),
             colors_->is_themed("editor.selectionBackground")
-                ? foreground
+                ? QColor()
                 : palette().color(QPalette::HighlightedText),
             colors_->color("editor.lineHighlightBackground"),
             colors_->color("editorLineNumber.foreground"),
@@ -1041,7 +1096,9 @@ void EditorView::paintEvent(QPaintEvent*) {
             if (from < to) {
                 QTextCharFormat format;
                 format.setBackground(selection_background);
-                format.setForeground(selection_foreground);
+                if (selection_foreground.isValid()) {
+                    format.setForeground(selection_foreground);
+                }
                 const int start_column = static_cast<int>(text.utf16_offset(from) - line_units);
                 const int end_column = static_cast<int>(text.utf16_offset(to) - line_units);
                 formats.push_back(

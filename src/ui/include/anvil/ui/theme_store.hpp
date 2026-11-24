@@ -60,6 +60,11 @@ public:
     const core::ColorTheme* color_theme() const {
         return theme_ ? &*theme_ : nullptr;
     }
+    // How the applied theme styles the scopes of a highlighter, from its `tokenColors`; it is also
+    // what the colors give to the editors, so that a theme change reaches them with the colors.
+    std::shared_ptr<const core::TokenTheme> token_theme() const {
+        return colors_.token_theme();
+    }
 
     // Applies the theme the name refers to. When no theme has been applied yet and `name` cannot
     // be, `fallback` is tried quietly, so that the editor starts with a theme. False when `name`

@@ -3,6 +3,7 @@
 #include "anvil/core/document.hpp"
 #include "anvil/core/editing.hpp"
 #include "anvil/core/editor_settings.hpp"
+#include "anvil/core/highlighter.hpp"
 #include "anvil/core/search.hpp"
 #include "anvil/core/whitespace.hpp"
 #include "anvil/ui/workbench_colors.hpp"
@@ -10,6 +11,7 @@
 #include <QAbstractScrollArea>
 #include <QElapsedTimer>
 #include <QString>
+#include <QTextLayout>
 #include <QTimer>
 #include <memory>
 #include <optional>
@@ -118,6 +120,14 @@ public:
     // differs from the selection. Empty ranges are not shown.
     void set_highlights(std::vector<core::Match> highlights);
 
+    // Shows the syntax of the document in the colors and font styles that the theme gives the
+    // scopes of the highlighter's spans (`WorkbenchColors::token_theme`). Null shows plain text.
+    // Only the lines in view are asked for spans. The view paints again when `refresh_highlighting`
+    // finds that the highlighter's version has changed, or at once for a new highlighter.
+    void set_highlighter(std::shared_ptr<const core::Highlighter> highlighter);
+    // Paints again if the highlighter has new spans since the last paint.
+    void refresh_highlighting();
+
     // The caret rectangle of byte `offset`, in viewport coordinates.
     QRect cursor_rect(std::size_t offset) const;
     // The byte offset nearest to a point in viewport coordinates.
@@ -171,6 +181,9 @@ private:
     bool has_multi_cursor_modifier(Qt::KeyboardModifiers modifiers) const;
     bool has_other_modifier(Qt::KeyboardModifiers modifiers) const;
     // Draws the marks for the spaces and tabs of the line that `render_whitespace_` asks for.
+    // The format of each span of the highlighter on `line`, whose text has `size` UTF-16 units.
+    QList<QTextLayout::FormatRange> syntax_formats(const core::TokenTheme& token_theme,
+                                                   std::size_t line, qsizetype size) const;
     void draw_whitespace(QPainter& painter, const LineLayout& layout,
                          std::span<const core::ColumnRange> selected, int origin_x, int y,
                          const QColor& color) const;
@@ -229,6 +242,8 @@ private:
     QElapsedTimer since_double_click_;
     QString preedit_;
     std::vector<core::Match> highlights_;
+    std::shared_ptr<const core::Highlighter> highlighter_;
+    std::uint64_t painted_highlighter_version_ = 0;
     std::optional<OccurrenceSession> occurrence_session_;
 };
 

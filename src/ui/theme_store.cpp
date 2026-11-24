@@ -190,7 +190,12 @@ bool ThemeStore::apply(const Entry& entry, std::string* problem) {
         logger_->log(core::LogLevel::warning, "theme", warning);
     }
 
-    colors_.set_colors(compose(entry, *loaded));
+    auto token_theme = std::make_shared<const core::TokenTheme>(
+        core::TokenTheme::from_json(loaded->token_colors()));
+    for (const std::string& warning : token_theme->warnings()) {
+        logger_->log(core::LogLevel::warning, "theme", entry.id + ": " + warning);
+    }
+    colors_.set_theme(compose(entry, *loaded), std::move(token_theme));
     current_ = entry.id;
     theme_ = std::move(*loaded);
     last_problem_.clear();
