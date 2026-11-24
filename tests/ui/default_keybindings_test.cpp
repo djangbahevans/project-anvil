@@ -81,6 +81,8 @@ TEST(DefaultKeybindingsTest, EveryPlatformBindsTheSameCommandsExceptWhereVsCodeB
     }
     // Windows has Alt+F4 from the system for quitting.
     windows_commands.insert("workbench.action.quit");
+    // VS Code binds Save All on Windows and macOS only.
+    linux_commands.insert("saveAll");
     EXPECT_EQ(linux_commands, windows_commands);
     EXPECT_EQ(linux_commands, macos_commands);
 }
@@ -112,6 +114,12 @@ TEST(DefaultKeybindingsTest, TheStandardShortcutsAreVsCodes) {
     EXPECT_EQ(keys_of(linux, "editor.action.clipboardPasteAction"),
               chords({"ctrl+v", "shift+insert"}));
     EXPECT_EQ(keys_of(linux, "editor.action.clipboardCutAction"), chords({"ctrl+x"}));
+}
+
+TEST(DefaultKeybindingsTest, SaveAllHasAChordOnWindowsAndAShortcutOnMacOSAndNothingOnLinux) {
+    EXPECT_TRUE(keys_of(default_keybindings(KeyPlatform::linux), "saveAll").empty());
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::windows), "saveAll"), chords({"ctrl+k s"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), "saveAll"), chords({"cmd+alt+s"}));
 }
 
 TEST(DefaultKeybindingsTest, WindowsHasItsOwnSecondaryKeys) {

@@ -89,6 +89,17 @@ public:
     // Writes the shown document to its file, asking for one when it has none.
     bool save();
     bool save_as(const QString& path);
+    // Saves every document with unsaved changes, in the order of the tabs of the groups: one with
+    // a file is written, an untitled one asks for a name. Stops when the user cancels that
+    // question, and false means that it did, or that a document could not be written. The
+    // documents are found again by identity after each question, because extensions can change
+    // the tabs meanwhile.
+    bool save_all();
+    // Reads the file of the shown document again and replaces its text with it, as one edit that
+    // can be undone, leaving the document without unsaved changes. Each selection keeps its line
+    // and column, clamped to the new text. False for an untitled document, and when the file
+    // cannot be read, which the status bar says.
+    bool revert();
     // Closes the document at tab position `index` of the focused group. With unsaved changes it
     // asks whether to save them first; false means the user cancelled. Closing the last document
     // opens an untitled one.

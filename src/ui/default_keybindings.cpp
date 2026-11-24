@@ -85,6 +85,7 @@ const Row rows[] = {
     {"workbench.action.files.openFile", "", {"ctrl+o"}, {"ctrl+o"}, {"cmd+o"}},
     {"workbench.action.files.save", "", {"ctrl+s"}, {"ctrl+s"}, {"cmd+s"}},
     {"workbench.action.files.saveAs", "", {"ctrl+shift+s"}, {"ctrl+shift+s"}, {"cmd+shift+s"}},
+    {"saveAll", "", {}, {"ctrl+k s"}, {"cmd+alt+s"}},
     {"workbench.action.closeActiveEditor", "", {"ctrl+w"}, {"ctrl+f4", "ctrl+w"}, {"cmd+w"}},
     // After closing the editor, because it is the later of two bindings of a key that apply to an
     // empty group.

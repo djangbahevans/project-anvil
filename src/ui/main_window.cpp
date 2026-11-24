@@ -530,6 +530,8 @@ void MainWindow::register_commands() {
     add("workbench.action.closeFolder", tr("Close Folder"),
         [this] { QTimer::singleShot(0, this, [this] { close_folder(); }); });
     add("workbench.action.files.save", tr("Save"), [this] { save(); });
+    add("saveAll", tr("Save All"), [this] { save_all(); });
+    add("workbench.action.files.revert", tr("Revert File"), [this] { revert(); });
     add("workbench.action.files.saveAs", tr("Save As…"), [this] { save_as_dialog(); });
     add("workbench.action.closeActiveEditor", tr("Close Editor"), [this] {
         const workbench::EditorGroup* group = layout_.group(layout_.focused());
@@ -655,6 +657,7 @@ core::ContextKeys MainWindow::menu_context() const {
     // Only a menu reads these, and finding the dirty documents grows with the number of tabs, which
     // `fill_context` must not do because it runs on every key press.
     keys.set("activeEditor", current_uri_ptr() != nullptr);
+    keys.set("activeEditorCanRevert", current_uri_ptr() && current_uri_ptr()->file_path());
     bool editor_open = false;
     for (const workbench::GroupId id : layout_.group_ids()) {
         editor_open = editor_open || !layout_.group(id)->tabs.empty();
@@ -1116,6 +1119,86 @@ bool MainWindow::save() {
 bool MainWindow::save_as(const QString& path) {
     const core::Uri* current = current_uri_ptr();
     return current && save_document_as(*current, path);
+}
+
+bool MainWindow::save_all() {
+    std::vector<std::shared_ptr<core::Document>> dirty;
+    std::set<const core::Document*> seen;
+    for (const workbench::GroupId id : layout_.group_ids()) {
+        for (const core::Uri& uri : layout_.group(id)->tabs) {
+            const auto found = documents_.find(uri);
+            if (found != documents_.end() && found->second->is_dirty() &&
+                seen.insert(found->second.get()).second) {
+                dirty.push_back(found->second);
+            }
+        }
+    }
+    bool all_saved = true;
+    for (const std::shared_ptr<core::Document>& document : dirty) {
+        const auto uri = uri_of(document);
+        if (!uri || !document->is_dirty()) {
+            continue;
+        }
+        if (const auto path = uri->file_path()) {
+            all_saved = write_document(*uri, *path) && all_saved;
+        } else if (!save_document(*uri)) {
+            return false;
+        }
+    }
+    return all_saved;
+}
+
+bool MainWindow::revert() {
+    const core::Uri* current = current_uri_ptr();
+    const auto path = current ? current->file_path() : std::nullopt;
+    if (!path) {
+        return false;
+    }
+    const core::Uri uri = *current;
+    const std::shared_ptr<core::Document> document = documents_.at(uri);
+    const auto fail = [this](const std::string& reason) {
+        status_bar_->show_message(tr("Revert failed: %1").arg(QString::fromStdString(reason)),
+                                  5000);
+        return false;
+    };
+    const auto bytes = platform::read_file(*path);
+    if (!bytes) {
+        return fail(bytes.error().message);
+    }
+    const auto decoded = core::Document::from_file_bytes(*bytes);
+    if (!decoded) {
+        return fail(decoded.error().message);
+    }
+    const core::Text& before = document->text();
+    const core::Text& after = decoded->text();
+    if (before.to_string() != after.to_string()) {
+        const auto moved = [&](std::size_t offset) {
+            return after.offset_at(before.position_at(offset));
+        };
+        std::vector<core::Selection> selections;
+        for (const core::Selection& selection : document->selections().all()) {
+            selections.push_back({moved(selection.anchor), moved(selection.active)});
+        }
+        const core::Edit replacement{0, before.size(), after.to_string()};
+        const auto change = document->apply_edits(
+            std::span(&replacement, 1),
+            {.selections_after = core::SelectionSet::from(std::move(selections),
+                                                          document->selections().primary_index())});
+        if (!change) {
+            return fail(change.error().message);
+        }
+        bridge_.text_changed(uri, *change);
+        for (EditorGroupWidget* group : area_->groups()) {
+            if (group->view()->document() == document) {
+                group->view()->document_changed_elsewhere();
+            }
+        }
+    }
+    document->mark_saved();
+    bridge_.saved(uri);
+    update_document(uri);
+    update_status();
+    return true;
 }
 
 bool MainWindow::save_document(const core::Uri& uri) {
