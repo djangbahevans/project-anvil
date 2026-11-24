@@ -71,6 +71,22 @@ const Row rows[] = {
      {"alt+enter"},
      {"alt+enter"}},
 
+    {"editor.action.insertCursorAbove",
+     in_editor,
+     {"shift+alt+up", "ctrl+shift+up"},
+     {"ctrl+alt+up"},
+     {"cmd+alt+up"}},
+    {"editor.action.insertCursorBelow",
+     in_editor,
+     {"shift+alt+down", "ctrl+shift+down"},
+     {"ctrl+alt+down"},
+     {"cmd+alt+down"}},
+    {"editor.action.insertCursorAtEndOfEachLineSelected",
+     in_editor,
+     {"shift+alt+i"},
+     {"shift+alt+i"},
+     {"shift+alt+i"}},
+
     // Lines.
     {"editor.action.copyLinesUpAction",
      in_editor,

@@ -144,6 +144,20 @@ public:
     // Selects the whole line containing `offset`, including its line break.
     EditOutcome select_line_at(std::size_t offset);
 
+    // --- cursors ---
+
+    // Adds, for every selection, a copy of it one line up or down: each end of the copy goes to
+    // the column that end wants on the neighboring line, which is the column it had, or the
+    // column it would have had on a longer line (the width that a short line took away is
+    // remembered while the cursors are added again and again). At the first line (up) and the
+    // last line (down) the copy is the selection itself, so nothing is added.
+    EditOutcome add_cursors_vertically(bool down);
+    // Replaces the selections with a caret at the end of every line they cover: of each line of a
+    // selection except the last, and at the end of the last unless the selection ends at the
+    // start of it. Selections that are carets give nothing; when no selection gives a caret,
+    // nothing changes.
+    EditOutcome add_cursors_to_line_ends();
+
     // --- lines ---
 
     // Moves the lines that each selection touches one line up or down, over the line above or
@@ -180,6 +194,9 @@ public:
     // wrapping around the text and skipping matches that overlap a selection, as the primary
     // selection. Does nothing when every match is taken.
     EditOutcome add_next_occurrence(const Search& search);
+    // The mirror of add_next_occurrence: the last match that begins before the primary selection,
+    // wrapping around from the end of the text.
+    EditOutcome add_previous_occurrence(const Search& search);
 
     struct AllOccurrences {
         EditOutcome outcome;
@@ -231,6 +248,15 @@ private:
     // The document version and selections right after the last joinable edit.
     std::uint64_t last_version_ = 0;
     SelectionSet last_selections_;
+    // How far past the end of a short line each end of each selection wants to be, for the
+    // selections in `leftovers_for_`; add_cursors_vertically keeps it so that a cursor added over a
+    // short line goes back to its column on the next long one.
+    struct Leftover {
+        std::size_t anchor = 0;
+        std::size_t active = 0;
+    };
+    SelectionSet leftovers_for_;
+    std::vector<Leftover> leftovers_;
 };
 
 } // namespace anvil::core

@@ -503,6 +503,26 @@ EditorView::begin_occurrence_session(const OccurrenceSource& source) const {
 }
 
 void EditorView::add_next_occurrence(const OccurrenceSource& source) {
+    add_occurrence(source, true);
+}
+
+void EditorView::add_previous_occurrence(const OccurrenceSource& source) {
+    add_occurrence(source, false);
+}
+
+void EditorView::add_cursors_vertically(bool down) {
+    if (controller_) {
+        apply(controller_->add_cursors_vertically(down));
+    }
+}
+
+void EditorView::add_cursors_to_line_ends() {
+    if (controller_) {
+        apply(controller_->add_cursors_to_line_ends());
+    }
+}
+
+void EditorView::add_occurrence(const OccurrenceSource& source, bool next) {
     if (!controller_) {
         return;
     }
@@ -526,7 +546,8 @@ void EditorView::add_next_occurrence(const OccurrenceSource& source) {
         session->first.reset();
         apply(controller_->add_selection(first));
     } else {
-        apply(controller_->add_next_occurrence(session->search));
+        apply(next ? controller_->add_next_occurrence(session->search)
+                   : controller_->add_previous_occurrence(session->search));
     }
     session->selections = document_->selections();
 }

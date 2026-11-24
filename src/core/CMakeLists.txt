@@ -11,6 +11,7 @@ add_library(anvil_core STATIC
   jsonc_edit.cpp
   key_chord.cpp
   line_operations.cpp
+  multi_cursor.cpp
   key_dispatcher.cpp
   keybindings.cpp
   log.cpp

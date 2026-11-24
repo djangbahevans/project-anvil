@@ -138,6 +138,24 @@ TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToThe
               chords({"alt+shift+up"}));
 }
 
+TEST(DefaultKeybindingsTest, TheAddCursorKeysAreVSCodesWithLinuxsOwn) {
+    const auto linux = default_keybindings(KeyPlatform::linux);
+    EXPECT_EQ(keys_of(linux, "editor.action.insertCursorAbove"),
+              chords({"shift+alt+up", "ctrl+shift+up"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.insertCursorBelow"),
+              chords({"shift+alt+down", "ctrl+shift+down"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::windows), "editor.action.insertCursorBelow"),
+              chords({"ctrl+alt+down"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), "editor.action.insertCursorAbove"),
+              chords({"cmd+alt+up"}));
+    for (const KeyPlatform platform : platforms) {
+        const auto bindings = default_keybindings(platform);
+        EXPECT_EQ(keys_of(bindings, "editor.action.insertCursorAtEndOfEachLineSelected"),
+                  chords({"shift+alt+i"}));
+        EXPECT_TRUE(keys_of(bindings, "editor.action.addSelectionToPreviousFindMatch").empty());
+    }
+}
+
 TEST(DefaultKeybindingsTest, WindowsHasItsOwnSecondaryKeys) {
     const auto windows = default_keybindings(KeyPlatform::windows);
     EXPECT_EQ(keys_of(windows, "workbench.action.closeActiveEditor"),
