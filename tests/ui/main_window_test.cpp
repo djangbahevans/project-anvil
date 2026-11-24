@@ -6900,7 +6900,11 @@ protected:
         return current_text();
     }
     std::string shown_name() const {
-        return window_->current_uri().file_path()->filename().string();
+        const auto path = window_->current_uri().file_path();
+        return path ? path->filename().string() : "<not a file>";
+    }
+    std::string on_disk(const std::filesystem::path& file) const {
+        return platform::read_file(file).value_or("<missing>");
     }
     std::size_t tabs_of(const std::filesystem::path& file) {
         return window_->editor_layout().locations(core::Uri::file(file)).size();
@@ -6932,7 +6936,7 @@ TEST_F(UserFilesTest, AMissingSettingsFileIsCreatedWithAnEmptyObjectEvenInAMissi
     create_window();
     ASSERT_FALSE(std::filesystem::exists(settings_file_.parent_path()));
     menu_action("workbench.action.openSettings")->trigger();
-    EXPECT_EQ(*platform::read_file(settings_file_), "{}\n");
+    EXPECT_EQ(on_disk(settings_file_), "{}\n");
     EXPECT_EQ(shown_name(), "settings.json");
     EXPECT_EQ(shown_text(), "{}\n");
     EXPECT_FALSE(window_->current_document()->is_dirty());
@@ -6941,7 +6945,7 @@ TEST_F(UserFilesTest, AMissingSettingsFileIsCreatedWithAnEmptyObjectEvenInAMissi
 TEST_F(UserFilesTest, KeyboardShortcutsOpensTheKeybindingsFileAndCreatesItWithAnEmptyArray) {
     create_window();
     menu_action("workbench.action.openGlobalKeybindings")->trigger();
-    EXPECT_EQ(*platform::read_file(keybindings_file_), "[]\n");
+    EXPECT_EQ(on_disk(keybindings_file_), "[]\n");
     EXPECT_EQ(shown_name(), "keybindings.json");
     EXPECT_EQ(shown_text(), "[]\n");
 }
@@ -6951,7 +6955,7 @@ TEST_F(UserFilesTest, AnExistingFileIsNotOverwritten) {
     write("config/keybindings.json", "[ // mine\n]");
     create_window();
     window_->commands().execute("workbench.action.openGlobalKeybindings");
-    EXPECT_EQ(*platform::read_file(keybindings_file_), "[ // mine\n]");
+    EXPECT_EQ(on_disk(keybindings_file_), "[ // mine\n]");
     EXPECT_EQ(shown_text(), "[ // mine\n]");
 }
 
@@ -7007,6 +7011,7 @@ TEST_F(UserFilesTest, SavingTheSettingsFileChangesTheRunningWindow) {
     create_window();
     ASSERT_NE(window_->settings().editor().tab_size, 8);
     window_->commands().execute("workbench.action.openSettings");
+    ASSERT_EQ(shown_name(), "settings.json");
     const core::Document& document = *window_->current_document();
     const std::vector<core::Edit> edits = {
         {0, document.text().size(), R"j({"editor.tabSize": 8})j"}};
@@ -7018,6 +7023,7 @@ TEST_F(UserFilesTest, SavingTheSettingsFileChangesTheRunningWindow) {
 TEST_F(UserFilesTest, SavingTheKeybindingsFileChangesTheMenusOfTheRunningWindow) {
     create_window();
     window_->commands().execute("workbench.action.openGlobalKeybindings");
+    ASSERT_EQ(shown_name(), "keybindings.json");
     const core::Document& document = *window_->current_document();
     const std::vector<core::Edit> edits = {
         {0, document.text().size(),
