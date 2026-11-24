@@ -520,6 +520,26 @@ TEST(EditControllerSelect, AddCaretKeepsTheOthersAndMakesTheNewOnePrimary) {
     EXPECT_EQ(editor.primary(), Selection::caret(4));
 }
 
+TEST(EditControllerSelect, SelectRangesReplacesTheSelectionsAndPicksThePrimary) {
+    Editor editor("abc\ndef\nghi", {Selection::caret(1)});
+    EXPECT_TRUE(
+        editor.controller.select_ranges({Selection{0, 2}, Selection{5, 7}, Selection{9, 11}}, 1)
+            .changed_anything());
+    EXPECT_EQ(editor.selections(), (Carets{Selection{0, 2}, Selection{5, 7}, Selection{9, 11}}));
+    EXPECT_EQ(editor.primary(), (Selection{5, 7}));
+    EXPECT_FALSE(
+        editor.controller.select_ranges({Selection{0, 2}, Selection{5, 7}, Selection{9, 11}}, 1)
+            .changed_anything());
+}
+
+TEST(EditControllerSelect, SelectRangesMovesOffsetsToCharacterBoundariesAndMergesOverlaps) {
+    Editor editor(std::string("a") + eacute + "bc", {Selection::caret(0)});
+    editor.controller.select_ranges({Selection{0, 2}});
+    EXPECT_EQ(editor.primary(), (Selection{0, 1})) << "offset 2 is inside the two-byte letter";
+    editor.controller.select_ranges({Selection{0, 3}, Selection{2, 4}});
+    EXPECT_EQ(editor.selections().size(), 1u);
+}
+
 TEST(EditControllerSelect, KeepPrimarySelectionDropsTheOthers) {
     Editor editor("abcdef", {Selection::caret(1), Selection{3, 5}});
     editor.controller.add_caret(0);

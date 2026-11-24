@@ -185,6 +185,8 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     insert_spaces_ = settings.insert_spaces;
     render_whitespace_ = settings.render_whitespace;
     render_control_characters_ = settings.render_control_characters;
+    multi_cursor_modifier_ = settings.multi_cursor_modifier;
+    column_selection_ = settings.column_selection;
     const QFont wanted = font_for(settings.font_family, settings.font_size);
     if (wanted != font()) {
         setFont(wanted);
@@ -664,35 +666,105 @@ void EditorView::keyPressEvent(QKeyEvent* event) {
     event->accept();
 }
 
+QPoint EditorView::text_point(const QPoint& viewport_point) const {
+    return {viewport_point.x() - text_origin_x(),
+            std::max(0, viewport_point.y() + verticalScrollBar()->value())};
+}
+
+bool EditorView::has_multi_cursor_modifier(Qt::KeyboardModifiers modifiers) const {
+    // Qt reports the Command key of macOS as the control modifier.
+    return modifiers.testFlag(multi_cursor_modifier_ == core::MultiCursorModifier::alt
+                                  ? Qt::AltModifier
+                                  : Qt::ControlModifier);
+}
+
+bool EditorView::has_other_modifier(Qt::KeyboardModifiers modifiers) const {
+    const Qt::KeyboardModifier multi = multi_cursor_modifier_ == core::MultiCursorModifier::alt
+                                           ? Qt::AltModifier
+                                           : Qt::ControlModifier;
+    return (modifiers & (Qt::AltModifier | Qt::ControlModifier | Qt::MetaModifier) &
+            ~Qt::KeyboardModifiers(multi)) != 0;
+}
+
+void EditorView::select_column_to(const QPoint& viewport_point) {
+    const core::Text& text = document_->text();
+    const QPoint point = text_point(viewport_point);
+    const std::size_t last_line = text.line_count() - 1;
+    const auto line_at = [&](int y) {
+        return std::min<std::size_t>(static_cast<std::size_t>(std::max(0, y) / line_height_),
+                                     last_line);
+    };
+    const std::size_t from = line_at(drag_origin_.y());
+    const std::size_t to = line_at(point.y());
+    std::vector<core::Selection> ranges;
+    for (std::size_t line = std::min(from, to); line <= std::max(from, to); ++line) {
+        const auto layout = layout_line(line);
+        ranges.push_back({text.offset_at({line, layout->column_at(drag_origin_.x())}),
+                          text.offset_at({line, layout->column_at(point.x())})});
+    }
+    apply(controller_->select_ranges(std::move(ranges), to - std::min(from, to)));
+}
+
 void EditorView::mousePressEvent(QMouseEvent* event) {
     if (!controller_ || event->button() != Qt::LeftButton) {
         QAbstractScrollArea::mousePressEvent(event);
         return;
     }
     setFocus();
-    const std::size_t offset = offset_at(event->position().toPoint());
+    const QPoint point = event->position().toPoint();
+    const std::size_t offset = offset_at(point);
     if (since_double_click_.isValid() &&
         since_double_click_.elapsed() < QApplication::doubleClickInterval()) {
         since_double_click_.invalidate();
         apply(controller_->select_line_at(offset)); // third click
         return;
     }
-    if (event->modifiers() & Qt::AltModifier) {
-        apply(controller_->add_caret(offset));
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    const bool shift = modifiers.testFlag(Qt::ShiftModifier);
+    drag_origin_ = text_point(point);
+    mouse_drag_ = MouseDrag::extend;
+    // As in VS Code, a rectangle that Shift asks for grows from where the selection began, so that
+    // clicking with Shift+Alt extends it, and dragging goes on from there.
+    const auto grow_rectangle = [&] {
+        drag_origin_ = text_point(cursor_rect(document_->selections().primary().anchor).topLeft());
+        mouse_drag_ = MouseDrag::column;
+        select_column_to(point);
+    };
+    if (has_multi_cursor_modifier(modifiers)) {
+        if (has_other_modifier(modifiers)) {
+            mouse_drag_ = MouseDrag::none;
+        } else if (shift) {
+            grow_rectangle();
+        } else {
+            apply(controller_->add_caret(offset));
+            mouse_drag_ = MouseDrag::extend_added_cursor;
+        }
+    } else if (shift && (column_selection_ || modifiers.testFlag(Qt::AltModifier))) {
+        grow_rectangle();
     } else {
-        apply(controller_->set_caret(offset, event->modifiers() & Qt::ShiftModifier));
+        apply(controller_->set_caret(offset, shift));
     }
-    selecting_with_mouse_ = true;
 }
 
 void EditorView::mouseMoveEvent(QMouseEvent* event) {
-    if (controller_ && selecting_with_mouse_) {
-        apply(controller_->set_caret(offset_at(event->position().toPoint()), true));
+    if (!controller_ || mouse_drag_ == MouseDrag::none) {
+        return;
+    }
+    const QPoint point = event->position().toPoint();
+    const bool column =
+        mouse_drag_ == MouseDrag::column ||
+        (mouse_drag_ == MouseDrag::extend &&
+         (column_selection_ || (multi_cursor_modifier_ == core::MultiCursorModifier::ctrl_cmd &&
+                                event->modifiers().testFlag(Qt::AltModifier))));
+    if (column) {
+        select_column_to(point);
+    } else {
+        apply(controller_->set_caret(offset_at(point), true));
     }
 }
 
 void EditorView::mouseReleaseEvent(QMouseEvent* event) {
-    selecting_with_mouse_ = false;
+    mouse_drag_ = MouseDrag::none;
     QAbstractScrollArea::mouseReleaseEvent(event);
 }
 
@@ -702,7 +774,7 @@ void EditorView::mouseDoubleClickEvent(QMouseEvent* event) {
     }
     apply(controller_->select_word_at(offset_at(event->position().toPoint())));
     since_double_click_.start();
-    selecting_with_mouse_ = false;
+    mouse_drag_ = MouseDrag::none;
 }
 
 void EditorView::inputMethodEvent(QInputMethodEvent* event) {

@@ -147,6 +147,14 @@ protected:
 
 private:
     struct LineLayout;
+    // The point of the text, in the coordinates of `drag_origin_`, that the viewport point shows.
+    QPoint text_point(const QPoint& viewport_point) const;
+    // Selects the rectangle between `drag_origin_` and the pointer, one selection on each line,
+    // clamped to the end of lines that are shorter; the line of the pointer has the primary one.
+    void select_column_to(const QPoint& viewport_point);
+    // Whether `modifiers` hold the modifier that adds a cursor, and one of the others.
+    bool has_multi_cursor_modifier(Qt::KeyboardModifiers modifiers) const;
+    bool has_other_modifier(Qt::KeyboardModifiers modifiers) const;
     // Draws the marks for the spaces and tabs of the line that `render_whitespace_` asks for.
     void draw_whitespace(QPainter& painter, const LineLayout& layout,
                          std::span<const core::ColumnRange> selected, int origin_x, int y,
@@ -191,7 +199,16 @@ private:
     bool render_control_characters_ = true;
     int max_line_width_ = 0;
     bool caret_visible_ = true;
-    bool selecting_with_mouse_ = false;
+    // What moving the mouse with the button down does: nothing, extends the selection the press
+    // made (and becomes a column selection when the mouse asks for one), or selects a rectangle
+    // between where the press was and the pointer.
+    enum class MouseDrag { none, extend, extend_added_cursor, column };
+    MouseDrag mouse_drag_ = MouseDrag::none;
+    // Where a press was, in text coordinates (x from the start of the text, y from the top of the
+    // document), so that scrolling during a drag does not move it.
+    QPoint drag_origin_;
+    core::MultiCursorModifier multi_cursor_modifier_ = core::MultiCursorModifier::alt;
+    bool column_selection_ = false;
     QTimer caret_timer_;
     QElapsedTimer since_double_click_;
     QString preedit_;

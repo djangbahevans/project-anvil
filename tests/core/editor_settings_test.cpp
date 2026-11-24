@@ -155,6 +155,18 @@ TEST(EditorSettings, WhitespaceIsRenderedInSelectionsAndControlCharactersAreShow
     EXPECT_FALSE(read(R"j({"editor.renderControlCharacters": false})j")->render_control_characters);
 }
 
+TEST(EditorSettings,
+     TheMultiCursorModifierIsAltAndColumnSelectionIsOffUnlessTheSettingsSayOtherwise) {
+    using anvil::core::MultiCursorModifier;
+    EXPECT_EQ(read("{}")->multi_cursor_modifier, MultiCursorModifier::alt);
+    EXPECT_FALSE(read("{}")->column_selection);
+    EXPECT_EQ(read(R"j({"editor.multiCursorModifier": "ctrlCmd"})j")->multi_cursor_modifier,
+              MultiCursorModifier::ctrl_cmd);
+    EXPECT_EQ(read(R"j({"editor": {"multiCursorModifier": "alt"}})j")->multi_cursor_modifier,
+              MultiCursorModifier::alt);
+    EXPECT_TRUE(read(R"j({"editor.columnSelection": true})j")->column_selection);
+}
+
 TEST(EditorSettings, TheAutoSaveDelayIsClamped) {
     EXPECT_EQ(read(R"j({"files.autoSaveDelay": -5})j")->auto_save_delay, 0);
     EXPECT_EQ(read(R"j({"files.autoSaveDelay": 1e12})j")->auto_save_delay,
@@ -175,6 +187,9 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"editor.renderWhitespace": true})j", "editor.renderWhitespace"},
              {R"j({"editor.renderWhitespace": "All"})j", "editor.renderWhitespace"},
              {R"j({"editor.renderControlCharacters": "yes"})j", "editor.renderControlCharacters"},
+             {R"j({"editor.multiCursorModifier": "ctrl"})j", "editor.multiCursorModifier"},
+             {R"j({"editor.multiCursorModifier": 1})j", "editor.multiCursorModifier"},
+             {R"j({"editor.columnSelection": "yes"})j", "editor.columnSelection"},
              {R"j({"files.autoSave": true})j", "files.autoSave"},
              {R"j({"files.autoSave": "afterdelay"})j", "files.autoSave"},
              {R"j({"files.autoSaveDelay": "1s"})j", "files.autoSaveDelay"},

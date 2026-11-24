@@ -1158,3 +1158,134 @@ TEST_F(RenderWhitespaceTest, MarkingEveryCharacterOfLongLinesStaysCheap) {
 }
 
 } // namespace
+
+namespace {
+
+class MouseSelectionTest : public EditorViewTest {
+protected:
+    static constexpr const char* text_ = "abcdefgh\nab\nabcdefgh\nabcdefgh";
+
+    void use(core::MultiCursorModifier modifier, bool column_selection = false) {
+        core::EditorSettings settings;
+        settings.font_family = "monospace";
+        settings.font_size = 14;
+        settings.multi_cursor_modifier = modifier;
+        settings.column_selection = column_selection;
+        view_.apply_settings(settings);
+    }
+
+    // The center of the cell of `column` on `line`, taking the width from the first line, which is
+    // longer than any column used.
+    QPoint at(int line, int column) const {
+        const QRect cell = view_.cursor_rect(static_cast<std::size_t>(column));
+        return {cell.x() + 1, line * view_.line_height() + view_.line_height() / 2 -
+                                  view_.verticalScrollBar()->value()};
+    }
+
+    void drag(QPoint from, QPoint to, Qt::KeyboardModifiers modifiers) {
+        mouse(QEvent::MouseButtonPress, from, modifiers);
+        mouse(QEvent::MouseMove, to, modifiers);
+        mouse(QEvent::MouseButtonRelease, to, modifiers);
+    }
+
+    std::vector<core::Selection> selections() const {
+        return document_->selections().all();
+    }
+};
+
+using Selections = std::vector<core::Selection>;
+
+TEST_F(MouseSelectionTest, ShiftAltDragSelectsARectangleOneSelectionPerLine) {
+    open(text_);
+    use(core::MultiCursorModifier::alt);
+    click(2);
+    drag(at(0, 2), at(3, 5), Qt::AltModifier | Qt::ShiftModifier);
+    // The line "ab" ends before the rectangle, so its selection is clamped to the end of the line.
+    EXPECT_EQ(selections(), (Selections{{2, 5}, {11, 11}, {14, 17}, {23, 26}}));
+    EXPECT_EQ(document_->selections().primary_index(), 3u) << "the line of the pointer";
+}
+
+TEST_F(MouseSelectionTest, TheRectangleFollowsThePointerUpAndToTheLeft) {
+    open(text_);
+    use(core::MultiCursorModifier::alt);
+    click(18);
+    drag(at(2, 6), at(0, 3), Qt::AltModifier | Qt::ShiftModifier);
+    EXPECT_EQ(selections(), (Selections{{6, 3}, {11, 11}, {18, 15}}));
+    EXPECT_EQ(document_->selections().primary_index(), 0u);
+}
+
+TEST_F(MouseSelectionTest, ShiftAltClickGrowsTheRectangleFromTheCaret) {
+    open(text_);
+    use(core::MultiCursorModifier::alt);
+    click(2);
+    mouse(QEvent::MouseButtonPress, at(2, 4), Qt::AltModifier | Qt::ShiftModifier);
+    mouse(QEvent::MouseButtonRelease, at(2, 4), Qt::AltModifier | Qt::ShiftModifier);
+    EXPECT_EQ(selections(), (Selections{{2, 4}, {11, 11}, {14, 16}}));
+}
+
+TEST_F(MouseSelectionTest, AltClickAddsACursorAndDraggingExtendsIt) {
+    open(text_);
+    use(core::MultiCursorModifier::alt);
+    click(1);
+    drag(at(2, 1), at(2, 4), Qt::AltModifier);
+    EXPECT_EQ(selections(), (Selections{{1, 1}, {13, 16}}));
+}
+
+TEST_F(MouseSelectionTest, WithCtrlCmdAsTheModifierCtrlClickAddsACursorAndAltClickDoesNot) {
+    open(text_);
+    use(core::MultiCursorModifier::ctrl_cmd);
+    click(1);
+    click(14, Qt::ControlModifier);
+    EXPECT_EQ(selections(), (Selections{{1, 1}, {14, 14}}));
+    click(5, Qt::AltModifier);
+    EXPECT_EQ(selections(), (Selections{{5, 5}})) << "a plain click";
+}
+
+TEST_F(MouseSelectionTest, WithCtrlCmdAsTheModifierAltDragSelectsARectangle) {
+    open(text_);
+    use(core::MultiCursorModifier::ctrl_cmd);
+    drag(at(0, 2), at(2, 4), Qt::AltModifier);
+    EXPECT_EQ(selections(), (Selections{{2, 4}, {11, 11}, {14, 16}}));
+}
+
+TEST_F(MouseSelectionTest, WithCtrlCmdAsTheModifierShiftAltDragSelectsARectangleToo) {
+    open(text_);
+    use(core::MultiCursorModifier::ctrl_cmd);
+    click(2);
+    drag(at(0, 2), at(2, 4), Qt::AltModifier | Qt::ShiftModifier);
+    EXPECT_EQ(selections(), (Selections{{2, 4}, {11, 11}, {14, 16}}));
+}
+
+TEST_F(MouseSelectionTest, TheModifierAndAnotherModifierTogetherDoNothing) {
+    open(text_);
+    use(core::MultiCursorModifier::alt);
+    click(3);
+    click(14, Qt::AltModifier | Qt::ControlModifier);
+    EXPECT_EQ(selections(), (Selections{{3, 3}}));
+}
+
+TEST_F(MouseSelectionTest, InColumnSelectionModeAPlainDragSelectsARectangle) {
+    open(text_);
+    use(core::MultiCursorModifier::alt, true);
+    drag(at(0, 1), at(3, 4), Qt::NoModifier);
+    EXPECT_EQ(selections(), (Selections{{1, 4}, {10, 11}, {13, 16}, {22, 25}}));
+}
+
+TEST_F(MouseSelectionTest, InColumnSelectionModeAClickPlacesACaretAndShiftClickGrowsTheRectangle) {
+    open(text_);
+    use(core::MultiCursorModifier::alt, true);
+    click(2);
+    EXPECT_EQ(selections(), (Selections{{2, 2}}));
+    mouse(QEvent::MouseButtonPress, at(2, 5), Qt::ShiftModifier);
+    mouse(QEvent::MouseButtonRelease, at(2, 5), Qt::ShiftModifier);
+    EXPECT_EQ(selections(), (Selections{{2, 5}, {11, 11}, {14, 17}}));
+}
+
+TEST_F(MouseSelectionTest, WithoutColumnSelectionAPlainDragSelectsAStreamOfText) {
+    open(text_);
+    use(core::MultiCursorModifier::alt, false);
+    drag(at(0, 2), at(2, 4), Qt::NoModifier);
+    EXPECT_EQ(selections(), (Selections{{2, 16}}));
+}
+
+} // namespace

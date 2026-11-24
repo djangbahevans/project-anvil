@@ -31,6 +31,10 @@ enum class AutoSave { off, after_delay, on_focus_change, on_window_change };
 // editor.renderWhitespace: which spaces and tabs the editor draws a mark for.
 enum class RenderWhitespace { none, boundary, selection, trailing, all };
 
+// editor.multiCursorModifier: the key that makes a click add a cursor. `ctrl_cmd` is Ctrl, or Cmd
+// on macOS.
+enum class MultiCursorModifier { alt, ctrl_cmd };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
@@ -53,6 +57,11 @@ struct EditorSettings {
     // workbench.editor.focusRecentEditorAfterClose: closing the active tab activates the tab used
     // before it, and not the neighbor
     bool focus_recent_editor_after_close = true;
+
+    // editor.multiCursorModifier
+    MultiCursorModifier multi_cursor_modifier = MultiCursorModifier::alt;
+    // editor.columnSelection: dragging the mouse selects a rectangle
+    bool column_selection = false;
 
     // files.autoSave
     AutoSave auto_save = AutoSave::off;
@@ -79,11 +88,11 @@ struct EditorSettings {
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
     // 6-100, tab size to 1-1024: the upper bound keeps a typo from making Tab insert gigabytes;
     // the auto save delay to 0 ms-24 h). A value of the wrong type, a `files.eol` that is not one
-    // of "\n", "\r\n" and "auto", an `editor.renderWhitespace` that is not "none", "boundary",
-    // "selection", "trailing" or "all", a `files.autoSave` that is not "off", "afterDelay",
-    // "onFocusChange" or "onWindowChange", or a `window.titleBarStyle` that is not "custom" or
-    // "native", fails
-    // with ErrorCode::invalid_argument and a message that names every offending key.
+    // of "\n", "\r\n" and "auto", an `editor.multiCursorModifier` that is not "alt" or "ctrlCmd",
+    // an `editor.renderWhitespace` that is not "none", "boundary", "selection", "trailing" or
+    // "all", a `files.autoSave` that is not "off", "afterDelay", "onFocusChange" or
+    // "onWindowChange", or a `window.titleBarStyle` that is not "custom" or "native", fails with
+    // ErrorCode::invalid_argument and a message that names every offending key.
     static std::expected<EditorSettings, Error> from_settings(const Settings& settings,
                                                               const EditorDefaults& defaults);
 };
