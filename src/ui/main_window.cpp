@@ -84,6 +84,25 @@ QString display_name(const core::Uri& uri) {
 
 } // namespace
 
+// A close operation, which the closed editors of one operation, such as Close Others, are batched
+// by.
+class MainWindow::ClosingScope {
+public:
+    explicit ClosingScope(MainWindow& window) : window_(window) {
+        if (window_.closing_depth_++ == 0) {
+            window_.closed_editors_.begin_batch();
+        }
+    }
+    ~ClosingScope() {
+        --window_.closing_depth_;
+    }
+    ClosingScope(const ClosingScope&) = delete;
+    ClosingScope& operator=(const ClosingScope&) = delete;
+
+private:
+    MainWindow& window_;
+};
+
 class MainWindow::LayoutWatcher : public workbench::EditorLayout::Observer {
 public:
     explicit LayoutWatcher(MainWindow& window) : window_(window) {}
@@ -999,6 +1018,8 @@ void MainWindow::register_commands() {
         [this] { navigate(history_.go_to_last_edit(), true); });
     add("workbench.action.gotoLine", tr("Go to Line/Column..."), [this] { show_go_to_line(); });
     add("editor.action.jumpToBracket", tr("Go to Bracket"), [this] { view()->jump_to_bracket(); });
+    add("workbench.action.reopenClosedEditor", tr("Reopen Closed Editor"),
+        [this] { reopen_closed_editor(); });
     add("workbench.action.showCommands", tr("Show All Commands"),
         [this] { show_command_palette(); });
     add("workbench.action.toggleSidebarVisibility", tr("Toggle Primary Side Bar Visibility"),
@@ -1103,6 +1124,7 @@ core::ContextKeys MainWindow::menu_context() const {
     keys.set("sideBarVisible", workbench_->is_visible(Part::sidebar));
     keys.set("panelVisible", workbench_->is_visible(Part::panel));
     keys.set("panelPosition", std::string(panel_position_name(workbench_->panel_position())));
+    keys.set("canReopenClosedEditor", !closed_editors_.empty());
     keys.set("canNavigateBack", history_.can_go_back());
     keys.set("canNavigateForward", history_.can_go_forward());
     keys.set("canNavigateToLastEditLocation", history_.can_go_to_last_edit());
@@ -1272,6 +1294,96 @@ void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Docum
     focus_current_editor();
 }
 
+void MainWindow::record_closed(workbench::GroupId group, std::size_t index, const core::Uri& uri) {
+    const auto found = documents_.find(uri);
+    if (found == documents_.end()) {
+        return;
+    }
+    const core::Document& document = *found->second;
+    const bool is_file = uri.file_path().has_value();
+    if (!is_file && document.text().size() == 0) {
+        return;
+    }
+    workbench::ClosedEditor closed;
+    closed.group = group;
+    closed.index = index;
+    closed.uri = uri;
+    for (const core::Selection& selection : document.selections().all()) {
+        closed.selections.push_back({document.text().position_at(selection.anchor),
+                                     document.text().position_at(selection.active)});
+    }
+    closed.primary = document.selections().primary_index();
+    if (!is_file) {
+        closed.text = document.text();
+    }
+    closed_editors_.push(std::move(closed));
+}
+
+void MainWindow::reopen_closed_editor() {
+    while (!closed_editors_.empty()) {
+        bool reopened = false;
+        for (const workbench::ClosedEditor& closed : closed_editors_.take_last_batch()) {
+            reopened = reopen(closed) || reopened;
+        }
+        if (reopened) {
+            return;
+        }
+    }
+}
+
+bool MainWindow::reopen(const workbench::ClosedEditor& closed) {
+    const workbench::GroupId group = layout_.group(closed.group) ? closed.group : layout_.focused();
+    core::Uri uri = closed.uri;
+    if (const auto path = uri.file_path()) {
+        const workbench::EditorGroup* state = layout_.group(group);
+        if (std::ranges::find(state->tabs, uri) != state->tabs.end()) {
+            return false;
+        }
+        if (!documents_.contains(uri) && !std::filesystem::exists(*path)) {
+            status_bar_->show_message(tr("%1 no longer exists").arg(display_name(uri)), 5000);
+            return false;
+        }
+        const auto document = file_document(*path, uri);
+        if (!document) {
+            return false;
+        }
+        documents_.try_emplace(uri, document);
+        layout_.open(group, uri);
+    } else {
+        add_untitled_document(group);
+        const workbench::EditorGroup* state = layout_.group(group);
+        uri = state->tabs[*state->active];
+        if (closed.text) {
+            const std::vector<core::Edit> insert = {{0, 0, closed.text->to_string()}};
+            if (auto change = documents_.at(uri)->apply_edits(insert)) {
+                bridge_.text_changed(uri, *change);
+            }
+        }
+    }
+
+    const auto locations = layout_.locations(uri);
+    const auto here = std::ranges::find(locations, group, &workbench::TabLocation::group);
+    std::size_t index = here->index;
+    const std::size_t wanted = std::min(closed.index, layout_.group(group)->tabs.size() - 1);
+    if (wanted != index && layout_.move_tab(group, index, group, wanted)) {
+        index = wanted;
+    }
+    layout_.activate(group, index);
+    layout_.focus(group);
+    focus_current_editor();
+
+    const core::Text& text = documents_.at(uri)->text();
+    std::vector<core::Selection> selections;
+    for (const workbench::NavigationSelection& saved : closed.selections) {
+        selections.push_back({text.offset_at(saved.anchor), text.offset_at(saved.active)});
+    }
+    if (!selections.empty()) {
+        view()->select_ranges(std::move(selections),
+                              std::min(closed.primary, closed.selections.size() - 1));
+    }
+    return true;
+}
+
 bool MainWindow::move_tab(workbench::GroupId from, std::size_t index, workbench::GroupId to,
                           std::size_t to_index) {
     const workbench::EditorGroup* source = layout_.group(from);
@@ -1336,6 +1448,7 @@ bool MainWindow::close_tab_at(workbench::GroupId group, std::size_t index) {
 
 bool MainWindow::close_document_in(workbench::GroupId group,
                                    const std::shared_ptr<core::Document>& document) {
+    const ClosingScope closing(*this);
     if (!confirm_close(document)) {
         return false;
     }
@@ -1355,6 +1468,7 @@ bool MainWindow::close_document_in(workbench::GroupId group,
         locations = layout_.locations(*uri);
         target = locations.front();
     }
+    record_closed(target.group, target.index, *uri);
     layout_.close_tab(target.group, target.index);
     if (layout_.locations(*uri).empty()) {
         bridge_.remove_document(*uri);
@@ -1366,6 +1480,7 @@ bool MainWindow::close_document_in(workbench::GroupId group,
 
 void MainWindow::close_tabs_where(workbench::GroupId group,
                                   const std::function<bool(std::size_t)>& wanted) {
+    const ClosingScope closing(*this);
     // Closing asks about unsaved changes, and extensions can open and close documents meanwhile, so
     // the documents are remembered by identity rather than by position.
     const workbench::EditorGroup* state = layout_.group(group);
@@ -1386,6 +1501,7 @@ void MainWindow::close_tabs_where(workbench::GroupId group,
 }
 
 bool MainWindow::close_group(workbench::GroupId group) {
+    const ClosingScope closing(*this);
     const workbench::EditorGroup* state = layout_.group(group);
     if (!state || layout_.group_ids().size() < 2) {
         return false;
@@ -1400,6 +1516,11 @@ bool MainWindow::close_group(workbench::GroupId group) {
         }
     }
     // Questions can be asked while extensions close the group, or other groups.
+    if (const workbench::EditorGroup* closing_group = layout_.group(group)) {
+        for (std::size_t i = 0; i < closing_group->tabs.size(); ++i) {
+            record_closed(group, i, closing_group->tabs[i]);
+        }
+    }
     if (!layout_.close_group(group)) {
         return false;
     }
@@ -1452,24 +1573,38 @@ bool MainWindow::open_file(const QString& path) {
         show_document(uri, found->second);
         return true;
     }
-    // An extension may have opened the document already; share it so both see the same text.
-    std::shared_ptr<core::Document> document = bridge_.find(uri);
+    std::shared_ptr<core::Document> document = file_document(file, uri);
     if (!document) {
-        auto bytes = platform::read_file(file);
-        if (!bytes) {
-            QMessageBox::warning(this, tr("Open"), QString::fromStdString(bytes.error().message));
-            return false;
-        }
-        auto decoded = core::Document::from_file_bytes(*bytes);
-        if (!decoded) {
-            QMessageBox::warning(this, tr("Open"), tr("%1 is not a UTF-8 text file.").arg(path));
-            return false;
-        }
-        document = std::make_shared<core::Document>(std::move(*decoded));
-        bridge_.add_document(uri, document);
+        return false;
     }
     show_document(uri, std::move(document));
     return true;
+}
+
+std::shared_ptr<core::Document> MainWindow::file_document(const std::filesystem::path& file,
+                                                          const core::Uri& uri) {
+    if (const auto found = documents_.find(uri); found != documents_.end()) {
+        return found->second;
+    }
+    // An extension may have opened the document already; share it so both see the same text.
+    if (auto shared = bridge_.find(uri)) {
+        return shared;
+    }
+    auto bytes = platform::read_file(file);
+    if (!bytes) {
+        QMessageBox::warning(this, tr("Open"), QString::fromStdString(bytes.error().message));
+        return nullptr;
+    }
+    auto decoded = core::Document::from_file_bytes(*bytes);
+    if (!decoded) {
+        QMessageBox::warning(
+            this, tr("Open"),
+            tr("%1 is not a UTF-8 text file.").arg(QString::fromStdString(file.string())));
+        return nullptr;
+    }
+    auto document = std::make_shared<core::Document>(std::move(*decoded));
+    bridge_.add_document(uri, document);
+    return document;
 }
 
 bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path,

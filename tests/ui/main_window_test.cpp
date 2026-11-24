@@ -2652,6 +2652,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.navigateBack",
                                           "workbench.action.navigateForward",
                                           "workbench.action.navigateToLastEditLocation",
+                                          "workbench.action.reopenClosedEditor",
                                           "workbench.action.gotoLine",
                                           "editor.action.jumpToBracket",
                                           "workbench.action.openSettings",
@@ -7035,4 +7036,261 @@ TEST_F(UserFilesTest, SavingTheKeybindingsFileChangesTheMenusOfTheRunningWindow)
             return menu_action("workbench.action.togglePanel")->text().endsWith("\tCtrl+Shift+9");
         },
         5000));
+}
+
+class ReopenTest : public MainWindowTest {
+protected:
+    core::Uri open(const std::string& name, const std::string& text = "text") {
+        const auto path = write(name, text);
+        EXPECT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+        return core::Uri::file(path);
+    }
+    void close(const core::Uri& uri) {
+        const auto& tabs = window_->editor_layout().group(window_->editor_layout().focused())->tabs;
+        const auto at = std::ranges::find(tabs, uri);
+        ASSERT_NE(at, tabs.end());
+        ASSERT_TRUE(window_->close_document(static_cast<std::size_t>(at - tabs.begin())));
+    }
+    void reopen() {
+        QAction* item = menu_action("workbench.action.reopenClosedEditor");
+        ASSERT_NE(item, nullptr);
+        ASSERT_TRUE(item->isEnabled());
+        item->trigger();
+    }
+    bool can_reopen() {
+        QAction* item = menu_action("workbench.action.reopenClosedEditor");
+        return item && item->isEnabled();
+    }
+    std::vector<core::Uri> tabs(workbench::GroupId group) const {
+        return window_->editor_layout().group(group)->tabs;
+    }
+    bool has(workbench::GroupId group, const core::Uri& uri) const {
+        const auto all = tabs(group);
+        return std::ranges::find(all, uri) != all.end();
+    }
+    workbench::GroupId focused() const {
+        return window_->editor_layout().focused();
+    }
+    const core::Uri& shown() const {
+        return window_->current_uri();
+    }
+    core::Position caret() const {
+        const core::Document& document = *window_->current_document();
+        return document.text().position_at(document.selections().primary().active);
+    }
+};
+
+TEST_F(ReopenTest, TheItemIsDisabledUntilAnEditorIsClosedAndShowsItsKey) {
+    create_window();
+    EXPECT_FALSE(can_reopen());
+    const core::Uri a = open("a.txt");
+    EXPECT_FALSE(can_reopen());
+    close(a);
+    EXPECT_TRUE(can_reopen());
+    EXPECT_TRUE(
+        menu_action("workbench.action.reopenClosedEditor")->text().endsWith("\tCtrl+Shift+T"))
+        << menu_action("workbench.action.reopenClosedEditor")->text().toStdString();
+}
+
+TEST_F(ReopenTest, TheClosedEditorComesBackAtItsPlaceWithItsSelection) {
+    create_window();
+    const core::Uri a = open("a.txt", "one\ntwo\nthree\n");
+    const core::Uri b = open("b.txt");
+    const core::Uri c = open("c.txt");
+    window_->editor_layout().activate(focused(), 1);
+    window_->view()->select_range(core::Selection{5, 9});
+    close(b);
+    ASSERT_EQ(std::ranges::count(tabs(focused()), b), 0);
+
+    reopen();
+    const std::vector<core::Uri> now = tabs(focused());
+    const auto at = std::ranges::find(now, b);
+    ASSERT_NE(at, now.end());
+    EXPECT_EQ(at - now.begin(), 2);
+    EXPECT_EQ(shown(), b);
+    EXPECT_FALSE(can_reopen());
+    static_cast<void>(a);
+    static_cast<void>(c);
+}
+
+TEST_F(ReopenTest, TheSelectionsOfTheClosedDocumentAreRestored) {
+    create_window();
+    const core::Uri a = open("a.txt", "one\ntwo\nthree\n");
+    open("b.txt");
+    window_->editor_layout().show(a);
+    window_->view()->select_ranges({core::Selection{1, 2}, core::Selection{5, 9}}, 1);
+    close(a);
+    reopen();
+    ASSERT_EQ(shown(), a);
+    const core::Document& document = *window_->current_document();
+    ASSERT_EQ(document.selections().all().size(), 2U);
+    EXPECT_EQ(document.selections().all()[0], (core::Selection{1, 2}));
+    EXPECT_EQ(document.selections().all()[1], (core::Selection{5, 9}));
+    EXPECT_EQ(document.selections().primary_index(), 1U);
+}
+
+TEST_F(ReopenTest, RepeatingGoesFurtherBackInTheOrderTheEditorsWereClosed) {
+    create_window();
+    const core::Uri a = open("a.txt");
+    const core::Uri b = open("b.txt");
+    const core::Uri c = open("c.txt");
+    close(a);
+    close(c);
+    close(b);
+
+    reopen();
+    EXPECT_EQ(shown(), b);
+    reopen();
+    EXPECT_EQ(shown(), c);
+    reopen();
+    EXPECT_EQ(shown(), a);
+    EXPECT_FALSE(can_reopen());
+}
+
+TEST_F(ReopenTest, EditorsThatOneOperationClosedComeBackTogether) {
+    create_window();
+    const core::Uri a = open("a.txt");
+    const core::Uri b = open("b.txt");
+    const core::Uri c = open("c.txt");
+    const core::Uri d = open("d.txt");
+    close(d);
+    window_->editor_layout().show(b);
+    emit window_->editor_area()->close_others_requested(
+        focused(), static_cast<int>(*window_->editor_layout().group(focused())->active));
+    ASSERT_EQ(std::ranges::count(tabs(focused()), a), 0);
+
+    reopen();
+    const auto now = tabs(focused());
+    EXPECT_NE(std::ranges::find(now, a), now.end());
+    EXPECT_NE(std::ranges::find(now, c), now.end());
+    EXPECT_EQ(std::ranges::count(now, d), 0);
+    EXPECT_TRUE(can_reopen());
+    reopen();
+    EXPECT_TRUE(has(focused(), d));
+}
+
+TEST_F(ReopenTest, TheEditorGoesBackToItsGroupWhenTheGroupIsStillThere) {
+    create_window();
+    const core::Uri a = open("a.txt");
+    const workbench::GroupId first = focused();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    const workbench::GroupId second = focused();
+    const core::Uri b = open("b.txt");
+    open("c.txt");
+    close(b);
+    window_->editor_layout().focus(first);
+
+    reopen();
+    EXPECT_EQ(focused(), second);
+    EXPECT_TRUE(has(second, b));
+    EXPECT_EQ(std::ranges::count(tabs(first), b), 0);
+    static_cast<void>(a);
+}
+
+TEST_F(ReopenTest, TheEditorsOfAClosedGroupComeBackInTheFocusedGroup) {
+    create_window();
+    open("a.txt");
+    window_->commands().execute("workbench.action.splitEditorRight");
+    const core::Uri b = open("b.txt");
+    const workbench::GroupId second = focused();
+    window_->commands().execute("workbench.action.closeGroup");
+    ASSERT_EQ(window_->editor_layout().group_ids().size(), 1U);
+    ASSERT_FALSE(window_->editor_layout().group(second));
+
+    reopen();
+    EXPECT_TRUE(has(focused(), b));
+    EXPECT_EQ(shown(), b);
+}
+
+TEST_F(ReopenTest, AFileThatIsGoneIsSkippedWithAMessageAndTheOneBeforeItComesBack) {
+    create_window();
+    const core::Uri a = open("a.txt");
+    const core::Uri b = open("b.txt");
+    const core::Uri c = open("c.txt");
+    close(a);
+    close(b);
+    std::filesystem::remove(*b.file_path());
+    close(c);
+    std::filesystem::remove(*c.file_path());
+
+    reopen();
+    EXPECT_EQ(shown(), a);
+    EXPECT_EQ(window_->status_bar().message(), "b.txt no longer exists");
+    EXPECT_FALSE(can_reopen());
+}
+
+TEST_F(ReopenTest, ADocumentThatIsOpenInItsGroupAgainIsNotOpenedTwice) {
+    create_window();
+    const core::Uri a = open("a.txt");
+    open("b.txt");
+    close(a);
+    open("a.txt");
+    ASSERT_EQ(std::ranges::count(tabs(focused()), a), 1);
+
+    reopen();
+    EXPECT_EQ(std::ranges::count(tabs(focused()), a), 1);
+    EXPECT_FALSE(can_reopen());
+}
+
+TEST_F(ReopenTest, ChangesThatWereDiscardedWhenTheFileWasClosedAreNotBack) {
+    create_window();
+    const core::Uri a = open("a.txt", "abc");
+    open("b.txt");
+    window_->editor_layout().show(a);
+    type("X");
+    close(a);
+    reopen();
+    ASSERT_EQ(shown(), a);
+    EXPECT_EQ(window_->current_document()->text().to_string(), "abc");
+    EXPECT_FALSE(window_->current_document()->is_dirty());
+}
+
+TEST_F(ReopenTest, AnUntitledDocumentWithTextComesBackAsAnUnsavedOneWithTheSameText) {
+    create_window();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    const core::Uri untitled = shown();
+    type("note");
+    close(untitled);
+
+    reopen();
+    EXPECT_FALSE(shown().file_path());
+    EXPECT_EQ(window_->current_document()->text().to_string(), "note");
+    EXPECT_TRUE(window_->current_document()->is_dirty());
+}
+
+TEST_F(ReopenTest, AnEmptyUntitledDocumentIsNotRemembered) {
+    create_window();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    close(shown());
+    EXPECT_FALSE(can_reopen());
+}
+
+TEST_F(ReopenTest, AtMostTwentyEditorsAreRemembered) {
+    create_window();
+    std::vector<core::Uri> files;
+    for (int i = 0; i < 25; ++i) {
+        files.push_back(open("f" + std::to_string(i) + ".txt"));
+    }
+    for (const core::Uri& file : files) {
+        close(file);
+    }
+    int reopened = 0;
+    while (can_reopen()) {
+        reopen();
+        ++reopened;
+        ASSERT_LE(reopened, 30);
+    }
+    EXPECT_EQ(reopened, 20);
+}
+
+TEST_F(ReopenTest, TheShortcutReopensTheEditor) {
+    create_window();
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    const core::Uri a = open("a.txt");
+    open("b.txt");
+    close(a);
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_T, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_TRUE(has(focused(), a));
 }
