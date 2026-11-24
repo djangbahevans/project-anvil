@@ -254,3 +254,48 @@ TEST(EditorSettings, UnrelatedKeysDoNotMatter) {
 }
 
 } // namespace
+
+TEST(FileAssociationsSetting, ReadsPatternsAndLanguageIds) {
+    const auto settings =
+        Settings::parse(R"j({"files.associations": {"*.cfg": "ini", "**/x/*.conf": "json"}})j");
+    ASSERT_TRUE(settings.has_value());
+    const auto read = anvil::core::read_file_associations(*settings);
+    EXPECT_TRUE(read.problems.empty());
+    EXPECT_EQ(read.associations, (std::vector<anvil::core::FileAssociation>{{"**/x/*.conf", "json"},
+                                                                            {"*.cfg", "ini"}}));
+}
+
+TEST(FileAssociationsSetting, ReadsTheNestedSpelling) {
+    const auto settings = Settings::parse(R"j({"files": {"associations": {"*.cfg": "ini"}}})j");
+    ASSERT_TRUE(settings.has_value());
+    EXPECT_EQ(anvil::core::read_file_associations(*settings).associations,
+              (std::vector<anvil::core::FileAssociation>{{"*.cfg", "ini"}}));
+}
+
+TEST(FileAssociationsSetting, AbsentOrNullGivesNothingAndNoProblem) {
+    for (const char* text : {"{}", R"j({"files.associations": null})j"}) {
+        const auto settings = Settings::parse(text);
+        ASSERT_TRUE(settings.has_value());
+        const auto read = anvil::core::read_file_associations(*settings);
+        EXPECT_TRUE(read.associations.empty());
+        EXPECT_TRUE(read.problems.empty());
+    }
+}
+
+TEST(FileAssociationsSetting, AnEntryThatIsNotALanguageIdIsSkippedWithAProblem) {
+    const auto settings = Settings::parse(
+        R"j({"files.associations": {"*.a": "ini", "*.b": 3, "*.c": "", "*.d": ["x"], "*.e": null}})j");
+    ASSERT_TRUE(settings.has_value());
+    const auto read = anvil::core::read_file_associations(*settings);
+    EXPECT_EQ(read.associations, (std::vector<anvil::core::FileAssociation>{{"*.a", "ini"}}));
+    ASSERT_EQ(read.problems.size(), 4U);
+    EXPECT_NE(read.problems[0].find("*.b"), std::string::npos) << read.problems[0];
+}
+
+TEST(FileAssociationsSetting, ASettingThatIsNotAnObjectIsAProblem) {
+    const auto settings = Settings::parse(R"j({"files.associations": ["*.a"]})j");
+    ASSERT_TRUE(settings.has_value());
+    const auto read = anvil::core::read_file_associations(*settings);
+    EXPECT_TRUE(read.associations.empty());
+    EXPECT_EQ(read.problems.size(), 1U);
+}

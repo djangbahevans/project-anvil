@@ -159,6 +159,7 @@ if(TARGET anvil_ui)
     ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
     ANVIL_CONTRIBUTIONS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/contributions-extension"
     ANVIL_THEMES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/themes-extension"
+    ANVIL_LANGUAGES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/languages-extension"
     ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()

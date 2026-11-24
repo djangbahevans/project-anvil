@@ -80,6 +80,16 @@ public:
 
     void add_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
     void remove_document(const core::Uri& uri);
+
+    // Chooses the language id of the documents that are registered without one, in this host and in
+    // the ones that follow a restart.
+    void set_language_resolver(exthost::DocumentsService::LanguageResolver resolver);
+    // The language id that extensions see for the document; nothing when there is no extension host
+    // or the document is not registered.
+    std::optional<std::string> language_of(const core::Uri& uri) const;
+    // Whether the language was given by an extension, which no resolver changes.
+    bool language_is_fixed(const core::Uri& uri) const;
+    void language_changed(const core::Uri& uri, std::string language_id);
     // Shows the document in an editor and makes it the active one.
     void show(const core::Uri& uri);
 
@@ -98,6 +108,7 @@ private:
     std::shared_ptr<core::Logger> logger_;
     std::unique_ptr<exthost::ExtensionHost> host_;
     exthost::Contributions contributions_;
+    exthost::DocumentsService::LanguageResolver language_resolver_;
     QTimer timer_;
     Callbacks callbacks_;
 };

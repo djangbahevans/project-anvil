@@ -64,6 +64,9 @@ std::expected<void, Error> ExtensionHostBridge::launch() {
         }
     };
     host_->documents().set_observer(std::move(observer));
+    if (language_resolver_) {
+        host_->documents().set_language_resolver(language_resolver_);
+    }
     timer_.start();
     return {};
 }
@@ -92,6 +95,28 @@ void ExtensionHostBridge::add_document(const core::Uri& uri,
                                        std::shared_ptr<core::Document> document) {
     if (host_) {
         (void)host_->documents().add_document(uri, std::move(document));
+    }
+}
+
+void ExtensionHostBridge::set_language_resolver(
+    exthost::DocumentsService::LanguageResolver resolver) {
+    language_resolver_ = std::move(resolver);
+    if (host_) {
+        host_->documents().set_language_resolver(language_resolver_);
+    }
+}
+
+std::optional<std::string> ExtensionHostBridge::language_of(const core::Uri& uri) const {
+    return host_ ? host_->documents().language_of(uri) : std::nullopt;
+}
+
+bool ExtensionHostBridge::language_is_fixed(const core::Uri& uri) const {
+    return host_ && host_->documents().language_is_fixed(uri);
+}
+
+void ExtensionHostBridge::language_changed(const core::Uri& uri, std::string language_id) {
+    if (host_) {
+        host_->documents().language_changed(uri, std::move(language_id));
     }
 }
 

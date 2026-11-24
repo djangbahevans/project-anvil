@@ -218,4 +218,25 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
     return std::unexpected(Error{ErrorCode::invalid_argument, std::move(message)});
 }
 
+FileAssociations read_file_associations(const Settings& settings) {
+    FileAssociations result;
+    const nlohmann::json* found = settings.find("files.associations");
+    if (found == nullptr || found->is_null()) {
+        return result;
+    }
+    if (!found->is_object()) {
+        result.problems.emplace_back("files.associations must be an object");
+        return result;
+    }
+    for (const auto& [pattern, value] : found->items()) {
+        if (pattern.empty() || !value.is_string() || value.get<std::string>().empty()) {
+            result.problems.push_back("files.associations[\"" + pattern +
+                                      "\"] must be a language id");
+            continue;
+        }
+        result.associations.push_back({pattern, value.get<std::string>()});
+    }
+    return result;
+}
+
 } // namespace anvil::core
