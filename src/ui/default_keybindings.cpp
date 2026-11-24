@@ -173,6 +173,12 @@ const Row rows[] = {
      {"ctrl+shift+\\"},
      {"ctrl+shift+\\"},
      {"cmd+shift+\\"}},
+    {"workbench.action.openSettings", "", {"ctrl+,"}, {"ctrl+,"}, {"cmd+,"}},
+    {"workbench.action.openGlobalKeybindings",
+     "",
+     {"ctrl+k ctrl+s"},
+     {"ctrl+k ctrl+s"},
+     {"cmd+k cmd+s"}},
     // Navigation history.
     {"workbench.action.navigateBack",
      "",

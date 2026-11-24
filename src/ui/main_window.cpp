@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <functional>
 #include <set>
+#include <system_error>
 #include <utility>
 
 namespace anvil::ui {
@@ -796,8 +797,15 @@ void MainWindow::register_commands() {
     add("editor.action.previousMatchFindAction", tr("Find Previous"),
         [this] { find_bar()->find_previous(); });
     add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
-    // The host that runs these commands is destroyed by the restart they cause, so the restart
-    // waits until the command has returned.
+    // There is no settings or shortcuts editor: both the interface and the JSON commands open the
+    // file.
+    const auto open_settings = [this] { open_user_file(options_.settings_file, "{}\n"); };
+    const auto open_keybindings = [this] { open_user_file(options_.keybindings_file, "[]\n"); };
+    add("workbench.action.openSettings", tr("Open Settings"), open_settings);
+    add("workbench.action.openSettingsJson", tr("Open User Settings (JSON)"), open_settings);
+    add("workbench.action.openGlobalKeybindings", tr("Open Keyboard Shortcuts"), open_keybindings);
+    add("workbench.action.openGlobalKeybindingsFile", tr("Open Keyboard Shortcuts (JSON)"),
+        open_keybindings);
     add("workbench.action.files.openFolder", tr("Open Folder…"),
         [this] { QTimer::singleShot(0, this, [this] { open_folder_dialog(); }); });
     add("workbench.action.closeFolder", tr("Close Folder"),
@@ -1712,6 +1720,25 @@ void MainWindow::save_as_dialog() {
     if (!chosen.isEmpty()) {
         save_as(chosen);
     }
+}
+
+bool MainWindow::open_user_file(const std::filesystem::path& file, std::string_view initial) {
+    if (file.empty()) {
+        status_bar_->show_message(tr("This window has no configuration directory"), 5000);
+        return false;
+    }
+    std::error_code error;
+    if (!std::filesystem::exists(file, error)) {
+        std::filesystem::create_directories(file.parent_path(), error);
+        if (const auto written = platform::write_file(file, initial); !written) {
+            status_bar_->show_message(tr("%1 cannot be created: %2")
+                                          .arg(QString::fromStdString(file.string()),
+                                               QString::fromStdString(written.error().message)),
+                                      8000);
+            return false;
+        }
+    }
+    return open_file(QString::fromStdString(file.string()));
 }
 
 void MainWindow::open_dialog() {
