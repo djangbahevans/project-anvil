@@ -530,11 +530,9 @@ void MainWindow::apply_settings() {
         title_bar_->set_layout_controls_visible(editor.layout_controls);
     }
     layout_.set_focus_recent_after_close(editor.focus_recent_editor_after_close);
-    workbench_->set_visible(Part::status_bar, editor.status_bar_visible);
     workbench_->set_sidebar_side(
         editor.side_bar_location == core::SideBarLocation::right ? Side::right : Side::left);
-    sidebar_->set_activity_bar_allowed(editor.activity_bar_location !=
-                                       core::ActivityBarLocation::hidden);
+    apply_part_visibility();
     const bool auto_save_changed =
         editor.auto_save != auto_save_ || editor.auto_save_delay != auto_save_delay_;
     auto_save_ = editor.auto_save;
@@ -935,6 +933,16 @@ void MainWindow::register_commands() {
     add("workbench.action.closeWindow", tr("Close Window"), [this] { close(); });
     add("workbench.action.toggleFullScreen", tr("Toggle Full Screen"),
         [this] { setWindowState(windowState() ^ Qt::WindowFullScreen); });
+    add("workbench.action.toggleZenMode", tr("Toggle Zen Mode"), [this] { toggle_zen_mode(); });
+    add("workbench.action.exitZenMode", tr("Exit Zen Mode"), [this] {
+        if (zen_.active) {
+            toggle_zen_mode();
+        }
+    });
+    add("workbench.action.toggleCenteredLayout", tr("Toggle Centered Layout"), [this] {
+        area_->set_centered(!area_->centered());
+        view()->setFocus();
+    });
     commands_.add(
         "setContext", tr("Set Context").toStdString(), [this](const nlohmann::json& args) {
             if (args.is_array() && args.size() >= 1 && args[0].is_string()) {
@@ -1306,6 +1314,8 @@ void MainWindow::fill_context(core::ContextKeys& keys) const {
     }
     const bool find_bar_visible = area_->focused_group()->find_bar()->isVisible();
     keys.set("workbenchState", std::string(options_.workspace ? "folder" : "empty"));
+    keys.set("inZenMode", zen_.active);
+    keys.set("isCenteredLayout", area_->centered());
     keys.set("editorFocus", editor_focus);
     keys.set("editorTextFocus", view != nullptr);
     keys.set("inputFocus", input);
@@ -2374,6 +2384,9 @@ void MainWindow::changeEvent(QEvent* event) {
         break;
     case QEvent::WindowStateChange:
         update_chrome();
+        if (zen_.active && zen_.entered_full_screen && !isFullScreen()) {
+            toggle_zen_mode();
+        }
         break;
     default:
         break;
@@ -2458,6 +2471,55 @@ void MainWindow::update_title_bar_tooltips() {
         with_shortcut(tr("Toggle Panel"), "workbench.action.togglePanel"));
     title_bar_->command_center()->setToolTip(
         with_shortcut(tr("Show All Commands"), "workbench.action.showCommands"));
+}
+
+void MainWindow::apply_part_visibility() {
+    const core::EditorSettings& editor = settings_->editor();
+    workbench_->set_visible(Part::status_bar, editor.status_bar_visible &&
+                                                  !(zen_.active && editor.zen_hide_status_bar));
+    sidebar_->set_activity_bar_allowed(editor.activity_bar_location !=
+                                           core::ActivityBarLocation::hidden &&
+                                       !(zen_.active && editor.zen_hide_activity_bar));
+}
+
+void MainWindow::toggle_zen_mode() {
+    const core::EditorSettings& editor = settings_->editor();
+    const QPointer<QWidget> focused = QApplication::focusWidget();
+    if (!zen_.active) {
+        zen_ = {};
+        zen_.active = true;
+        zen_.sidebar_was_visible = workbench_->is_visible(Part::sidebar);
+        zen_.panel_was_visible = workbench_->is_visible(Part::panel);
+        workbench_->set_visible(Part::sidebar, false);
+        workbench_->set_visible(Part::panel, false);
+        apply_part_visibility();
+        if (editor.zen_center_layout && !area_->centered()) {
+            area_->set_centered(true);
+            zen_.entered_centered_layout = true;
+        }
+        if (editor.zen_full_screen && !isFullScreen()) {
+            zen_.entered_full_screen = true;
+            setWindowState(windowState() | Qt::WindowFullScreen);
+        }
+    } else {
+        const ZenMode before = std::exchange(zen_, {});
+        if (before.panel_was_visible) {
+            workbench_->set_visible(Part::panel, true);
+        }
+        if (before.sidebar_was_visible) {
+            workbench_->set_visible(Part::sidebar, true);
+        }
+        apply_part_visibility();
+        if (before.entered_centered_layout) {
+            area_->set_centered(false);
+        }
+        if (before.entered_full_screen && isFullScreen()) {
+            setWindowState(windowState() & ~Qt::WindowFullScreen);
+        }
+    }
+    if (!focused || !focused->isVisible()) {
+        view()->setFocus();
+    }
 }
 
 void MainWindow::update_chrome() {

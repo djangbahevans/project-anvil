@@ -95,6 +95,18 @@ public:
     // The splitter that holds the groups, or null while there is only one group.
     QSplitter* root_splitter() const;
 
+    // Centered layout: while it is on and the area has a single group, the group is narrower than
+    // the area and the same space is left at each side, so that lines keep a readable width. With
+    // several groups the margins are gone and come back when one group is left. The margin is the
+    // part of the width that VS Code's centered layout starts with.
+    static constexpr double centered_margin_ratio = 0.1909;
+    bool centered() const {
+        return centered_;
+    }
+    void set_centered(bool centered);
+    // The width of the space at each side of the groups now.
+    int margin() const;
+
 signals:
     void tab_selected(anvil::workbench::GroupId group, int index);
     void tab_moved(anvil::workbench::GroupId group, int from, int to);
@@ -118,7 +130,12 @@ signals:
     void tab_dropped_on_edge(anvil::workbench::GroupId from, int index,
                              anvil::workbench::GroupId to, anvil::workbench::Direction direction);
 
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
+    void update_margins();
     void structure_changed() override;
     void ratios_changed() override;
     void tabs_changed(workbench::GroupId group) override;
@@ -159,6 +176,7 @@ private:
     // the user's doing.
     bool applying_sizes_ = false;
     bool rebuilding_ = false;
+    bool centered_ = false;
 };
 
 } // namespace anvil::ui

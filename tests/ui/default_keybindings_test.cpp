@@ -393,3 +393,14 @@ TEST(DefaultKeybindingsTest, TheMenuShowsThePrimaryKeyOfACommandThatHasSeveral) 
     EXPECT_EQ(label("redo"), "ctrl+y");
     EXPECT_EQ(label("editor.action.clipboardPasteAction"), "ctrl+v");
 }
+
+TEST(DefaultKeybindingsTest, ZenModeHasVSCodesKeys) {
+    for (const KeyPlatform platform : {KeyPlatform::linux, KeyPlatform::windows}) {
+        const auto bindings = default_keybindings(platform);
+        EXPECT_EQ(keys_of(bindings, "workbench.action.toggleZenMode"), chords({"ctrl+k z"}));
+        EXPECT_EQ(keys_of(bindings, "workbench.action.exitZenMode"), chords({"escape escape"}));
+    }
+    const auto macos = default_keybindings(KeyPlatform::macos);
+    EXPECT_EQ(keys_of(macos, "workbench.action.toggleZenMode"), chords({"cmd+k z"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.exitZenMode"), chords({"escape escape"}));
+}
