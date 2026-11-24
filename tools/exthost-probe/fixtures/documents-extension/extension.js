@@ -63,6 +63,11 @@ exports.activate = (context) => {
             const editor = await vscode.window.showTextDocument(document);
             return { shown: editor.document.uri.toString(), active: active().document.uri.toString() };
         }),
+        vscode.commands.registerCommand('anvil.docs.create', async (language, content) => {
+            const document = await vscode.workspace.openTextDocument({ language, content });
+            await vscode.window.showTextDocument(document);
+            return describe(document, active());
+        }),
         vscode.commands.registerCommand('anvil.docs.changes', () => changes.splice(0)),
         vscode.commands.registerCommand('anvil.docs.saves', () => saves.splice(0)),
         vscode.commands.registerCommand('anvil.docs.closes', () => closes.splice(0)),

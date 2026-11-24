@@ -1,0 +1,18 @@
+{
+  "name": "languages",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "contributes": {
+    "languages": [
+      {
+        "id": "fixturelang",
+        "aliases": ["Fixture Language", "fixture"],
+        "extensions": [".fixture"],
+        "filenames": ["fixturefile"],
+        "filenamePatterns": ["fixture-*.cfg"],
+        "firstLine": "^#!fixture"
+      }
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 #include "anvil/ui/main_window.hpp"
 
+#include "anvil/core/editor_settings.hpp"
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
@@ -30,8 +31,10 @@ namespace anvil::ui {
 namespace {
 
 constexpr const char* position_item_id = "status.editor.position";
+constexpr const char* language_item_id = "status.editor.language";
 constexpr const char* host_item_id = "status.extensionHost";
 constexpr int position_priority = 100;
+constexpr int language_priority = 90;
 
 core::KeyPlatform key_platform() {
 #if defined(Q_OS_MACOS)
@@ -259,6 +262,9 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     connect(area_, &EditorArea::focus_requested, this,
             [this](workbench::GroupId group) { layout_.focus(group); });
 
+    bridge_.set_language_resolver([this](const core::Uri& uri, std::string_view first_line) {
+        return resolve_language(uri, first_line);
+    });
     if (options_.extension_host) {
         ExtensionHostBridge::Callbacks callbacks;
         callbacks.edited = [this](const core::Uri& uri, const core::DocumentChange&) {
@@ -301,6 +307,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             add_extension_themes();
         }
     }
+    rebuild_languages();
 
     apply_settings();
     add_untitled_document();
@@ -360,7 +367,9 @@ void MainWindow::workspace_changed() {
     if (options_.extension_host) {
         core::NullLogger discarded;
         core::Logger& logger = options_.logger ? *options_.logger : discarded;
-        if (auto restarted = bridge_.restart(options_.workspace); !restarted) {
+        auto restarted = bridge_.restart(options_.workspace);
+        rebuild_languages();
+        if (!restarted) {
             status_bar_->show_message(tr("The extension host did not start: %1")
                                           .arg(QString::fromStdString(restarted.error().message)),
                                       15000);
@@ -477,7 +486,78 @@ void MainWindow::apply_settings() {
         }
     }
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
+    apply_file_associations();
     apply_extension_host_options();
+}
+
+void MainWindow::rebuild_languages() {
+    core::NullLogger discarded;
+    core::Logger& logger = options_.logger ? *options_.logger : discarded;
+    languages_ = core::LanguageRegistry::with_builtin_languages();
+    for (const exthost::ContributedLanguage& contributed : bridge_.contributions().languages) {
+        if (const auto problem = languages_.add(contributed.language)) {
+            logger.log(core::LogLevel::warning, "extensions",
+                       contributed.extension + ": " + *problem);
+        }
+    }
+    languages_.set_user_associations(file_associations_);
+    refresh_document_languages();
+}
+
+void MainWindow::apply_file_associations() {
+    core::FileAssociations read = core::read_file_associations(settings_->settings());
+    if (read.associations == file_associations_ && read.problems == file_association_problems_) {
+        return;
+    }
+    core::NullLogger discarded;
+    core::Logger& logger = options_.logger ? *options_.logger : discarded;
+    for (const std::string& problem : read.problems) {
+        logger.log(core::LogLevel::warning, "settings", problem);
+    }
+    const bool associations_changed = read.associations != file_associations_;
+    file_associations_ = std::move(read.associations);
+    file_association_problems_ = std::move(read.problems);
+    if (associations_changed) {
+        languages_.set_user_associations(file_associations_);
+        refresh_document_languages();
+    }
+}
+
+std::string MainWindow::resolve_language(const core::Uri& uri, std::string_view first_line) const {
+    const auto file = uri.file_path();
+    return languages_.language_for(file ? file->generic_string() : uri.path, first_line);
+}
+
+MainWindow::DocumentLanguage MainWindow::describe_language(const std::string& id) const {
+    const core::Language* language = languages_.language(id);
+    const std::string& name = language && language->name ? *language->name : id;
+    return {id, QString::fromStdString(name)};
+}
+
+const MainWindow::DocumentLanguage& MainWindow::language_of_document(const core::Uri& uri) {
+    if (const auto found = document_languages_.find(uri); found != document_languages_.end()) {
+        return found->second;
+    }
+    std::string id;
+    if (const auto known = bridge_.language_of(uri)) {
+        id = *known;
+    } else {
+        id = resolve_language(uri, documents_.at(uri)->text().line(0));
+    }
+    return document_languages_.emplace(uri, describe_language(id)).first->second;
+}
+
+void MainWindow::refresh_document_languages() {
+    document_languages_.clear();
+    for (const auto& [uri, document] : documents_) {
+        if (bridge_.language_is_fixed(uri)) {
+            continue;
+        }
+        const std::string id = resolve_language(uri, document->text().line(0));
+        bridge_.language_changed(uri, id);
+        document_languages_.emplace(uri, describe_language(id));
+    }
+    update_status();
 }
 
 void MainWindow::apply_extension_host_options() {
@@ -1075,6 +1155,7 @@ bool MainWindow::close_document_in(workbench::GroupId group,
     layout_.close_tab(target.group, target.index);
     if (layout_.locations(*uri).empty()) {
         bridge_.remove_document(*uri);
+        document_languages_.erase(*uri);
         documents_.erase(*uri);
     }
     return true;
@@ -1122,6 +1203,7 @@ bool MainWindow::close_group(workbench::GroupId group) {
     for (const auto& document : documents) {
         if (const auto uri = uri_of(document); uri && layout_.locations(*uri).empty()) {
             bridge_.remove_document(*uri);
+            document_languages_.erase(*uri);
             documents_.erase(*uri);
         }
     }
@@ -1410,6 +1492,7 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
     }
     if (!(uri == new_uri)) {
         // The document keeps its text and history; extensions see it under its new name.
+        document_languages_.erase(uri);
         auto node = documents_.extract(uri);
         const std::shared_ptr<core::Document> document = node.mapped();
         node.key() = new_uri;
@@ -1589,8 +1672,13 @@ void MainWindow::update_status() {
     const core::Uri* current = current_uri_ptr();
     if (!current) {
         status_bar_->remove_item(position_item_id);
+        status_bar_->remove_item(language_item_id);
         return;
     }
+    status_bar_->set_item(language_item_id, StatusBarSide::right,
+                          {.text = language_of_document(*current).name,
+                           .tooltip = tr("Language Mode"),
+                           .priority = language_priority});
     const core::Document& document = *documents_.at(*current);
     const core::Position position =
         document.text().position_at(document.selections().primary().active);

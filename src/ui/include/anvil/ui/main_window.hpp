@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/document.hpp"
+#include "anvil/core/language_registry.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/uri.hpp"
 #include "anvil/core/workspace.hpp"
@@ -232,6 +233,24 @@ private:
     // window holds (documents, commands, contributions), then shows the folder's name.
     void workspace_changed();
     void apply_extension_host_options();
+    // The registry of the languages that files can have: VS Code's built-in ones, then those of the
+    // extensions, with the user's associations. Rebuilt when the extension host starts, and the
+    // documents take the languages the new registry gives.
+    void rebuild_languages();
+    // Reads `files.associations` and, when it changed, applies it to the registry.
+    void apply_file_associations();
+    // The language id of a resource whose text starts with `first_line`.
+    std::string resolve_language(const core::Uri& uri, std::string_view first_line) const;
+    // Gives every document the language the registry decides, except those that an extension asked
+    // for, and tells the extension host of the ones that changed.
+    void refresh_document_languages();
+    struct DocumentLanguage {
+        std::string id;
+        // What the status bar shows.
+        QString name;
+    };
+    const DocumentLanguage& language_of_document(const core::Uri& uri);
+    DocumentLanguage describe_language(const std::string& id) const;
     // The name of the workspace folder, or "Anvil" without one.
     QString workspace_label() const;
     void open_folder_dialog();
@@ -349,6 +368,12 @@ private:
     ThemeStore* themes_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;
+    core::LanguageRegistry languages_ = core::LanguageRegistry::with_builtin_languages();
+    std::vector<core::FileAssociation> file_associations_;
+    std::vector<std::string> file_association_problems_;
+    // The language of each open document, filled when it is first asked for so that the status bar
+    // does not ask the registry on every keystroke.
+    std::map<core::Uri, DocumentLanguage> document_languages_;
     // The open documents, each shown by one or more tabs of the layout.
     std::map<core::Uri, std::shared_ptr<core::Document>> documents_;
     workbench::EditorLayout layout_;

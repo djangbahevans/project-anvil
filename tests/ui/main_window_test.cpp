@@ -731,13 +731,14 @@ TEST_F(MainWindowTest, OpeningAnOpenFileShowsTheExistingDocument) {
     EXPECT_EQ(current_text(), "!A"); // the unsaved edit is still there
 }
 
-TEST_F(MainWindowTest, TheStatusBarShowsThePositionLeftOfTheExtensionHostState) {
+TEST_F(MainWindowTest, TheStatusBarShowsThePositionThenTheLanguageThenTheExtensionHostState) {
     create_window();
     StatusBar& bar = window_->status_bar();
     const auto ids = bar.item_ids(StatusBarSide::right);
-    ASSERT_EQ(ids.size(), 2U);
+    ASSERT_EQ(ids.size(), 3U);
     EXPECT_EQ(bar.item(ids[0])->text, "Ln 1, Col 1");
-    EXPECT_TRUE(bar.item(ids[1])->text.startsWith("Extension host"));
+    EXPECT_EQ(bar.item(ids[1])->text, "Plain Text");
+    EXPECT_TRUE(bar.item(ids[2])->text.startsWith("Extension host"));
     EXPECT_TRUE(bar.item_ids(StatusBarSide::left).empty());
 }
 
@@ -5825,4 +5826,167 @@ TEST_F(PartPositionsTest, RendersTheWindowWithTheSideBarAndThePanelOnTheRight) {
     if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
         image.save(QString::fromUtf8(directory) + "/main_window_parts_on_the_right.png");
     }
+}
+
+class LanguageTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION, ANVIL_LANGUAGES_EXTENSION};
+    }
+
+    // What the status bar shows for the language of the shown document.
+    QString shown_language() const {
+        const auto* item = window_->status_bar().item("status.editor.language");
+        return item ? item->text : QString("(none)");
+    }
+
+    // The language id that extensions see for the active editor.
+    std::string host_language() {
+        return run("anvil.docs.active")["languageId"].get<std::string>();
+    }
+
+    bool open(const std::filesystem::path& path) {
+        return window_->open_file(QString::fromStdString(path.string()));
+    }
+
+    // Waits for the language that extensions see to be `id`.
+    bool host_language_becomes(const std::string& id) {
+        return wait_until([&] { return host_language() == id; });
+    }
+};
+
+TEST_F(LanguageTest, DocumentsHaveTheLanguageOfTheirFileForTheWindowAndForExtensions) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    struct Case {
+        const char* name;
+        const char* content;
+        const char* id;
+        const char* shown;
+    };
+    const Case cases[] = {
+        {"a.fixture", "", "fixturelang", "Fixture Language"},
+        {"fixturefile", "", "fixturelang", "Fixture Language"},
+        {"fixture-x.cfg", "", "fixturelang", "Fixture Language"},
+        {"a.ts", "", "typescript", "TypeScript"},
+        {"b.unknown", "", "plaintext", "Plain Text"},
+        {"notes.txt", "", "plaintext", "Plain Text"},
+        {"fixturescript", "#!fixture\nx", "fixturelang", "Fixture Language"},
+        {"pyscript", "#!/usr/bin/env python3\nx", "python", "Python"},
+        {"later", "x\n#!/usr/bin/env python3", "plaintext", "Plain Text"},
+    };
+    for (const Case& c : cases) {
+        ASSERT_TRUE(open(write(c.name, c.content))) << c.name;
+        EXPECT_EQ(host_language(), c.id) << c.name;
+        EXPECT_EQ(shown_language(), c.shown) << c.name;
+    }
+}
+
+TEST_F(LanguageTest, TheFirstLineOfEachDocumentIsTheOneThatIsRead) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("first", "#!/usr/bin/env python3\n")));
+    ASSERT_TRUE(open(write("second", "plain\n")));
+    EXPECT_EQ(host_language(), "plaintext");
+    ASSERT_TRUE(open(write("first", "#!/usr/bin/env python3\n")));
+    EXPECT_EQ(host_language(), "python");
+}
+
+TEST_F(LanguageTest, SavingAsAnotherNameChangesTheLanguageEverywhere) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.txt", "abc")));
+    ASSERT_EQ(host_language(), "plaintext");
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.fixture").string())));
+    EXPECT_EQ(host_language(), "fixturelang");
+    EXPECT_EQ(shown_language(), "Fixture Language");
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "c.ts").string())));
+    EXPECT_EQ(host_language(), "typescript");
+    EXPECT_EQ(shown_language(), "TypeScript");
+}
+
+TEST_F(LanguageTest, AnAssociationOfTheUserOverridesTheExtensionsAndUpdatesOpenDocuments) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.fixture", "abc")));
+    ASSERT_TRUE(open(write("b.txt", "abc")));
+    EXPECT_EQ(shown_language(), "Plain Text");
+
+    window_->change_setting("files.associations",
+                            json{{"*.fixture", "markdown"}, {"*.txt", "python"}});
+    EXPECT_TRUE(host_language_becomes("python"));
+    EXPECT_EQ(shown_language(), "Python");
+    ASSERT_TRUE(open(write("a.fixture", "abc")));
+    EXPECT_EQ(host_language(), "markdown");
+    EXPECT_EQ(shown_language(), "Markdown");
+
+    window_->change_setting("files.associations", json::object());
+    EXPECT_TRUE(host_language_becomes("fixturelang"));
+    EXPECT_EQ(shown_language(), "Fixture Language");
+    ASSERT_TRUE(open(write("b.txt", "abc")));
+    EXPECT_EQ(host_language(), "plaintext");
+}
+
+TEST_F(LanguageTest, AnAssociationOfALanguageThatDoesNotExistGivesPlainText) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.fixture", "abc")));
+    window_->change_setting("files.associations", json{{"*.fixture", "nosuchlanguage"}});
+    EXPECT_TRUE(host_language_becomes("plaintext"));
+    EXPECT_EQ(shown_language(), "Plain Text");
+}
+
+TEST_F(LanguageTest, AnEntryOfTheAssociationsThatIsNotALanguageIdIsLoggedAndTheOthersApply) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.txt", "abc")));
+    window_->change_setting("files.associations", json{{"*.txt", "python"}, {"*.bad", 3}});
+    EXPECT_TRUE(host_language_becomes("python"));
+    EXPECT_TRUE(std::ranges::any_of(logger_->entries(), [](const auto& entry) {
+        return entry.message.find("*.bad") != std::string::npos;
+    }));
+}
+
+TEST_F(LanguageTest, ADocumentThatAnExtensionCreatesWithALanguageKeepsIt) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.txt", "abc")));
+    // The window's own untitled document, which has the name that the extension's would take.
+    ASSERT_TRUE(window_->close_document(0));
+    const json created = run("anvil.docs.create", json::array({"python", "x = 1"}));
+    ASSERT_EQ(created["languageId"], "python");
+    ASSERT_TRUE(wait_until([&] { return shown_language() == "Python"; }));
+
+    window_->change_setting("files.associations", json{{"*.txt", "markdown"}});
+    ASSERT_TRUE(open(write("a.txt", "abc")));
+    EXPECT_TRUE(host_language_becomes("markdown"));
+    ASSERT_TRUE(window_->close_document(0));
+    EXPECT_EQ(host_language(), "python");
+    EXPECT_EQ(shown_language(), "Python");
+}
+
+TEST_F(LanguageTest, TheLanguageOfTheShownDocumentIsInTheStatusBarWithoutAnExtensionHost) {
+    create_window();
+    EXPECT_EQ(shown_language(), "Plain Text");
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    EXPECT_EQ(shown_language(), "TypeScript");
+    window_->change_setting("files.associations", json{{"*.ts", "python"}});
+    EXPECT_EQ(shown_language(), "Python");
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.md").string())));
+    EXPECT_EQ(shown_language(), "Markdown");
 }
