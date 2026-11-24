@@ -162,6 +162,33 @@ public:
     // Moves the focus to the next or previous group in the order they are shown, wrapping around.
     void focus_next();
     void focus_previous();
+    // Focuses the group at `index` in the order they are shown. False when there is none.
+    bool focus_at(std::size_t index);
+    // The group that is next to `group` in a direction, by where the tree puts the groups on the
+    // screen: the groups on the other side of the edge that touch it, and when `group` is at the
+    // edge of the area, the groups at the opposite edge (a lone group is its own neighbor, so that
+    // moving the focus does nothing). When several groups touch it, the one that had the focus
+    // most recently. Nothing for a group that does not exist.
+    std::optional<GroupId> neighbor(GroupId group, Direction direction) const;
+    // Focuses `neighbor(focused(), direction)`. False when it is the focused group already.
+    bool focus_neighbor(Direction direction);
+    // The groups, the one that had the focus last first.
+    std::vector<GroupId> groups_by_recency() const;
+
+    // Shows the next or previous tab, as VS Code's Open Next Editor and Open Previous Editor do:
+    // the one beside the active tab of the focused group, and past its end the first tab of the
+    // next group that has tabs (the last tab of the previous group), wrapping around the groups.
+    // The tab's group gets the focus. False when no group has a tab.
+    bool next_editor(bool forward);
+    // The same inside the focused group, wrapping at its ends. False for a group with no tab.
+    bool next_editor_in_group(bool forward);
+    // Shows a tab of the history of use, as Open Previous Used Editor (`older`) and Open Next Used
+    // Editor do. The history is the tabs of the groups, those of the group that had the focus last
+    // first and each group's from the most recently active, or only the focused group's with
+    // `in_group`. It is taken when the first of these calls starts, and kept for the calls that
+    // follow while nothing else changes the tabs or the focus; each call moves one step in it, and
+    // stops at its ends. False when there is no tab to show.
+    bool navigate_recent(bool older, bool in_group);
 
     // Sets the ratios of the splitter that is reached from the root by the given child positions,
     // scaled to add up to one. Returns false for a path that is not a splitter, a wrong number of
@@ -183,17 +210,33 @@ private:
     struct Snapshot;
 
     Snapshot snapshot() const;
-    void notify(const Snapshot& before) const;
+    void notify(const Snapshot& before);
     EditorGroup* mutable_group(GroupId id);
     void remove_tab(EditorGroup& group, std::size_t index) const;
     std::optional<std::size_t> open_in(EditorGroup& group, const core::Uri& uri);
     void erase_group(GroupId id);
     void close_group_if_empty(GroupId id);
 
+    // A step in the history of use: a tab of a group.
+    struct RecentTab {
+        GroupId group{};
+        core::Uri uri;
+    };
+    struct RecentStack {
+        std::vector<RecentTab> tabs;
+        std::size_t index = 0;
+    };
+
     EditorLayoutOptions options_;
     LayoutNode root_;
     std::vector<EditorGroup> groups_;
     GroupId focused_{};
+    // The groups that had the focus, the latest first; not saved.
+    std::vector<GroupId> recent_groups_;
+    std::optional<RecentStack> recent_all_;
+    std::optional<RecentStack> recent_in_group_;
+    bool navigating_all_ = false;
+    bool navigating_in_group_ = false;
     std::uint32_t next_id_ = 1;
     std::vector<Observer*> observers_;
 };
