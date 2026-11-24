@@ -102,6 +102,23 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             }
         }
     }
+    for (const auto& [key, field] :
+         {std::pair{"workbench.editor.showTabs", &EditorSettings::show_tabs},
+          std::pair{"zenMode.showTabs", &EditorSettings::zen_show_tabs}}) {
+        if (settings.contains(key)) {
+            const auto mode = settings.get<std::string>(key);
+            if (mode == "multiple") {
+                result.*field = TabsMode::multiple;
+            } else if (mode == "single") {
+                result.*field = TabsMode::single;
+            } else if (mode == "none") {
+                result.*field = TabsMode::none;
+            } else {
+                problems.emplace_back(std::string(key) +
+                                      " must be \"multiple\", \"single\" or \"none\"");
+            }
+        }
+    }
     if (settings.contains("workbench.sideBar.location")) {
         const auto location = settings.get<std::string>("workbench.sideBar.location");
         if (location == "left") {
