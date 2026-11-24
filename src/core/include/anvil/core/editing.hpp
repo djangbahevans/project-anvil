@@ -160,6 +160,16 @@ public:
     // Replaces every selection with a caret where Go to Bracket takes the start of it (see
     // jump_to_bracket).
     EditOutcome jump_to_bracket();
+    // Grows every selection to the next range around it, as VS Code's Expand Selection does (see
+    // selection_ranges): each selection steps through the ranges of its own caret, the end that
+    // is active, that contain it. The steps are remembered while the selections stay as the
+    // command left them, so that shrink_selection() goes back through the same ranges. The
+    // results are not reversed selections.
+    EditOutcome expand_selection();
+    // Goes back one range of those that expand_selection() went through. After any other change
+    // of the text or the selections it starts from the selections as they are, which have no
+    // range to go back to, so it does nothing.
+    EditOutcome shrink_selection();
 
     // --- lines ---
 
@@ -245,6 +255,8 @@ private:
                                 std::size_t primary);
     EditOutcome after_history(std::expected<std::optional<DocumentChange>, Error> result);
 
+    EditOutcome step_selection(bool expand);
+
     Document& document_;
     std::optional<std::size_t> goal_column_;
     EditKind last_kind_ = EditKind::none;
@@ -260,6 +272,20 @@ private:
     };
     SelectionSet leftovers_for_;
     std::vector<Leftover> leftovers_;
+    // What expand_selection() and shrink_selection() step through: for each selection of the start,
+    // its ranges (the selection first) and where it is among them. Valid while the document is at
+    // `version` with `selections`, which the last step left.
+    struct SmartSelectStep {
+        std::vector<Selection> ranges;
+        std::size_t index = 0;
+    };
+    struct SmartSelectState {
+        std::uint64_t version = 0;
+        SelectionSet selections;
+        std::size_t primary = 0;
+        std::vector<SmartSelectStep> steps;
+    };
+    std::optional<SmartSelectState> smart_select_;
 };
 
 } // namespace anvil::core
