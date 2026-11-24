@@ -283,6 +283,18 @@ TEST_F(ThemeStoreTest, AKeyWithoutADefaultStaysUnsetWhenTheThemeLeavesItOut) {
     EXPECT_FALSE(colors_.is_themed("tab.hoverBackground"));
 }
 
+TEST_F(ThemeStoreTest, TheShadowOfPopupsIsTheRegistrysForDarkAndLightThemesAndNoneForHighContrast) {
+    open_shipped();
+    ASSERT_TRUE(store_->select("Dark+"));
+    EXPECT_EQ(colors_.color("widget.shadow"), QColor(0, 0, 0, 0x5c));
+    ASSERT_TRUE(store_->select("Light+"));
+    EXPECT_EQ(colors_.color("widget.shadow"), QColor(0, 0, 0, 0x29));
+    ASSERT_TRUE(store_->select("Dark High Contrast"));
+    EXPECT_EQ(colors_.color("widget.shadow").alpha(), 0);
+    ASSERT_TRUE(store_->select("Light High Contrast"));
+    EXPECT_EQ(colors_.color("widget.shadow").alpha(), 0);
+}
+
 TEST_F(ThemeStoreTest,
        AKeyThatTheDefaultThemesLeaveOutHasTheRegistrysDefaultForDarkAndLightThemes) {
     open_shipped();

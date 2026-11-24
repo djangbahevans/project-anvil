@@ -479,6 +479,7 @@ TEST_F(QuickPickTest, TheCornersAreRoundedAndTheBorderFollowsThem) {
 }
 
 TEST_F(QuickPickTest, AShadowSurroundsThePopupAndIsGoneWithIt) {
+    colors_.set_colors({{"widget.shadow", QColor(0, 0, 0, 0x5c)}});
     pick_->set_items(items_of({"One", "Two"}));
     pick_->set_top_offset(60);
     pick_->open();
@@ -494,6 +495,19 @@ TEST_F(QuickPickTest, AShadowSurroundsThePopupAndIsGoneWithIt) {
     EXPECT_EQ(open.pixelColor(middle, pick_->y() + pick_->height() + 40),
               closed.pixelColor(middle, pick_->y() + pick_->height() + 40))
         << "and fades out within its blur";
+}
+
+TEST_F(QuickPickTest, NoShadowIsDrawnWhenTheThemeHasNone) {
+    pick_->set_items(items_of({"One", "Two"}));
+    pick_->set_top_offset(60);
+    pick_->open();
+    QApplication::processEvents();
+    const QImage open = host_->grab().toImage();
+    const int below = pick_->y() + pick_->height() + 4;
+    const int middle = pick_->x() + pick_->width() / 2;
+    pick_->cancel();
+    QApplication::processEvents();
+    EXPECT_EQ(open.pixelColor(middle, below), host_->grab().toImage().pixelColor(middle, below));
 }
 
 TEST_F(QuickPickTest, RendersTheList) {

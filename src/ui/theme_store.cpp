@@ -113,6 +113,14 @@ std::optional<core::Rgba> registry_default(std::string_view key, core::ThemeKind
             return core::Rgba{.red = 0x26, .green = 0x77, .blue = 0xcb, .alpha = 0x2e};
         }
     }
+    if (key == "widget.shadow") {
+        if (kind == core::ThemeKind::dark) {
+            return core::Rgba{.red = 0, .green = 0, .blue = 0, .alpha = 0x5c};
+        }
+        if (kind == core::ThemeKind::light) {
+            return core::Rgba{.red = 0, .green = 0, .blue = 0, .alpha = 0x29};
+        }
+    }
     if (key == "toolbar.hoverBackground") {
         if (kind == core::ThemeKind::dark) {
             return core::Rgba{.red = 0x5a, .green = 0x5d, .blue = 0x5e, .alpha = 0x50};

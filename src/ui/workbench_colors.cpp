@@ -188,7 +188,13 @@ constexpr WorkbenchColorKey table[] = {
         "Background of a small button, such as the close button of a tab, under the mouse.",
         QPalette::Midlight),
     from_palette("widget.border", "Border of popups such as the quick pick.", QPalette::WindowText),
-    fixed_color("widget.shadow", "Shadow around popups such as the quick pick.", 0x5C000000),
+    // No shadow where the theme and the registry give none, as in the high contrast themes.
+    {"widget.shadow",
+     "Shadow around popups such as the quick pick.",
+     {},
+     QPalette::NoRole,
+     0,
+     true},
 };
 
 constexpr int max_chain = 4;
