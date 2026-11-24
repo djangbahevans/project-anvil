@@ -9,6 +9,7 @@ add_executable(anvil_core_tests
   core/editing_test.cpp
   core/editor_settings_test.cpp
   core/fuzzy_test.cpp
+  core/glob_test.cpp
   core/jsonc_edit_model_test.cpp
   core/jsonc_edit_test.cpp
   core/jsonc_test.cpp
@@ -39,7 +40,7 @@ gtest_discover_tests(anvil_core_tests)
 if(UNIX)
   set(ANVIL_PLATFORM_TEST_SOURCES platform/process_posix_test.cpp platform/local_socket_posix_test.cpp)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/paths_linux_test.cpp)
+    list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/paths_linux_test.cpp platform/file_watcher_linux_test.cpp)
   endif()
   list(APPEND ANVIL_PLATFORM_TEST_SOURCES platform/editor_defaults_test.cpp platform/file_system_test.cpp platform/file_test.cpp
        platform/working_directory_test.cpp)
