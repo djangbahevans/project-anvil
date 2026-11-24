@@ -99,6 +99,14 @@ struct EditorSettings {
     // workbench.activityBar.location, where "default" is `standard`
     ActivityBarLocation activity_bar_location = ActivityBarLocation::standard;
 
+    // zenMode.fullScreen: turning on Zen Mode also puts the window into full screen
+    bool zen_full_screen = true;
+    // zenMode.centerLayout: turning on Zen Mode also centers the editor area
+    bool zen_center_layout = true;
+    // zenMode.hideStatusBar, zenMode.hideActivityBar: Zen Mode hides the part
+    bool zen_hide_status_bar = true;
+    bool zen_hide_activity_bar = true;
+
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
