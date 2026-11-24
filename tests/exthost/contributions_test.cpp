@@ -4,6 +4,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <unistd.h>
 
 using namespace anvil::exthost;
 using anvil::core::KeyPlatform;
@@ -15,7 +16,8 @@ namespace {
 class ContributionsTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        root_ = std::filesystem::temp_directory_path() / "anvil-contributions-test";
+        root_ = std::filesystem::temp_directory_path() /
+                ("anvil-contributions-test-" + std::to_string(::getpid()));
         std::filesystem::remove_all(root_);
         std::filesystem::create_directories(root_);
         logger_ = std::make_shared<anvil::core::RecordingLogger>();

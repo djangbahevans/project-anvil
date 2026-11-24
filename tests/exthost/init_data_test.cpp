@@ -3,6 +3,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <unistd.h>
 
 using namespace anvil::exthost;
 using nlohmann::json;
@@ -12,7 +13,8 @@ namespace {
 class InitData : public ::testing::Test {
 protected:
     void SetUp() override {
-        root_ = std::filesystem::temp_directory_path() / "anvil-init-data-test";
+        root_ = std::filesystem::temp_directory_path() /
+                ("anvil-init-data-test-" + std::to_string(::getpid()));
         std::filesystem::remove_all(root_);
         std::filesystem::create_directories(root_);
     }
