@@ -938,8 +938,10 @@ void EditorView::draw_whitespace(QPainter& painter, const LineLayout& layout,
                                    static_cast<std::size_t>(layout.text.size()));
     const std::vector<std::size_t> columns =
         core::whitespace_columns(line, render_whitespace_, selected);
-    // The columns are in the order of their x, so the first visible one is found by bisection and
-    // the cost does not depend on how far the line is scrolled.
+    // The columns are in the order of their x, so the first visible one is found by bisection. The
+    // marks of the whole line are found first and Qt takes time in proportion to the column to give
+    // its x, so the paint of a very long line costs time in proportion to the line, not to the part
+    // that is shown.
     const int left = gutter_width();
     const auto first =
         std::lower_bound(columns.begin(), columns.end(), left, [&](std::size_t column, int edge) {
