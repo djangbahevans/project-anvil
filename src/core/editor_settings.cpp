@@ -100,6 +100,23 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
                 "workbench.editor.focusRecentEditorAfterClose must be true or false");
         }
     }
+    if (settings.contains("editor.multiCursorModifier")) {
+        const auto modifier = settings.get<std::string>("editor.multiCursorModifier");
+        if (modifier == "alt") {
+            result.multi_cursor_modifier = MultiCursorModifier::alt;
+        } else if (modifier == "ctrlCmd") {
+            result.multi_cursor_modifier = MultiCursorModifier::ctrl_cmd;
+        } else {
+            problems.emplace_back(R"(editor.multiCursorModifier must be "alt" or "ctrlCmd")");
+        }
+    }
+    if (settings.contains("editor.columnSelection")) {
+        if (const auto enabled = settings.get<bool>("editor.columnSelection")) {
+            result.column_selection = *enabled;
+        } else {
+            problems.emplace_back("editor.columnSelection must be true or false");
+        }
+    }
     if (settings.contains("editor.renderWhitespace")) {
         const auto mode = settings.get<std::string>("editor.renderWhitespace");
         if (mode == "none") {

@@ -540,6 +540,21 @@ EditOutcome EditController::select(Selection range) {
     return adopt(SelectionSet::from({Selection{boundary(range.anchor), boundary(range.active)}}));
 }
 
+EditOutcome EditController::select_ranges(std::vector<Selection> ranges, std::size_t primary) {
+    const Text& text = document_.text();
+    const auto boundary = [&text](std::size_t offset) {
+        offset = std::min(offset, text.size());
+        while (!text.is_char_boundary(offset)) {
+            --offset;
+        }
+        return offset;
+    };
+    for (Selection& range : ranges) {
+        range = Selection{boundary(range.anchor), boundary(range.active)};
+    }
+    return adopt(SelectionSet::from(std::move(ranges), primary));
+}
+
 EditOutcome EditController::set_caret(std::size_t offset, bool extend) {
     const Text& text = document_.text();
     offset = std::min(offset, text.size());

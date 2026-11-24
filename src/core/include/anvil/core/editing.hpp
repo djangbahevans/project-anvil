@@ -130,6 +130,9 @@ public:
     // Makes `range` the only selection, with its active end at `range.active`. Offsets move back
     // to a character boundary.
     EditOutcome select(Selection range);
+    // Makes `ranges` the selections, with the one at index `primary` primary. Offsets move back to
+    // a character boundary, and ranges that overlap are merged.
+    EditOutcome select_ranges(std::vector<Selection> ranges, std::size_t primary = 0);
     // Places a single caret, or with `extend` moves the active end of the primary selection.
     EditOutcome set_caret(std::size_t offset, bool extend = false);
     // Drops every selection but the primary one, which keeps its extent.
