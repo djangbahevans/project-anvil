@@ -84,6 +84,7 @@ add_executable(anvil_workbench_tests
   workbench/editor_layout_model_test.cpp
   workbench/editor_layout_navigation_test.cpp
   workbench/editor_layout_test.cpp
+  workbench/navigation_history_test.cpp
   workbench/menu_model_test.cpp
 )
 target_link_libraries(anvil_workbench_tests
