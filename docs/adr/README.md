@@ -25,7 +25,7 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0007](0007-extension-registry-open-vsx.md) | Open VSX as the extension registry | Proposed |
 | [0008](0008-cross-platform-from-the-start.md) | Cross-platform from the start, Linux first | Accepted |
 | [0009](0009-scope-and-non-goals.md) | Scope and non-goals | Accepted |
-| [0010](0010-syntax-highlighting.md) | tree-sitter for syntax highlighting | Proposed |
+| [0010](0010-syntax-highlighting.md) | tree-sitter for syntax highlighting | Accepted |
 | [0011](0011-document-model.md) | Document model with edit-based undo history | Accepted |
 | [0012](0012-editing-commands-in-core.md) | Editing commands in the core, painting in the view | Accepted |
 | [0013](0013-pcre2-for-search.md) | PCRE2 for regular expressions and case folding in search | Accepted |
