@@ -263,8 +263,9 @@ private:
     // Shows `items` in the quick pick; `chosen` gets the position of the one the user picks.
     void pick_from(const QString& placeholder, std::vector<QuickPickItem> items,
                    std::function<void(std::size_t)> chosen);
-    // What a pick of a language shows: the registered languages that have a name, sorted by name,
-    // with `current` first and marked, and the id under each name.
+    // What a pick of a language shows, as VS Code's does: the registered languages that have a
+    // name, sorted by name, each with its id in parentheses after the name and `current` marked as
+    // the configured language.
     std::vector<QuickPickItem> language_picks(const std::string& current,
                                               std::vector<std::string>& ids) const;
     DocumentLanguage describe_language(const std::string& id) const;

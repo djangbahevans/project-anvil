@@ -606,18 +606,17 @@ std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current
             languages.push_back({id, QString::fromStdString(*language->name)});
         }
     }
-    std::ranges::stable_sort(languages, [&](const Named& a, const Named& b) {
-        if ((a.id == current) != (b.id == current)) {
-            return a.id == current;
-        }
+    std::ranges::stable_sort(languages, [](const Named& a, const Named& b) {
         return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
     });
     std::vector<QuickPickItem> items;
     ids.clear();
     for (Named& language : languages) {
+        const QString id = QString::fromStdString(language.id);
         items.push_back({language.name,
-                         language.id == current ? tr("Current") : QString(),
-                         QString::fromStdString(language.id),
+                         language.id == current ? tr("(%1) - Configured Language").arg(id)
+                                                : QString("(%1)").arg(id),
+                         {},
                          {},
                          false});
         ids.push_back(std::move(language.id));

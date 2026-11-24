@@ -6362,8 +6362,7 @@ protected:
     }
 };
 
-TEST_F(ChangeLanguageModeTest,
-       ListsTheNamedLanguagesWithTheCurrentOneFirstAndMarkedAndTheAssociationLast) {
+TEST_F(ChangeLanguageModeTest, ListsTheNamedLanguagesByNameWithTheIdAndTheCurrentOneMarked) {
     create_window();
     ASSERT_TRUE(open(write("a.ts", "abc")));
     window_->commands().execute(command);
@@ -6372,34 +6371,41 @@ TEST_F(ChangeLanguageModeTest,
 
     const auto& items = pick->items();
     ASSERT_GT(items.size(), 70U);
-    EXPECT_EQ(items.front().label, "TypeScript");
-    EXPECT_EQ(items.front().description, "Current");
-    EXPECT_EQ(items.front().detail, "typescript");
     EXPECT_EQ(items.back().label, "Configure File Association for '.ts'…");
-    for (std::size_t i = 1; i + 1 < items.size(); ++i) {
-        EXPECT_TRUE(items[i].description.isEmpty()) << items[i].label.toStdString();
-        EXPECT_FALSE(items[i].detail.isEmpty()) << items[i].label.toStdString();
-        if (i > 1) {
-            EXPECT_LE(items[i - 1].label.compare(items[i].label, Qt::CaseInsensitive), 0)
-                << items[i].label.toStdString();
+    for (std::size_t i = 0; i + 1 < items.size(); ++i) {
+        const ui::QuickPickItem& item = items[i];
+        EXPECT_TRUE(item.detail.isEmpty()) << item.label.toStdString();
+        EXPECT_TRUE(item.description.startsWith("(") && item.description.contains(")"))
+            << item.label.toStdString();
+        if (i > 0) {
+            EXPECT_LE(items[i - 1].label.compare(item.label, Qt::CaseInsensitive), 0)
+                << item.label.toStdString();
         }
+        EXPECT_EQ(item.description.endsWith("Configured Language"), item.label == "TypeScript")
+            << item.label.toStdString();
     }
+    const auto typescript =
+        std::ranges::find(items, QString("TypeScript"), &ui::QuickPickItem::label);
+    ASSERT_NE(typescript, items.end());
+    EXPECT_EQ(typescript->description, "(typescript) - Configured Language");
     const auto plain = std::ranges::find(items, QString("Plain Text"), &ui::QuickPickItem::label);
     ASSERT_NE(plain, items.end());
-    EXPECT_EQ(plain->detail, "plaintext");
+    EXPECT_EQ(plain->description, "(plaintext)");
     EXPECT_EQ(pick->filter_field()->text(), "");
 }
 
 TEST_F(ChangeLanguageModeTest, ADocumentWithoutAFileHasNoAssociationEntry) {
     create_window();
     window_->commands().execute(command);
-    EXPECT_EQ(window_->command_palette()->items().front().label, "Plain Text");
-    EXPECT_EQ(window_->command_palette()->items().front().description, "Current");
+    const auto& items = window_->command_palette()->items();
+    const auto plain = std::ranges::find(items, QString("Plain Text"), &ui::QuickPickItem::label);
+    ASSERT_NE(plain, items.end());
+    EXPECT_EQ(plain->description, "(plaintext) - Configured Language");
     EXPECT_FALSE(labels().back().startsWith("Configure"));
     ASSERT_TRUE(open(write("Makefile", "all:")));
     window_->command_palette()->cancel();
     window_->commands().execute(command);
-    EXPECT_TRUE(labels().back().startsWith("Configure") == false);
+    EXPECT_FALSE(labels().back().startsWith("Configure"));
 }
 
 TEST_F(ChangeLanguageModeTest, ChoosingALanguageChangesItForExtensionsAndTheStatusBar) {
@@ -6416,8 +6422,10 @@ TEST_F(ChangeLanguageModeTest, ChoosingALanguageChangesItForExtensionsAndTheStat
     EXPECT_EQ(shown_language(), "Python");
 
     window_->commands().execute(command);
-    EXPECT_EQ(window_->command_palette()->items().front().label, "Python");
-    EXPECT_EQ(window_->command_palette()->items().front().description, "Current");
+    const auto& items = window_->command_palette()->items();
+    const auto python = std::ranges::find(items, QString("Python"), &ui::QuickPickItem::label);
+    ASSERT_NE(python, items.end());
+    EXPECT_EQ(python->description, "(python) - Configured Language");
 }
 
 TEST_F(ChangeLanguageModeTest, CancellingChangesNothing) {
