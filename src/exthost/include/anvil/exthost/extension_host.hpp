@@ -4,6 +4,7 @@
 #include "anvil/core/workspace.hpp"
 #include "anvil/exthost/commands_service.hpp"
 #include "anvil/exthost/documents_service.hpp"
+#include "anvil/exthost/file_event_service.hpp"
 #include "anvil/exthost/file_system_service.hpp"
 #include "anvil/exthost/host_process.hpp"
 #include "anvil/exthost/logging_service.hpp"
@@ -119,6 +120,7 @@ private:
     DocumentsService documents_;
     LoggingService logging_;
     FileSystemService file_system_;
+    FileEventService file_events_;
     std::optional<core::Workspace> workspace_;
     std::vector<Step> startup_steps_;
     HostState state_ = HostState::starting;
