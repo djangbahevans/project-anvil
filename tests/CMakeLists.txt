@@ -53,6 +53,7 @@ endif()
 
 add_executable(anvil_exthost_tests
   exthost/binary_arguments_test.cpp
+  exthost/activation_service_test.cpp
   exthost/commands_service_test.cpp
   exthost/contributions_test.cpp
   exthost/documents_service_test.cpp
@@ -86,6 +87,7 @@ gtest_discover_tests(anvil_workbench_tests)
 find_package(nlohmann_json REQUIRED)
 find_program(ANVIL_NODE node)
 add_executable(anvil_exthost_integration_tests
+  exthost/activation_integration_test.cpp
   exthost/documents_integration_test.cpp
   exthost/extension_host_test.cpp
   exthost/file_event_integration_test.cpp
@@ -106,7 +108,10 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_LOGGING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/logging-extension"
   ANVIL_FAILING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/failing-extension"
   ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension"
-  ANVIL_WATCHER_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/watcher-extension")
+  ANVIL_WATCHER_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/watcher-extension"
+  ANVIL_ACTIVATION_FS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-fs-extension"
+  ANVIL_ACTIVATION_STARTUP_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-startup-extension"
+  ANVIL_ACTIVATION_CONTAINS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-contains-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
 
 if(TARGET anvil_ui)

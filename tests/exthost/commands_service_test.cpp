@@ -12,7 +12,10 @@ namespace {
 // A session in the running state with a commands service attached.
 class CommandsServiceTest : public ::testing::Test {
 protected:
-    CommandsServiceTest() : session_("{}"), host_(session_), commands_(session_, router_) {
+    CommandsServiceTest()
+        : session_("{}"), host_(session_), activation_(session_),
+          commands_(session_, router_, activation_) {
+        activation_.set_ready();
         session_.set_request_handler(
             [this](const Request& request) { return router_.dispatch(request); });
         host_.complete_handshake();
@@ -31,6 +34,7 @@ protected:
     Session session_;
     FakeHost host_;
     RequestRouter router_;
+    ActivationService activation_;
     CommandsService commands_;
 };
 

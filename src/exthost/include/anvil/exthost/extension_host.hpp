@@ -2,6 +2,7 @@
 
 #include "anvil/core/error.hpp"
 #include "anvil/core/workspace.hpp"
+#include "anvil/exthost/activation_service.hpp"
 #include "anvil/exthost/commands_service.hpp"
 #include "anvil/exthost/documents_service.hpp"
 #include "anvil/exthost/file_event_service.hpp"
@@ -95,6 +96,12 @@ public:
     // they get no answer.
     void abandon(const std::string& reason);
 
+    // Fires an activation event, which waits until the extension host has its workspace, and
+    // calls `done` with the reply of the extension host once the extensions have been activated.
+    void fire_activation_event(std::string event, ActivationKind kind, Session::ReplyHandler done) {
+        activation_.fire(std::move(event), kind, std::move(done));
+    }
+
     // Services the connection for up to `timeout`; see HostProcess::pump. Returns false once the
     // connection has closed.
     std::expected<bool, Error> pump(std::chrono::milliseconds timeout);
@@ -116,6 +123,7 @@ private:
     RequestRouter router_;
     std::shared_ptr<core::Logger> logger_;
     std::unique_ptr<HostProcess> host_;
+    ActivationService activation_;
     CommandsService commands_;
     DocumentsService documents_;
     LoggingService logging_;

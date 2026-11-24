@@ -17,7 +17,10 @@ namespace {
 
 class FileSystemServiceTest : public ::testing::Test {
 protected:
-    FileSystemServiceTest() : session_("{}"), host_(session_), service_(router_) {
+    FileSystemServiceTest()
+        : session_("{}"), host_(session_), activation_(session_),
+          service_(session_, router_, activation_, logger_) {
+        activation_.set_ready();
         session_.set_request_handler(
             [this](const Request& request) { return router_.dispatch(request); });
         host_.complete_handshake();
@@ -96,6 +99,8 @@ protected:
     Session session_;
     FakeHost host_;
     RequestRouter router_;
+    ActivationService activation_;
+    std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
     FileSystemService service_;
     fs::path directory_;
     std::uint32_t next_req_ = 1;
@@ -322,23 +327,127 @@ TEST_F(FileSystemServiceTest, RenameAndCopyOfAMissingSourceAreEntryNotFound) {
 
 // --- other schemes and activation ---
 
-TEST_F(FileSystemServiceTest, AResourceOfAnotherSchemeIsUnavailableAsWhenNoProviderIsRegistered) {
+// Sends a request on a resource of another scheme: the service fires the activation events of the
+// schemes and replies when the extension host has answered all of them. Returns the reply and the
+// events that were fired.
+struct Foreign {
+    RpcMessage reply;
+    std::vector<std::string> events;
+};
+
+TEST_F(FileSystemServiceTest, AResourceOfAnotherSchemeIsUnavailableAfterItsEventHasFinished) {
     const json resource = uri_to_json(core::Uri{"memfs", "", "/a.txt", "", ""});
+    const auto foreign = [&](const std::string& method, const json& args) {
+        const std::uint32_t req = next_req_++;
+        EXPECT_TRUE(
+            host_
+                .send_rpc(Request{req, static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                                  method, JsonArgs{args.dump()}})
+                .has_value());
+        auto messages = host_.drain_rpc();
+        Foreign result;
+        std::vector<std::uint32_t> activations;
+        for (const RpcMessage& message : messages) {
+            if (const auto* request = std::get_if<Request>(&message)) {
+                EXPECT_EQ(request->method, "$activateByEvent");
+                result.events.push_back(
+                    json::parse(std::get<JsonArgs>(request->args).json)[0].get<std::string>());
+                activations.push_back(request->req);
+            }
+        }
+        EXPECT_EQ(messages.size(), activations.size() + 1)
+            << method << ": no reply before the events";
+        for (const std::uint32_t activation : activations) {
+            EXPECT_TRUE(host_.send_rpc(EmptyReply{activation}).has_value());
+        }
+        const auto replies = host_.drain_rpc();
+        EXPECT_EQ(replies.size(), 1u) << method;
+        result.reply = replies.empty() ? RpcMessage{EmptyReply{0}} : replies[0];
+        return result;
+    };
+
     for (const std::string method : {"$stat", "$readdir", "$readFile", "$mkdir"}) {
-        const json error = error_of(call(method, json::array({resource})));
+        const Foreign outcome = foreign(method, json::array({resource}));
+        EXPECT_EQ(outcome.events, (std::vector<std::string>{"onFileSystem:memfs"})) << method;
+        const json error = error_of(outcome.reply);
         EXPECT_EQ(error.at("name"), "Unavailable") << method;
         EXPECT_NE(error.at("message").get<std::string>().find("ENOPRO"), std::string::npos)
             << method;
     }
-    EXPECT_EQ(name_of(call("$delete", json::array({resource, {{"recursive", false}}}))),
+    EXPECT_EQ(name_of(foreign("$delete", json::array({resource, {{"recursive", false}}})).reply),
               "Unavailable");
-    EXPECT_EQ(
-        name_of(call("$rename", json::array({uri(write("a")), resource, {{"overwrite", false}}}))),
-        "Unavailable");
+    EXPECT_EQ(name_of(foreign("$writeFile", json::array({resource, nullptr})).reply),
+              "Unavailable");
+
+    const Foreign moved =
+        foreign("$rename", json::array({uri(write("a")), resource, {{"overwrite", false}}}));
+    EXPECT_EQ(name_of(moved.reply), "Unavailable");
+    EXPECT_EQ(moved.events, (std::vector<std::string>{"onFileSystem:memfs"}));
+
+    const json other = uri_to_json(core::Uri{"other", "", "/b.txt", "", ""});
+    const Foreign between =
+        foreign("$copy", json::array({resource, other, {{"overwrite", false}}}));
+    EXPECT_EQ(name_of(between.reply), "Unavailable");
+    EXPECT_EQ(between.events,
+              (std::vector<std::string>{"onFileSystem:memfs", "onFileSystem:other"}));
 }
 
-TEST_F(FileSystemServiceTest, EnsureActivationIsAnsweredEmpty) {
-    EXPECT_TRUE(is_empty_reply(call("$ensureActivation", json::array({"file"}))));
+TEST_F(FileSystemServiceTest, OperationsOnLocalResourcesFireNoEvent) {
+    const fs::path file = write("a.txt");
+    ASSERT_TRUE(
+        host_
+            .send_rpc(Request{next_req_++, static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                              "$stat", JsonArgs{json::array({uri(file)}).dump()}})
+            .has_value());
+    for (const RpcMessage& message : host_.drain_rpc()) {
+        EXPECT_FALSE(std::holds_alternative<Request>(message)) << "no event for `file:`";
+    }
+}
+
+TEST_F(FileSystemServiceTest, EnsureActivationOfTheLocalFileSystemIsAnsweredAtOnce) {
+    const auto reply = call("$ensureActivation", json::array({"file"}));
+    EXPECT_TRUE(is_empty_reply(reply));
+}
+
+TEST_F(FileSystemServiceTest, EnsureActivationFiresTheEventOfTheSchemeAndRepliesWhenItIsDone) {
+    const Request request{next_req_, static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                          "$ensureActivation", JsonArgs{R"(["memfs"])"}};
+    ASSERT_TRUE(host_.send_rpc(request).has_value());
+    auto messages = host_.drain_rpc();
+    ASSERT_EQ(messages.size(), 2u) << "the acknowledgement and the activation, and no reply";
+    EXPECT_EQ(messages[0], RpcMessage{Acknowledged{next_req_}});
+    const auto* activation = std::get_if<Request>(&messages[1]);
+    ASSERT_NE(activation, nullptr);
+    EXPECT_EQ(activation->method, "$activateByEvent");
+    EXPECT_EQ(json::parse(std::get<JsonArgs>(activation->args).json),
+              json::parse(R"(["onFileSystem:memfs",0])"));
+
+    ASSERT_TRUE(host_.send_rpc(EmptyReply{activation->req}).has_value());
+    messages = host_.drain_rpc();
+    ASSERT_EQ(messages.size(), 1u);
+    EXPECT_EQ(messages[0], RpcMessage{EmptyReply{next_req_}});
+    ++next_req_;
+}
+
+TEST_F(FileSystemServiceTest, AFailedActivationIsLoggedAndTheRequestStillGetsItsReply) {
+    const Request request{next_req_, static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                          "$ensureActivation", JsonArgs{R"(["memfs"])"}};
+    ASSERT_TRUE(host_.send_rpc(request).has_value());
+    const auto messages = host_.drain_rpc();
+    ASSERT_EQ(messages.size(), 2u);
+    const auto activation = std::get<Request>(messages[1]);
+
+    ASSERT_TRUE(host_.send_rpc(ErrorReply{activation.req, R"({"message":"no"})"}).has_value());
+    const auto replies = host_.drain_rpc();
+    ASSERT_EQ(replies.size(), 1u);
+    EXPECT_EQ(replies[0], RpcMessage{EmptyReply{next_req_}});
+    bool logged = false;
+    for (const auto& entry : logger_->entries()) {
+        logged = logged || (entry.level == core::LogLevel::warning &&
+                            entry.message.find("memfs") != std::string::npos);
+    }
+    EXPECT_TRUE(logged);
+    ++next_req_;
 }
 
 TEST_F(FileSystemServiceTest, AMalformedResourceFailsTheRequest) {

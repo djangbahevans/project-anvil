@@ -5,6 +5,10 @@
 #include "anvil/platform/file.hpp"
 #include "anvil/platform/file_system.hpp"
 
+#include <algorithm>
+#include <functional>
+#include <memory>
+
 namespace anvil::exthost {
 namespace {
 
@@ -37,6 +41,11 @@ HandlerResult failed(ErrorCode code, const std::string& message) {
     return failed(Error{code, message});
 }
 
+HandlerResult no_provider(const core::Uri& uri) {
+    return Failed{error_json("Unavailable", "ENOPRO: No file system provider found for resource '" +
+                                                uri.to_string() + "'")};
+}
+
 // The path of a `file:` resource; anything else has no provider.
 std::expected<fs::path, HandlerResult> local_path(const json& resource) {
     const auto uri = uri_from_json(resource);
@@ -46,9 +55,7 @@ std::expected<fs::path, HandlerResult> local_path(const json& resource) {
     if (const auto path = uri->file_path()) {
         return *path;
     }
-    return std::unexpected(
-        Failed{error_json("Unavailable", "ENOPRO: No file system provider found for resource '" +
-                                             uri->to_string() + "'")});
+    return std::unexpected(no_provider(*uri));
 }
 
 // The directory a file is to be put in, with its missing parents. A file where a directory has to
@@ -90,11 +97,58 @@ bool overwrites(const json& options) {
 
 } // namespace
 
-FileSystemService::FileSystemService(RequestRouter& router) {
+FileSystemService::FileSystemService(Session& session, RequestRouter& router,
+                                     ActivationService& activation,
+                                     std::shared_ptr<core::Logger> logger) {
     using Result = std::optional<HandlerResult>;
+    using Handler = std::function<Result(const Request&, const json&)>;
     const ProxyId service = ProxyId::MainThreadFileSystem;
 
-    router.on(service, "$stat", [](const Request&, const json& args) -> Result {
+    // VS Code's file service fires `onFileSystem:<scheme>` before every operation on a resource
+    // and waits for the extensions that start (`activateProvider`), so that a provider that an
+    // extension registers for the scheme is there when the operation runs. Nothing registers
+    // providers yet: once the activation has finished the operation fails as for a scheme that has
+    // no provider. `resources` is the number of leading arguments that are resources.
+    const auto serve = [&router, &session, &activation, logger](const char* method, Handler handler,
+                                                                std::size_t resources = 1) {
+        router.on(service, method,
+                  [&session, &activation, logger, handler = std::move(handler),
+                   resources](const Request& request, const json& args) -> Result {
+                      std::vector<core::Uri> foreign;
+                      for (std::size_t i = 0; i < resources && i < args.size(); ++i) {
+                          const auto uri = uri_from_json(args[i]);
+                          if (uri && uri->scheme != "file" &&
+                              std::ranges::none_of(foreign, [&](const core::Uri& other) {
+                                  return other.scheme == uri->scheme;
+                              })) {
+                              foreign.push_back(*uri);
+                          }
+                      }
+                      if (foreign.empty()) {
+                          return handler(request, args);
+                      }
+                      const std::uint32_t req = request.req;
+                      auto waiting = std::make_shared<std::size_t>(foreign.size());
+                      for (const core::Uri& uri : foreign) {
+                          activation.fire("onFileSystem:" + uri.scheme, ActivationKind::normal,
+                                          [&session, logger, req, waiting, first = foreign.front(),
+                                           scheme = uri.scheme](CallResult result) {
+                                              if (!result) {
+                                                  logger->log(
+                                                      core::LogLevel::warning, "extension host",
+                                                      "Activating the file system of '" + scheme +
+                                                          "' failed: " + result.error());
+                                              }
+                                              if (--*waiting == 0) {
+                                                  session.reply(req, no_provider(first));
+                                              }
+                                          });
+                      }
+                      return std::nullopt;
+                  });
+    };
+
+    serve("$stat", [](const Request&, const json& args) -> Result {
         const auto path = local_path(args.at(0));
         if (!path) {
             return path.error();
@@ -106,7 +160,7 @@ FileSystemService::FileSystemService(RequestRouter& router) {
         return OkJson{stat_json(*stat).dump()};
     });
 
-    router.on(service, "$readdir", [](const Request&, const json& args) -> Result {
+    serve("$readdir", [](const Request&, const json& args) -> Result {
         const auto path = local_path(args.at(0));
         if (!path) {
             return path.error();
@@ -126,7 +180,7 @@ FileSystemService::FileSystemService(RequestRouter& router) {
         return OkJson{result.dump()};
     });
 
-    router.on(service, "$readFile", [](const Request&, const json& args) -> Result {
+    serve("$readFile", [](const Request&, const json& args) -> Result {
         const auto path = local_path(args.at(0));
         if (!path) {
             return path.error();
@@ -146,7 +200,7 @@ FileSystemService::FileSystemService(RequestRouter& router) {
         return OkBuffer{to_bytes(*contents)};
     });
 
-    router.on(service, "$writeFile", [](const Request& request, const json& args) -> Result {
+    serve("$writeFile", [](const Request& request, const json& args) -> Result {
         const auto path = local_path(args.at(0));
         if (!path) {
             return path.error();
@@ -192,10 +246,10 @@ FileSystemService::FileSystemService(RequestRouter& router) {
             return Ok{};
         };
     };
-    router.on(service, "$rename", move_or_copy(true));
-    router.on(service, "$copy", move_or_copy(false));
+    serve("$rename", move_or_copy(true), 2);
+    serve("$copy", move_or_copy(false), 2);
 
-    router.on(service, "$mkdir", [](const Request&, const json& args) -> Result {
+    serve("$mkdir", [](const Request&, const json& args) -> Result {
         const auto path = local_path(args.at(0));
         if (!path) {
             return path.error();
@@ -206,7 +260,7 @@ FileSystemService::FileSystemService(RequestRouter& router) {
         return Ok{};
     });
 
-    router.on(service, "$delete", [](const Request&, const json& args) -> Result {
+    serve("$delete", [](const Request&, const json& args) -> Result {
         const auto path = local_path(args.at(0));
         if (!path) {
             return path.error();
@@ -219,10 +273,27 @@ FileSystemService::FileSystemService(RequestRouter& router) {
         return Ok{};
     });
 
-    // Nothing has to be started for the local file system, and other schemes are served by the
-    // providers of extensions, which the extension host activates itself.
     router.on(service, "$ensureActivation",
-              [](const Request&, const json&) -> Result { return Ok{}; });
+              [&session, &activation, logger](const Request& request, const json& args) -> Result {
+                  if (!args.is_array() || args.empty() || !args[0].is_string()) {
+                      return Failed{error_json("$ensureActivation needs a scheme")};
+                  }
+                  const std::string scheme = args[0].get<std::string>();
+                  if (scheme == "file") {
+                      return Ok{};
+                  }
+                  const std::uint32_t req = request.req;
+                  activation.fire("onFileSystem:" + scheme, ActivationKind::normal,
+                                  [&session, logger, req, scheme](CallResult result) {
+                                      if (!result) {
+                                          logger->log(core::LogLevel::warning, "extension host",
+                                                      "Activating the file system of '" + scheme +
+                                                          "' failed: " + result.error());
+                                      }
+                                      session.reply(req, Ok{});
+                                  });
+                  return std::nullopt;
+              });
 }
 
 } // namespace anvil::exthost
