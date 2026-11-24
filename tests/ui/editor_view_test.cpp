@@ -14,6 +14,7 @@
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <gtest/gtest.h>
 
@@ -989,3 +990,168 @@ TEST_F(EditorViewTest, ChangingTheColorsRepaintsAndTakingThemAwayReturnsToThePal
     EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() - 5),
               view_.palette().color(QPalette::Base));
 }
+
+namespace {
+
+class RenderWhitespaceTest : public EditorViewTest {
+protected:
+    static constexpr const char* mark_color = "#00ff00";
+
+    void SetUp() override {
+        colors_.set_colors({{"editor.background", QColor("#000000")},
+                            {"editor.foreground", QColor("#ffffff")},
+                            {"editor.selectionBackground", QColor("#000080")},
+                            {"editor.lineHighlightBackground", QColor("#000000")},
+                            {"editorGutter.background", QColor("#000000")},
+                            {"editorLineNumber.foreground", QColor("#888888")},
+                            {"editorLineNumber.activeForeground", QColor("#888888")},
+                            {"editorCursor.foreground", QColor("#ffffff")},
+                            {"editorWhitespace.foreground", QColor(mark_color)}});
+        view_.set_colors(&colors_);
+        core::EditorSettings settings;
+        settings.font_family = "monospace";
+        settings.font_size = 14;
+        view_.apply_settings(settings);
+    }
+
+    void use(core::RenderWhitespace mode, bool control_characters = true) {
+        core::EditorSettings settings;
+        settings.font_family = "monospace";
+        settings.font_size = 14;
+        settings.render_whitespace = mode;
+        settings.render_control_characters = control_characters;
+        view_.apply_settings(settings);
+        QApplication::processEvents();
+    }
+
+    // The columns of the first line that have a green mark inside their cell.
+    std::vector<std::size_t> marked_columns(std::size_t columns, std::size_t first = 0) {
+        const QImage image = view_.viewport()->grab().toImage();
+        std::vector<std::size_t> marked;
+        for (std::size_t column = first; column < columns; ++column) {
+            const QRect from = view_.cursor_rect(column);
+            const QRect to = view_.cursor_rect(column + 1);
+            if (count_pixels(
+                    image, QRect(from.x(), 0, std::max(to.x() - from.x(), 1), view_.line_height()),
+                    [](const QColor& c) {
+                        return c.green() > 150 && c.red() < 100 && c.blue() < 100;
+                    }) > 0) {
+                marked.push_back(column);
+            }
+        }
+        return marked;
+    }
+
+    template <class Match>
+    static int count_pixels(const QImage& image, const QRect& area, Match match) {
+        int count = 0;
+        for (int y = area.top(); y <= area.bottom() && y < image.height(); ++y) {
+            for (int x = area.left(); x <= area.right() && x < image.width(); ++x) {
+                count += match(image.pixelColor(x, y)) ? 1 : 0;
+            }
+        }
+        return count;
+    }
+
+    WorkbenchColors colors_{QApplication::palette()};
+};
+
+using Columns = std::vector<std::size_t>;
+
+TEST_F(RenderWhitespaceTest, EachModeMarksTheSpacesAndTabsThatVSCodeMarks) {
+    open("a b  c\t");
+    set_selections({core::Selection{0, 5}});
+    use(core::RenderWhitespace::none);
+    EXPECT_EQ(marked_columns(7), Columns{});
+    use(core::RenderWhitespace::all);
+    EXPECT_EQ(marked_columns(7), (Columns{1, 3, 4, 6}));
+    use(core::RenderWhitespace::boundary);
+    EXPECT_EQ(marked_columns(7), (Columns{3, 4, 6}));
+    use(core::RenderWhitespace::trailing);
+    EXPECT_EQ(marked_columns(7), (Columns{6}));
+    use(core::RenderWhitespace::selection);
+    EXPECT_EQ(marked_columns(7), (Columns{1, 3, 4}));
+}
+
+TEST_F(RenderWhitespaceTest, SelectionMarksFollowTheSelection) {
+    open("a b c d");
+    use(core::RenderWhitespace::selection);
+    set_selections({core::Selection{3, 3}});
+    EXPECT_EQ(marked_columns(7), Columns{});
+    set_selections({core::Selection{0, 4}});
+    EXPECT_EQ(marked_columns(7), (Columns{1, 3}));
+    set_selections({core::Selection{0, 2}, core::Selection{4, 7}});
+    EXPECT_EQ(marked_columns(7), (Columns{1, 5}));
+}
+
+TEST_F(RenderWhitespaceTest, TheMarksTakeTheColorOfTheWhitespaceKey) {
+    open("a b");
+    use(core::RenderWhitespace::all);
+    ASSERT_EQ(marked_columns(3), Columns{1});
+    colors_.set_colors({{"editorWhitespace.foreground", QColor("#ff00ff")}});
+    QApplication::processEvents();
+    EXPECT_EQ(marked_columns(3), Columns{});
+}
+
+TEST_F(RenderWhitespaceTest, MarksAreDrawnFarToTheRightOfALongLine) {
+    open(std::string(300, 'x') + "  " + std::string(300, 'y'));
+    use(core::RenderWhitespace::all);
+    const int character = view_.cursor_rect(1).x() - view_.cursor_rect(0).x();
+    view_.horizontalScrollBar()->setValue(character * 300 - 100);
+    QApplication::processEvents();
+    EXPECT_EQ(marked_columns(304, 296), (Columns{300, 301}));
+}
+
+TEST_F(RenderWhitespaceTest, ControlCharactersAreDrawnAsSymbolsOnRed) {
+    open(std::string("a\x01") + "b\x7f" + "\tc");
+    const auto red_cells = [&] {
+        const QImage image = view_.viewport()->grab().toImage();
+        Columns cells;
+        for (std::size_t column = 0; column < 6; ++column) {
+            const QRect from = view_.cursor_rect(column);
+            const QRect to = view_.cursor_rect(column + 1);
+            if (count_pixels(
+                    image,
+                    QRect(from.x() + 2, 0, std::max(to.x() - from.x() - 4, 1), view_.line_height()),
+                    [](const QColor& c) {
+                        return c.red() > 120 && c.red() < 180 && c.green() < 30;
+                    }) > 0) {
+                cells.push_back(column);
+            }
+        }
+        return cells;
+    };
+    use(core::RenderWhitespace::none, true);
+    EXPECT_EQ(red_cells(), (Columns{1, 3}));
+    use(core::RenderWhitespace::none, false);
+    EXPECT_EQ(red_cells(), Columns{});
+}
+
+TEST_F(RenderWhitespaceTest, MarkingEveryCharacterOfLongLinesStaysCheap) {
+    std::string text;
+    for (int line = 0; line < 60; ++line) {
+        text += std::string(4000, ' ') + "x\n";
+    }
+    open(text);
+    view_.resize(1000, 900);
+    const auto paint = [&](core::RenderWhitespace mode) {
+        use(mode);
+        auto best = std::chrono::steady_clock::duration::max();
+        for (int round = 0; round < 5; ++round) {
+            const auto start = std::chrono::steady_clock::now();
+            view_.viewport()->grab();
+            best = std::min(best, std::chrono::steady_clock::now() - start);
+        }
+        return best;
+    };
+    view_.horizontalScrollBar()->setValue(view_.horizontalScrollBar()->maximum());
+    const auto without = paint(core::RenderWhitespace::none);
+    const auto with = paint(core::RenderWhitespace::all);
+    EXPECT_LT(with, without * 5 + std::chrono::milliseconds(20))
+        << "without marks: "
+        << std::chrono::duration_cast<std::chrono::microseconds>(without).count()
+        << " us, with: " << std::chrono::duration_cast<std::chrono::microseconds>(with).count()
+        << " us";
+}
+
+} // namespace

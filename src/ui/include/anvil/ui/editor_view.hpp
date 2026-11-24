@@ -4,6 +4,7 @@
 #include "anvil/core/editing.hpp"
 #include "anvil/core/editor_settings.hpp"
 #include "anvil/core/search.hpp"
+#include "anvil/core/whitespace.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QAbstractScrollArea>
@@ -12,6 +13,7 @@
 #include <QTimer>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -145,6 +147,10 @@ protected:
 
 private:
     struct LineLayout;
+    // Draws the marks for the spaces and tabs of the line that `render_whitespace_` asks for.
+    void draw_whitespace(QPainter& painter, const LineLayout& layout,
+                         std::span<const core::ColumnRange> selected, int origin_x, int y,
+                         const QColor& color) const;
 
     std::unique_ptr<LineLayout> layout_line(std::size_t line) const;
     int gutter_width() const;
@@ -181,6 +187,8 @@ private:
     int char_width_ = 8;
     std::size_t tab_size_ = 4;
     bool insert_spaces_ = true;
+    core::RenderWhitespace render_whitespace_ = core::RenderWhitespace::selection;
+    bool render_control_characters_ = true;
     int max_line_width_ = 0;
     bool caret_visible_ = true;
     bool selecting_with_mouse_ = false;

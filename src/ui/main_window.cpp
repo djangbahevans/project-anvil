@@ -566,6 +566,26 @@ void MainWindow::register_commands() {
         [this] { layout_.focus_previous(); });
     add("workbench.action.closeGroup", tr("Close Editor Group"),
         [this] { close_group(layout_.focused()); });
+    const auto set_render_whitespace = [this](const char* value) {
+        return [this, value] {
+            change_setting("editor.renderWhitespace", value, tr("Render Whitespace"));
+        };
+    };
+    add("editor.action.renderWhitespace.none", tr("Set Render Whitespace to None"),
+        set_render_whitespace("none"));
+    add("editor.action.renderWhitespace.boundary", tr("Set Render Whitespace to Boundary"),
+        set_render_whitespace("boundary"));
+    add("editor.action.renderWhitespace.selection", tr("Set Render Whitespace to Selection"),
+        set_render_whitespace("selection"));
+    add("editor.action.renderWhitespace.trailing", tr("Set Render Whitespace to Trailing"),
+        set_render_whitespace("trailing"));
+    add("editor.action.renderWhitespace.all", tr("Set Render Whitespace to All"),
+        set_render_whitespace("all"));
+    add("editor.action.toggleRenderControlCharacter", tr("Toggle Control Characters"), [this] {
+        change_setting("editor.renderControlCharacters",
+                       !settings_->editor().render_control_characters,
+                       tr("Render Control Characters"));
+    });
     add("workbench.action.toggleAutoSave", tr("Toggle Auto Save"), [this] {
         change_setting("files.autoSave", auto_save_ == core::AutoSave::off ? "afterDelay" : "off",
                        tr("Auto Save"));

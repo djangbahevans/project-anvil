@@ -2365,6 +2365,12 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.saveAs",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
+                                          "editor.action.renderWhitespace.none",
+                                          "editor.action.renderWhitespace.boundary",
+                                          "editor.action.renderWhitespace.selection",
+                                          "editor.action.renderWhitespace.trailing",
+                                          "editor.action.renderWhitespace.all",
+                                          "editor.action.toggleRenderControlCharacter",
                                           "workbench.action.closeActiveEditor",
                                           "actions.find",
                                           "editor.action.nextMatchFindAction",
@@ -2499,6 +2505,12 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.files.save",
         "workbench.action.files.saveAs",
         "workbench.action.toggleAutoSave",
+        "editor.action.renderWhitespace.none",
+        "editor.action.renderWhitespace.boundary",
+        "editor.action.renderWhitespace.selection",
+        "editor.action.renderWhitespace.trailing",
+        "editor.action.renderWhitespace.all",
+        "editor.action.toggleRenderControlCharacter",
         "workbench.action.closeActiveEditor",
         "workbench.action.closeWindow",
         "workbench.action.quit",
@@ -3104,6 +3116,41 @@ TEST_F(MainWindowMenuBarTest, TheAutoSaveItemIsEnabledAndItsCheckMarkFollowsTheC
     EXPECT_FALSE(item->isChecked());
     item->trigger();
     EXPECT_TRUE(opened_action(menu(0), "workbench.action.toggleAutoSave")->isChecked());
+}
+
+TEST_F(MainWindowMenuBarTest, TheRenderWhitespaceCommandsSetTheSettingAndTheMenuChecksTheMode) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    const std::vector<std::pair<std::string, core::RenderWhitespace>> modes = {
+        {"none", core::RenderWhitespace::none},
+        {"boundary", core::RenderWhitespace::boundary},
+        {"selection", core::RenderWhitespace::selection},
+        {"trailing", core::RenderWhitespace::trailing},
+        {"all", core::RenderWhitespace::all}};
+    for (const auto& [name, mode] : modes) {
+        window_->commands().execute("editor.action.renderWhitespace." + name);
+        EXPECT_EQ(window_->settings().editor().render_whitespace, mode) << name;
+        EXPECT_NE(platform::read_file(settings_file_)->find("\"" + name + "\""), std::string::npos)
+            << name;
+        for (const auto& [other, unused] : modes) {
+            QAction* item = opened_action(menu(3), "editor.action.renderWhitespace." + other);
+            ASSERT_NE(item, nullptr) << other;
+            EXPECT_TRUE(item->isEnabled()) << other;
+            EXPECT_EQ(item->isChecked(), other == name) << "after " << name << ", item " << other;
+        }
+    }
+}
+
+TEST_F(MainWindowMenuBarTest, TheControlCharacterCommandFlipsTheSettingAndTheMenuChecksIt) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    EXPECT_TRUE(window_->settings().editor().render_control_characters);
+    EXPECT_TRUE(opened_action(menu(3), "editor.action.toggleRenderControlCharacter")->isChecked());
+    window_->commands().execute("editor.action.toggleRenderControlCharacter");
+    EXPECT_FALSE(window_->settings().editor().render_control_characters);
+    EXPECT_FALSE(opened_action(menu(3), "editor.action.toggleRenderControlCharacter")->isChecked());
+    window_->commands().execute("editor.action.toggleRenderControlCharacter");
+    EXPECT_TRUE(window_->settings().editor().render_control_characters);
 }
 
 TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {
