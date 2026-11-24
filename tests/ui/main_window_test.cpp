@@ -488,7 +488,9 @@ TEST_F(AutoSaveTest, TheToggleCommandTurnsEveryOtherModeOff) {
 class SaveAllTest : public MainWindowTest {
 protected:
     // Answers the next file dialog the window opens: with `chosen` when it is set, and by
-    // cancelling when not, after running `while_open` with the dialog on screen.
+    // cancelling when not, after running `while_open` once with the dialog on screen. `selectFile`
+    // leaves the name field alone while it has the keyboard focus, which depends on timing, so the
+    // name is put in the field itself, and the answer is repeated until the dialog is gone.
     void answer_next_save_dialog(std::optional<std::filesystem::path> chosen,
                                  std::function<void()> while_open = {}) {
         dialog_shown_ = false;
@@ -499,15 +501,23 @@ protected:
             [this, timer, chosen = std::move(chosen), while_open = std::move(while_open)] {
                 auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
                 if (!dialog) {
+                    if (dialog_shown_) {
+                        timer->deleteLater();
+                    }
                     return;
                 }
-                dialog_shown_ = true;
-                timer->deleteLater();
-                if (while_open) {
-                    while_open();
+                if (!dialog_shown_) {
+                    dialog_shown_ = true;
+                    if (while_open) {
+                        while_open();
+                    }
                 }
                 if (chosen) {
-                    dialog->selectFile(QString::fromStdString(chosen->string()));
+                    const QString path = QString::fromStdString(chosen->string());
+                    dialog->selectFile(path);
+                    if (auto* name = dialog->findChild<QLineEdit*>("fileNameEdit")) {
+                        name->setText(path);
+                    }
                     QMetaObject::invokeMethod(dialog, "accept");
                 } else {
                     dialog->reject();
