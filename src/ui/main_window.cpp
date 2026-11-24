@@ -4,6 +4,7 @@
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/default_keybindings.hpp"
+#include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/resources.hpp"
 
 #include <QAbstractButton>
@@ -306,6 +307,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+    // The menus are deleted with the window, after its members, and must not outlive their style.
+    for (QMenu* menu : findChildren<QMenu*>()) {
+        menu->setStyle(nullptr);
+    }
     // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
     disconnect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
     // The area observes the layout, which is destroyed before the child widgets are.
@@ -603,37 +608,12 @@ QString menu_text(const workbench::MenuLabel& label) {
 
 } // namespace
 
-#if !defined(Q_OS_MACOS)
-namespace {
-
-QString menu_style_sheet(const WorkbenchColors& colors) {
-    const auto css = [&](std::string_view key) { return colors.color(key).name(QColor::HexArgb); };
-    QColor disabled = colors.color("menu.foreground");
-    disabled.setAlphaF(0.4F);
-    return QStringLiteral(
-               "QMenu { background: %1; color: %2; border: 1px solid %3; padding: 4px 0; }"
-               "QMenu::item { background: transparent; padding: 4px 24px 4px 26px; }"
-               "QMenu::item:selected { background: %4; color: %5; }"
-               "QMenu::item:disabled { color: %6; }"
-               "QMenu::item:disabled:selected { background: transparent; }"
-               "QMenu::separator { height: 1px; background: %7; margin: 4px 0; }")
-        .arg(css("menu.background"), css("menu.foreground"), css("menu.border"),
-             css("menu.selectionBackground"), css("menu.selectionForeground"),
-             disabled.name(QColor::HexArgb), css("menu.separatorBackground"));
-}
-
-} // namespace
-#endif
-
 // The system draws the global menu bar of macOS, and its menus with it.
-void MainWindow::style_menus() {
+void MainWindow::style_menu(QMenu* menu) {
 #if !defined(Q_OS_MACOS)
-    const QString sheet = menu_style_sheet(colors_);
-    for (const QAction* top : menu_bar_->actions()) {
-        if (top->menu()) {
-            top->menu()->setStyleSheet(sheet);
-        }
-    }
+    menu->setStyle(menu_style_.get());
+#else
+    Q_UNUSED(menu);
 #endif
 }
 
@@ -665,9 +645,12 @@ void MainWindow::populate_menu(QMenu* menu, const std::vector<workbench::MenuIte
         case workbench::MenuEntryKind::separator:
             menu->addSeparator();
             break;
-        case workbench::MenuEntryKind::submenu:
-            populate_menu(menu->addMenu(menu_text(item.label)), item.items);
+        case workbench::MenuEntryKind::submenu: {
+            QMenu* submenu = menu->addMenu(menu_text(item.label));
+            style_menu(submenu);
+            populate_menu(submenu, item.items);
             break;
+        }
         case workbench::MenuEntryKind::item: {
             const QString title = menu_text(item.label);
             const QString label = keys_->shortcut_label(item.id);
@@ -695,6 +678,7 @@ void MainWindow::populate_menu(QMenu* menu, const std::vector<workbench::MenuIte
 }
 
 void MainWindow::build_menus() {
+    menu_style_ = std::make_unique<MenuStyle>(colors_);
     const core::ContextKeys context = menu_context();
     for (workbench::MenuItem top : workbench::top_level_menus(context)) {
         // Alt+C, Alt+W and Alt+R are the find bar's option shortcuts, and a menu that shares one
@@ -704,6 +688,7 @@ void MainWindow::build_menus() {
             top.label.mnemonic = workbench::MenuLabel::npos;
         }
         QMenu* menu = menu_bar_->addMenu(menu_text(top.label));
+        style_menu(menu);
         menu->setToolTipsVisible(true);
         // The entries depend on the context and on the commands that exist, and the key bindings
         // can change while the window runs, so a menu is filled when it opens.
@@ -715,8 +700,6 @@ void MainWindow::build_menus() {
             populate_menu(menu, workbench::menu_items(id, menu_context()));
         });
     }
-    style_menus();
-    connect(&colors_, &WorkbenchColors::changed, this, &MainWindow::style_menus);
 }
 
 void MainWindow::fill_context(core::ContextKeys& keys) const {

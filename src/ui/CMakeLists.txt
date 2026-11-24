@@ -11,6 +11,7 @@ add_library(anvil_ui STATIC
   key_translation.cpp
   keybinding_service.cpp
   keybindings_store.cpp
+  menu_style.cpp
   include/anvil/ui/activity_bar.hpp
   include/anvil/ui/codicons.hpp
   include/anvil/ui/command_registry.hpp
@@ -22,6 +23,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/keybinding_service.hpp
   include/anvil/ui/keybindings_store.hpp
   include/anvil/ui/main_window.hpp
+  include/anvil/ui/menu_style.hpp
   include/anvil/ui/painted_accessibility.hpp
   include/anvil/ui/panel.hpp
   include/anvil/ui/quick_pick.hpp
