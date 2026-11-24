@@ -18,6 +18,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <algorithm>
@@ -308,9 +309,81 @@ MainWindow::~MainWindow() {
     delete area_;
 }
 
+QString MainWindow::workspace_label() const {
+    return options_.workspace ? QString::fromStdString(options_.workspace->name) : tr("Anvil");
+}
+
+bool MainWindow::open_folder(const std::filesystem::path& folder) {
+    auto workspace = core::Workspace::open(folder);
+    if (!workspace) {
+        status_bar_->show_message(QString::fromStdString(workspace.error().message), 8000);
+        return false;
+    }
+    if (options_.workspace == *workspace) {
+        return true;
+    }
+    options_.workspace = std::move(*workspace);
+    workspace_changed();
+    return true;
+}
+
+void MainWindow::close_folder() {
+    if (!options_.workspace) {
+        return;
+    }
+    options_.workspace.reset();
+    workspace_changed();
+}
+
+void MainWindow::open_folder_dialog() {
+    std::optional<std::filesystem::path> chosen;
+    if (options_.choose_folder) {
+        chosen = options_.choose_folder();
+    } else if (const QString folder = QFileDialog::getExistingDirectory(this, tr("Open Folder"));
+               !folder.isEmpty()) {
+        chosen = std::filesystem::path(folder.toStdString());
+    }
+    if (chosen) {
+        open_folder(*chosen);
+    }
+}
+
+void MainWindow::workspace_changed() {
+    if (options_.extension_host) {
+        core::NullLogger discarded;
+        core::Logger& logger = options_.logger ? *options_.logger : discarded;
+        if (auto restarted = bridge_.restart(options_.workspace); !restarted) {
+            status_bar_->show_message(tr("The extension host did not start: %1")
+                                          .arg(QString::fromStdString(restarted.error().message)),
+                                      15000);
+        } else {
+            for (const auto& [uri, document] : documents_) {
+                bridge_.add_document(uri, document);
+            }
+            apply_extension_host_options();
+            if (shown_uri_) {
+                bridge_.show(*shown_uri_);
+            }
+            share_commands_with_extensions();
+            read_extension_keybindings(logger);
+            add_extension_themes();
+        }
+    }
+    if (title_bar_) {
+        title_bar_->set_command_center_text(workspace_label());
+    }
+    update_title();
+    update_status();
+}
+
 void MainWindow::add_extension_themes() {
     std::vector<ThemeStore::Entry> entries;
     for (const exthost::ContributedTheme& theme : bridge_.contributions().themes) {
+        // A restart reads the same manifests again, and a theme that was left out the first time
+        // is not reported again.
+        if (!offered_themes_.insert(theme.id + '\n' + theme.path.string()).second) {
+            continue;
+        }
         entries.push_back({.id = theme.id,
                            .label = theme.label,
                            .kind = core::theme_kind_from_ui_theme(theme.ui_theme),
@@ -381,6 +454,11 @@ void MainWindow::apply_settings() {
     }
     layout_.set_focus_recent_after_close(editor.focus_recent_editor_after_close);
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
+    apply_extension_host_options();
+}
+
+void MainWindow::apply_extension_host_options() {
+    const core::EditorSettings& editor = settings_->editor();
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
                                 .insert_spaces = editor.insert_spaces});
 }
@@ -427,6 +505,12 @@ void MainWindow::register_commands() {
     add("editor.action.previousMatchFindAction", tr("Find Previous"),
         [this] { find_bar()->find_previous(); });
     add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
+    // The host that runs these commands is destroyed by the restart they cause, so the restart
+    // waits until the command has returned.
+    add("workbench.action.files.openFolder", tr("Open Folder…"),
+        [this] { QTimer::singleShot(0, this, [this] { open_folder_dialog(); }); });
+    add("workbench.action.closeFolder", tr("Close Folder"),
+        [this] { QTimer::singleShot(0, this, [this] { close_folder(); }); });
     add("workbench.action.files.save", tr("Save"), [this] { save(); });
     add("workbench.action.files.saveAs", tr("Save As…"), [this] { save_as_dialog(); });
     add("workbench.action.closeActiveEditor", tr("Close Editor"), [this] {
@@ -635,6 +719,7 @@ void MainWindow::fill_context(core::ContextKeys& keys) const {
         editor_focus = editor_focus || (focus && group->find_bar()->isAncestorOf(focus));
     }
     const bool find_bar_visible = area_->focused_group()->find_bar()->isVisible();
+    keys.set("workbenchState", std::string(options_.workspace ? "folder" : "empty"));
     keys.set("editorFocus", editor_focus);
     keys.set("editorTextFocus", view != nullptr);
     keys.set("inputFocus", input);
@@ -1224,8 +1309,7 @@ void MainWindow::set_up_title_bar() {
     });
     title_bar_->set_sidebar_shown(workbench_->is_visible(Part::sidebar));
     title_bar_->set_panel_shown(workbench_->is_visible(Part::panel));
-    title_bar_->set_command_center_text(
-        options_.workspace ? QString::fromStdString(options_.workspace->name) : tr("Anvil"));
+    title_bar_->set_command_center_text(workspace_label());
     title_bar_->set_title(title_text());
     update_chrome();
 }

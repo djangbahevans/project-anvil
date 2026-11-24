@@ -188,6 +188,14 @@ void Session::call(ProxyId target, std::string method, std::string args_json,
     send_regular(std::move(*encoded));
 }
 
+void Session::fail_pending_calls(const std::string& reason) {
+    std::unordered_map<std::uint32_t, ReplyHandler> pending = std::move(pending_calls_);
+    pending_calls_.clear();
+    for (auto& [req, on_reply] : pending) {
+        on_reply(std::unexpected(reason));
+    }
+}
+
 void Session::reply(std::uint32_t req, HandlerResult result) {
     if (state_ == SessionState::running) {
         send_rpc(to_reply_message(req, std::move(result)));

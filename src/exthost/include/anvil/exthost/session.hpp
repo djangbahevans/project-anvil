@@ -74,6 +74,10 @@ public:
     // is not running.
     void call(ProxyId target, std::string method, std::string args_json, ReplyHandler on_reply);
 
+    // Completes every call that has no reply yet with `reason` as its error; replies that arrive
+    // later are dropped.
+    void fail_pending_calls(const std::string& reason);
+
     // Sends the reply to a request whose handler returned std::nullopt.
     void reply(std::uint32_t req, HandlerResult result);
 

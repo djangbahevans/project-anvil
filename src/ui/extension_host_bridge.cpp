@@ -13,16 +13,33 @@ std::expected<void, Error> ExtensionHostBridge::start(const Config& config,
                                                       std::shared_ptr<core::Logger> logger,
                                                       Callbacks callbacks) {
     callbacks_ = std::move(callbacks);
+    config_ = config;
+    logger_ = std::move(logger);
+    return launch();
+}
+
+std::expected<void, Error> ExtensionHostBridge::restart(std::optional<core::Workspace> workspace) {
+    timer_.stop();
+    if (host_) {
+        host_->abandon("the extension host restarted");
+        host_.reset();
+    }
+    contributions_ = {};
+    config_.workspace = std::move(workspace);
+    return launch();
+}
+
+std::expected<void, Error> ExtensionHostBridge::launch() {
     core::NullLogger discarded;
     exthost::Contributions contributions =
-        exthost::read_contributions(config.extension_dirs, logger ? *logger : discarded);
+        exthost::read_contributions(config_.extension_dirs, logger_ ? *logger_ : discarded);
     auto started = exthost::ExtensionHost::start(exthost::ExtensionHostOptions{
-        .node_executable = config.node_executable,
-        .vscode_dir = config.vscode_dir,
-        .extension_dirs = config.extension_dirs,
-        .storage_dir = config.storage_dir,
-        .logger = std::move(logger),
-        .workspace = config.workspace,
+        .node_executable = config_.node_executable,
+        .vscode_dir = config_.vscode_dir,
+        .extension_dirs = config_.extension_dirs,
+        .storage_dir = config_.storage_dir,
+        .logger = logger_,
+        .workspace = config_.workspace,
     });
     if (!started) {
         return std::unexpected(std::move(started.error()));

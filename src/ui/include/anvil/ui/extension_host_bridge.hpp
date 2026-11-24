@@ -47,9 +47,20 @@ public:
     explicit ExtensionHostBridge(QObject* parent = nullptr);
     ~ExtensionHostBridge() override;
 
-    // Starts the extension host and waits for it to connect. Messages go to `logger`.
+    // Starts the extension host and waits for it to connect. Messages go to `logger`. The
+    // configuration is kept, so that restart() can start another host with it.
     std::expected<void, Error> start(const Config& config, std::shared_ptr<core::Logger> logger,
                                      Callbacks callbacks);
+
+    // Stops the running host, if there is one, and starts another with the configuration of
+    // start() and `workspace` as the workspace (none for no folder). Requests that the old host
+    // has not answered fail with an error that says it restarted, and the contributions of the
+    // extensions are read again. The new host knows no documents until the caller adds them; it
+    // learns them in its first delta, which it sends once it has connected, so documents must be
+    // added before the event loop runs. Also starts a host that stopped for another reason.
+    // Fails when start() has not been called or the new host does not start; the bridge is then
+    // not running.
+    std::expected<void, Error> restart(std::optional<core::Workspace> workspace);
 
     bool running() const {
         return host_ != nullptr;
@@ -80,8 +91,11 @@ public:
     void saved(const core::Uri& uri);
 
 private:
+    std::expected<void, Error> launch();
     void tick();
 
+    Config config_;
+    std::shared_ptr<core::Logger> logger_;
     std::unique_ptr<exthost::ExtensionHost> host_;
     exthost::Contributions contributions_;
     QTimer timer_;
