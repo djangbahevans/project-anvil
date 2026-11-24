@@ -88,6 +88,11 @@ jobs:
           node scripts/generate-key-chord-cases.mjs --check
           node scripts/generate-keybinding-cases.mjs --check
 
+      - name: Check the language table and the recorded language cases
+        run: |
+          node scripts/generate-languages.mjs --check
+          node scripts/generate-language-cases.mjs --check
+
       - name: Check the menu table
         run: node scripts/generate-menus.mjs --check
 
