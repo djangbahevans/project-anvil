@@ -166,3 +166,8 @@ if(TARGET anvil_ui)
     ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()
+
+find_program(ANVIL_JQ jq)
+if(UNIX AND ANVIL_JQ)
+  add_test(NAME IssueLinksScript COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/issue_links_test.sh)
+endif()
