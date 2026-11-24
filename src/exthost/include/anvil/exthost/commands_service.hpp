@@ -1,5 +1,6 @@
 #pragma once
 
+#include "anvil/exthost/activation_service.hpp"
 #include "anvil/exthost/request_router.hpp"
 #include "anvil/exthost/session.hpp"
 
@@ -20,14 +21,14 @@ namespace anvil::exthost {
 // register run in the extension host. Extensions invoke either kind through $executeCommand, and
 // the editor invokes either kind through execute().
 //
-// The session and router must outlive the service.
+// The session, router and activation service must outlive the service.
 class CommandsService {
 public:
     // Runs a built-in command with the JSON array of arguments. The result is the JSON text of
     // the return value (std::nullopt for undefined) or the serialized error.
     using BuiltinHandler = std::function<CallResult(const nlohmann::json& args)>;
 
-    CommandsService(Session& session, RequestRouter& router);
+    CommandsService(Session& session, RequestRouter& router, ActivationService& activation);
 
     void add_builtin(std::string id, BuiltinHandler handler);
 
@@ -52,6 +53,7 @@ private:
                                Session::ReplyHandler on_result);
 
     Session& session_;
+    ActivationService& activation_;
     std::unordered_map<std::string, BuiltinHandler> builtins_;
     std::set<std::string> extension_commands_;
 };

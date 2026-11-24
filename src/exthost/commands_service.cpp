@@ -19,7 +19,9 @@ HandlerResult to_handler_result(CallResult result) {
 
 } // namespace
 
-CommandsService::CommandsService(Session& session, RequestRouter& router) : session_(session) {
+CommandsService::CommandsService(Session& session, RequestRouter& router,
+                                 ActivationService& activation)
+    : session_(session), activation_(activation) {
     router.on(ProxyId::MainThreadCommands, "$registerCommand",
               [this](const Request&, const json& args) -> std::optional<HandlerResult> {
                   extension_commands_.insert(args.at(0).get<std::string>());
@@ -32,10 +34,8 @@ CommandsService::CommandsService(Session& session, RequestRouter& router) : sess
               });
     router.on(ProxyId::MainThreadCommands, "$fireCommandActivationEvent",
               [this](const Request&, const json& args) -> std::optional<HandlerResult> {
-                  const json activation_args =
-                      json::array({"onCommand:" + args.at(0).get<std::string>(), 0});
-                  session_.call(ProxyId::ExtHostExtensionService, "$activateByEvent",
-                                activation_args.dump(), [](CallResult) {});
+                  activation_.fire("onCommand:" + args.at(0).get<std::string>(),
+                                   ActivationKind::normal, [](CallResult) {});
                   return Ok{};
               });
     router.on(ProxyId::MainThreadCommands, "$getCommands",
@@ -90,15 +90,15 @@ void CommandsService::execute(const std::string& id, const std::string& args_jso
     }
     // The command may belong to an extension that has not been activated yet, which registers it
     // when the event that VS Code derives from its manifest, `onCommand:<id>`, activates it.
-    const json activation_args = json::array({"onCommand:" + id, 0});
-    session_.call(ProxyId::ExtHostExtensionService, "$activateByEvent", activation_args.dump(),
-                  [this, id, args, on_result = std::move(on_result)](CallResult) mutable {
-                      if (extension_commands_.contains(id)) {
-                          run_extension_command(id, args, std::move(on_result));
-                      } else {
-                          on_result(std::unexpected(error_json("command '" + id + "' not found")));
-                      }
-                  });
+    activation_.fire("onCommand:" + id, ActivationKind::normal,
+                     [this, id, args, on_result = std::move(on_result)](CallResult) mutable {
+                         if (extension_commands_.contains(id)) {
+                             run_extension_command(id, args, std::move(on_result));
+                         } else {
+                             on_result(
+                                 std::unexpected(error_json("command '" + id + "' not found")));
+                         }
+                     });
 }
 
 std::optional<HandlerResult> CommandsService::execute_for_extension_host(const Request& request,
@@ -124,11 +124,9 @@ std::optional<HandlerResult> CommandsService::execute_for_extension_host(const R
         // The command may belong to an extension that is not active yet. Activating it and
         // asking the extension host to run the command again lets it execute locally, with
         // arguments that are not limited to JSON.
-        const json activation_args = json::array({"onCommand:" + id, 0});
-        session_.call(ProxyId::ExtHostExtensionService, "$activateByEvent", activation_args.dump(),
-                      [this, req](CallResult) {
-                          session_.reply(req, Failed{error_json("$executeCommand:retry")});
-                      });
+        activation_.fire("onCommand:" + id, ActivationKind::normal, [this, req](CallResult) {
+            session_.reply(req, Failed{error_json("$executeCommand:retry")});
+        });
         return std::nullopt;
     }
     return Failed{error_json("command '" + id + "' not found")};

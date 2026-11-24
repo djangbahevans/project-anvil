@@ -41,8 +41,9 @@ ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
                              std::shared_ptr<core::Logger> logger,
                              std::optional<core::Workspace> workspace)
     : logger_(logger ? std::move(logger) : std::make_shared<core::NullLogger>()),
-      host_(std::move(host)), commands_(host_->session(), router_),
-      documents_(host_->session(), router_), logging_(logger_, router_), file_system_(router_),
+      host_(std::move(host)), activation_(host_->session()),
+      commands_(host_->session(), router_, activation_), documents_(host_->session(), router_),
+      logging_(logger_, router_), file_system_(host_->session(), router_, activation_, logger_),
       file_events_(host_->session(), router_, logger_, workspace),
       workspace_(std::move(workspace)) {
     register_startup_services(router_);
@@ -107,6 +108,10 @@ void ExtensionHost::run_step(std::size_t index) {
             }
             if (index + 1 < startup_steps_.size()) {
                 run_step(index + 1);
+                // Events that wait follow the first documents delta.
+                if (startup_steps_[index].method == "$initializeWorkspace") {
+                    activation_.set_ready();
+                }
                 return;
             }
             state_ = HostState::ready;
@@ -124,6 +129,7 @@ void ExtensionHost::fail(std::string message) {
 
 void ExtensionHost::abandon(const std::string& reason) {
     state_ = HostState::closed;
+    activation_.fail_queued(reason);
     host_->session().fail_pending_calls(reason);
 }
 

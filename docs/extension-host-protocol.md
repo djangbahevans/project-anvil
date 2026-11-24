@@ -16,6 +16,7 @@ Reference for the wire protocol between the editor and the upstream VS Code exte
 | `MainThreadCommands` | `src/exthost/commands_service.cpp` |
 | Console output, errors, output channels | `src/exthost/logging_service.cpp` |
 | Documents, text editors, workspace edits | `src/exthost/documents_service.cpp`, with the JSON conversions in `vscode_types.cpp` |
+| `ExtHostExtensionService.$activateByEvent` (activation events the editor fires) | `src/exthost/activation_service.cpp` |
 | `MainThreadFileSystem` (`vscode.workspace.fs`) | `src/exthost/file_system_service.cpp`, on the operations of `src/platform/file_system.cpp` |
 | `MainThreadFileSystemEventService` (`workspace.createFileSystemWatcher`) | `src/exthost/file_event_service.cpp`, on `src/platform/file_watcher.hpp` |
 | Startup sequence, startup replies, ownership of the above | `src/exthost/extension_host.cpp` |
@@ -153,6 +154,25 @@ With a folder the editor sends `$initializeWorkspace(data, true)`, so the worksp
 The init data's `workspace` is the same object without `folders` (`IStaticWorkspaceData`). `ExtHostStoragePaths` reads only the init data: it keeps the workspace storage of an extension in `workspaceStorageHome/<id>`, and `storageUri` is `undefined` while the init data has no workspace, so both must carry the same `id`.
 
 The editor derives the data from a path with `core::Workspace::open`. The path is made absolute and passed through `std::filesystem::weakly_canonical`, so a relative path, a trailing separator and a symbolic link to the folder all name the same workspace. `name` is the last component of the canonical path (the whole path for a root). `id` is the 64-bit FNV-1a hash (offset basis 14695981039346656037, prime 1099511628211) of the UTF-8 bytes of the canonical path with forward slashes, written as 16 lowercase hexadecimal digits; for `/` it is `af63a24c860189fe`. The hash is fixed by this document and not `std::hash`, which differs between runs and platforms, so the same folder has the same storage in every run.
+
+## Activation events
+
+`ExtHostExtensionService.$activateByEvent(event, activationKind)` activates the extensions that list the event in `activationEvents` (or that the editor derives it for, see "Init data details") and replies when they have finished activating; `activationKind` is `Normal = 0` or `Immediate = 1`. The extension host answers it only once it has the workspace (`$initializeWorkspace`), and an extension that is activated at startup can wait for an event that the editor fires, as when it runs a command of another extension. `ActivationService` therefore sends an event that is fired earlier as soon as `$initializeWorkspace` has been sent, after the first documents delta, and the events that wait go out in the order they were fired.
+
+Who fires each event:
+
+| Event | Fired by | State |
+| --- | --- | --- |
+| `*` | the editor, once, in the startup sequence | works |
+| `onStartupFinished` | the extension host, after the `*` extensions have finished or 10 s have passed | works |
+| `workspaceContains:<file name>` | the extension host, which checks the workspace folders with its own file system | works with a workspace |
+| `workspaceContains:<glob>` | the extension host asks `MainThreadWorkspace.$checkExists` | not answered ([#209](https://github.com/djangbahevans/project-anvil/issues/209)) |
+| `onCommand:<id>` | the editor, for a command that nothing has registered yet, and on `$fireCommandActivationEvent` | works |
+| `onFileSystem:<scheme>` | the editor, before an operation on a resource of that scheme and on `$ensureActivation` | works; no provider can register yet ([#158](https://github.com/djangbahevans/project-anvil/issues/158)) |
+| `onLanguage:<id>` | the editor, when a document with that language is opened | not fired ([#210](https://github.com/djangbahevans/project-anvil/issues/210)) |
+| `onUri`, `onView`, `onCustomEditor`, `onWebviewPanel`, `onTerminal*`, `onDebug*`, `onNotebook*`, `onAuthenticationRequest`, `onChatParticipant` and the others that VS Code's own interface fires | | not fired: the editor has no such parts |
+
+VS Code's file service (`FileService.activateProvider`) fires `onFileSystem:<scheme>` before every operation on a resource and waits for the extensions that start, so that a provider they register is there when the operation runs. `MainThreadFileSystem` does that for `$stat`, `$readdir`, `$readFile`, `$writeFile`, `$rename`, `$copy`, `$mkdir` and `$delete` on any resource whose scheme is not `file`. The extension host calls `$ensureActivation(scheme)` only for a scheme that has a provider in the extension host itself (a shortcut that skips the editor for providers of the same host), and `FileService.activateProvider` fires the event for it too; the reply comes when the activation has finished, also when it failed.
 
 ## Command execution
 
