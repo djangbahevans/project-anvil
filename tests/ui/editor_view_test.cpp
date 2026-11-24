@@ -16,7 +16,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace anvil;
 using anvil::ui::EditorView;
@@ -1130,6 +1132,10 @@ TEST_F(RenderWhitespaceTest, ControlCharactersAreDrawnAsSymbolsOnRed) {
     EXPECT_EQ(red_cells(), Columns{});
 }
 
+// Marking only the columns in view costs a few times what painting the text does. Marking every
+// column of the line, in view or not, costs tens of times as much, so the limit sits between the
+// two with room for the speed of the machine. The time is the CPU time of the process, which a
+// busy machine does not stretch the way it stretches the time of a clock.
 TEST_F(RenderWhitespaceTest, MarkingEveryCharacterOfLongLinesStaysCheap) {
     std::string text;
     for (int line = 0; line < 60; ++line) {
@@ -1139,22 +1145,19 @@ TEST_F(RenderWhitespaceTest, MarkingEveryCharacterOfLongLinesStaysCheap) {
     view_.resize(1000, 900);
     const auto paint = [&](core::RenderWhitespace mode) {
         use(mode);
-        auto best = std::chrono::steady_clock::duration::max();
-        for (int round = 0; round < 5; ++round) {
-            const auto start = std::chrono::steady_clock::now();
+        auto best = std::numeric_limits<std::clock_t>::max();
+        for (int round = 0; round < 7; ++round) {
+            const std::clock_t start = std::clock();
             view_.viewport()->grab();
-            best = std::min(best, std::chrono::steady_clock::now() - start);
+            best = std::min(best, std::clock() - start);
         }
-        return best;
+        return static_cast<double>(best) / CLOCKS_PER_SEC;
     };
     view_.horizontalScrollBar()->setValue(view_.horizontalScrollBar()->maximum());
-    const auto without = paint(core::RenderWhitespace::none);
-    const auto with = paint(core::RenderWhitespace::all);
-    EXPECT_LT(with, without * 5 + std::chrono::milliseconds(20))
-        << "without marks: "
-        << std::chrono::duration_cast<std::chrono::microseconds>(without).count()
-        << " us, with: " << std::chrono::duration_cast<std::chrono::microseconds>(with).count()
-        << " us";
+    const double without = paint(core::RenderWhitespace::none);
+    const double with = paint(core::RenderWhitespace::all);
+    EXPECT_LT(with, without * 12 + 0.02)
+        << "CPU time without marks: " << without * 1e6 << " us, with: " << with * 1e6 << " us";
 }
 
 } // namespace
