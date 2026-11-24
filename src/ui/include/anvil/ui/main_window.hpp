@@ -41,6 +41,8 @@ class QMenuBar;
 
 namespace anvil::ui {
 
+class MenuStyle;
+
 struct MainWindowOptions {
     // The extension host to run; none runs the editor without extension support.
     std::optional<ExtensionHostBridge::Config> extension_host;
@@ -211,8 +213,8 @@ private:
     // Fills `menu` with `items`. An item runs its command and shows its key binding, and is
     // disabled while no command has its id.
     void populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items);
-    // Colors the menus from the theme; a menu's submenus follow it.
-    void style_menus();
+    // Gives a menu, or a submenu, the style that draws the menus of VS Code.
+    void style_menu(QMenu* menu);
     // Lets extensions execute the registered commands, once the extension host is running.
     void share_commands_with_extensions();
     // Applies `options_.workspace`: restarts the extension host with it and gives it what the
@@ -310,6 +312,7 @@ private:
 
     Options options_;
     WorkbenchColors colors_;
+    std::unique_ptr<MenuStyle> menu_style_;
     Workbench* workbench_ = nullptr;
     TitleBar* title_bar_ = nullptr;
     WindowFrame* window_frame_ = nullptr;

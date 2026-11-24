@@ -1,6 +1,7 @@
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/main_window.hpp"
+#include "anvil/ui/menu_style.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -3138,6 +3139,130 @@ TEST_F(MainWindowMenuBarTest,
 
     window_->commands().execute("workbench.action.files.newUntitledFile");
     EXPECT_TRUE(opened_action(menu(0), "workbench.action.files.save")->isEnabled());
+}
+
+class MenuStyleTest : public MainWindowMenuBarTest {
+protected:
+    static constexpr const char* background = "#202020";
+
+    // Opens the File menu with known colors; the first item is not the one that is chosen.
+    void open_file_menu(const char* settings = "{}") {
+        settings_file_ = write("settings.json", settings);
+        create_active_window();
+        window_->colors().set_colors(
+            {{"menu.background", QColor(background)}, {"menu.foreground", QColor("#dddddd")}});
+        open_with_mnemonic(Qt::Key_F);
+        ASSERT_EQ(popup(), menu(0));
+        menu(0)->setActiveAction(nullptr);
+        image_ = menu(0)->grab().toImage();
+    }
+    QAction* action(const std::string& command) const {
+        for (QAction* candidate : menu(0)->actions()) {
+            if (candidate->data().toString().toStdString() == command) {
+                return candidate;
+            }
+        }
+        for (QAction* candidate : menu(0)->actions()) {
+            if (candidate->menu() && candidate->text().contains(QString::fromStdString(command))) {
+                return candidate;
+            }
+        }
+        ADD_FAILURE() << "no item " << command;
+        return nullptr;
+    }
+    // The columns in [from, to) of the item's row that differ from the background.
+    std::vector<int> ink(QAction* item, int from, int to) const {
+        const QRect row = menu(0)->actionGeometry(item);
+        std::vector<int> columns;
+        for (int x = from; x < to; ++x) {
+            for (int y = row.top(); y <= row.bottom(); ++y) {
+                if (image_.pixelColor(x, y) != QColor(background)) {
+                    columns.push_back(x);
+                    break;
+                }
+            }
+        }
+        return columns;
+    }
+    int rightmost_ink(QAction* item) const {
+        const auto columns = ink(item, 1, image_.width() - 1);
+        return columns.empty() ? -1 : columns.back();
+    }
+
+    QImage image_;
+};
+
+TEST_F(MenuStyleTest, ACheckedItemDrawsTheCheckInTheColumnAtTheLeft) {
+    open_file_menu(R"j({"files.autoSave": "afterDelay"})j");
+    QAction* checked = action("workbench.action.toggleAutoSave");
+    QAction* unchecked = action("workbench.action.files.save");
+    ASSERT_TRUE(checked->isChecked());
+    const auto marks = ink(checked, 1, ui::MenuStyle::label_left - 4);
+    EXPECT_GE(marks.size(), 6u) << "the check";
+    EXPECT_TRUE(ink(unchecked, 1, ui::MenuStyle::label_left - 4).empty());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image_.save(QString::fromUtf8(directory) + "/file_menu.png");
+    }
+}
+
+TEST_F(MenuStyleTest, ASubmenuItemDrawsTheChevronAtTheRightEdge) {
+    open_file_menu();
+    QAction* submenu = action("Recent");
+    QAction* plain = action("workbench.action.files.openFolder");
+    const int from = image_.width() - ui::MenuStyle::chevron_center_from_right - 8;
+    const auto chevron = ink(submenu, from, from + 16);
+    EXPECT_GE(chevron.size(), 3u);
+    EXPECT_TRUE(ink(plain, from, from + 16).empty());
+}
+
+TEST_F(MenuStyleTest, ShortcutsEndAtTheSameDistanceFromTheRightEdgeWhateverTheirWidth) {
+    open_file_menu();
+    const int expected = image_.width() - 1 - ui::MenuStyle::shortcut_right;
+    QAction* short_one = action("workbench.action.files.openFile");
+    QAction* long_one = action("workbench.action.files.saveAs");
+    ASSERT_FALSE(menu(0)->actionGeometry(short_one).isEmpty());
+    for (QAction* item : {short_one, long_one}) {
+        EXPECT_NEAR(rightmost_ink(item), expected, 3) << item->text().toStdString();
+    }
+    EXPECT_NEAR(rightmost_ink(short_one), rightmost_ink(long_one), 2);
+}
+
+TEST_F(MenuStyleTest, TheItemsAndSeparatorsHaveVSCodesHeights) {
+    open_file_menu();
+    EXPECT_EQ(menu(0)->actionGeometry(action("workbench.action.files.openFile")).height(),
+              ui::MenuStyle::item_height);
+    for (QAction* item : menu(0)->actions()) {
+        if (item->isSeparator()) {
+            EXPECT_EQ(menu(0)->actionGeometry(item).height(), ui::MenuStyle::separator_height);
+        }
+    }
+    const QRect open = menu(0)->actionGeometry(action("workbench.action.files.openFile"));
+    const auto text = ink(action("workbench.action.files.openFile"), 1, 60);
+    ASSERT_FALSE(text.empty());
+    EXPECT_NEAR(text.front(), ui::MenuStyle::label_left, 3);
+    EXPECT_GE(open.width(), 200);
+}
+
+TEST_F(MenuStyleTest, ASubmenuIsDrawnByTheStyleOfItsMenu) {
+    open_file_menu();
+    QMenu* recent = action("Recent")->menu();
+    ASSERT_FALSE(recent->actions().isEmpty());
+    recent->popup(menu(0)->mapToGlobal(menu(0)->actionGeometry(action("Recent")).topRight()));
+    QApplication::processEvents();
+    const QAction* first = recent->actions().first();
+    EXPECT_EQ(recent->actionGeometry(const_cast<QAction*>(first)).height(),
+              ui::MenuStyle::item_height);
+    recent->close();
+    QTest::keyClick(popup(), Qt::Key_Escape);
+}
+
+TEST_F(MenuStyleTest, AMenuTakesItsColorsFromTheThemeWhenItIsDrawn) {
+    open_file_menu();
+    EXPECT_EQ(image_.pixelColor(image_.width() / 2, 3), QColor(background));
+    window_->colors().set_colors({{"menu.background", QColor("#ff0000")}});
+    QApplication::processEvents();
+    EXPECT_EQ(menu(0)->grab().toImage().pixelColor(image_.width() / 2, 3), QColor("#ff0000"));
+    QTest::keyClick(popup(), Qt::Key_Escape);
 }
 
 TEST_F(MainWindowMenuBarTest, TheSubmenusFollowTheirMenu) {
