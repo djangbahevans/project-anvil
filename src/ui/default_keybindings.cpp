@@ -167,6 +167,22 @@ const Row rows[] = {
      {"shift+f3"},
      {"cmd+shift+g", "shift+f3"}},
 
+    // Navigation history.
+    {"workbench.action.navigateBack",
+     "",
+     {"ctrl+alt+-", "browserback"},
+     {"alt+left", "browserback"},
+     {"ctrl+-", "browserback"}},
+    {"workbench.action.navigateForward",
+     "",
+     {"ctrl+shift+-", "browserforward"},
+     {"alt+right", "browserforward"},
+     {"ctrl+shift+-", "browserforward"}},
+    {"workbench.action.navigateToLastEditLocation",
+     "",
+     {"ctrl+k ctrl+q"},
+     {"ctrl+k ctrl+q"},
+     {"cmd+k cmd+q"}},
     // Files and editors.
     {"workbench.action.files.openFile", "", {"ctrl+o"}, {"ctrl+o"}, {"cmd+o"}},
     {"workbench.action.files.save", "", {"ctrl+s"}, {"ctrl+s"}, {"cmd+s"}},

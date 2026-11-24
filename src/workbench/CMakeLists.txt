@@ -5,7 +5,9 @@ add_library(anvil_workbench STATIC
   include/anvil/workbench/editor_layout.hpp
   include/anvil/workbench/menu_model.hpp
   include/anvil/workbench/menu_table.hpp
+  include/anvil/workbench/navigation_history.hpp
   menu_model.cpp
+  navigation_history.cpp
 )
 add_library(anvil::workbench ALIAS anvil_workbench)
 

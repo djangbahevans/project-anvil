@@ -122,6 +122,29 @@ TEST(DefaultKeybindingsTest, SaveAllHasAChordOnWindowsAndAShortcutOnMacOSAndNoth
     EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), "saveAll"), chords({"cmd+alt+s"}));
 }
 
+TEST(DefaultKeybindingsTest, TheNavigationHistoryKeysAreVSCodesOnEveryPlatform) {
+    const auto linux = default_keybindings(KeyPlatform::linux);
+    const auto windows = default_keybindings(KeyPlatform::windows);
+    const auto macos = default_keybindings(KeyPlatform::macos);
+    EXPECT_EQ(keys_of(linux, "workbench.action.navigateBack"),
+              chords({"ctrl+alt+-", "browserback"}));
+    EXPECT_EQ(keys_of(windows, "workbench.action.navigateBack"),
+              chords({"alt+left", "browserback"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.navigateBack"), chords({"ctrl+-", "browserback"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.navigateForward"),
+              chords({"ctrl+shift+-", "browserforward"}));
+    EXPECT_EQ(keys_of(windows, "workbench.action.navigateForward"),
+              chords({"alt+right", "browserforward"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.navigateForward"),
+              chords({"ctrl+shift+-", "browserforward"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.navigateToLastEditLocation"),
+              chords({"ctrl+k ctrl+q"}));
+    EXPECT_EQ(keys_of(windows, "workbench.action.navigateToLastEditLocation"),
+              chords({"ctrl+k ctrl+q"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.navigateToLastEditLocation"),
+              chords({"cmd+k cmd+q"}));
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);
@@ -269,7 +292,10 @@ TEST(DefaultKeybindingsTest, ABindingOnMacNeverUsesTheWindowsKeyAndControlIsOnly
             if (binding.command != "workbench.action.toggleFullScreen") {
                 EXPECT_FALSE(step.modifiers.meta && step.modifiers.ctrl) << binding.command;
             }
-            if (step.modifiers.ctrl) {
+            // VS Code binds Back and Forward to Control and the minus key.
+            const bool history = binding.command == "workbench.action.navigateBack" ||
+                                 binding.command == "workbench.action.navigateForward";
+            if (step.modifiers.ctrl && !history) {
                 EXPECT_TRUE(step.key == Key::key_b || step.key == Key::key_f ||
                             step.key == Key::key_p || step.key == Key::key_n ||
                             step.key == Key::key_h || step.key == Key::key_d ||
