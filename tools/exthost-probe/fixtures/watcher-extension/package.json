@@ -1,0 +1,19 @@
+{
+  "name": "watcher",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "commands": [
+      { "command": "anvil.watch.create", "title": "Anvil: Create Watcher" },
+      { "command": "anvil.watch.createGlob", "title": "Anvil: Create Glob Watcher" },
+      { "command": "anvil.watch.dispose", "title": "Anvil: Dispose Watcher" },
+      { "command": "anvil.watch.events", "title": "Anvil: Events" },
+      { "command": "anvil.watch.write", "title": "Anvil: Write File" },
+      { "command": "anvil.watch.delete", "title": "Anvil: Delete File" },
+      { "command": "anvil.watch.rename", "title": "Anvil: Rename File" }
+    ]
+  }
+}

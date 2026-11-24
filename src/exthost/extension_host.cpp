@@ -43,6 +43,7 @@ ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
     : logger_(logger ? std::move(logger) : std::make_shared<core::NullLogger>()),
       host_(std::move(host)), commands_(host_->session(), router_),
       documents_(host_->session(), router_), logging_(logger_, router_), file_system_(router_),
+      file_events_(host_->session(), router_, logger_, workspace),
       workspace_(std::move(workspace)) {
     register_startup_services(router_);
     host_->session().set_request_handler(
@@ -129,6 +130,7 @@ void ExtensionHost::abandon(const std::string& reason) {
 std::expected<bool, Error> ExtensionHost::pump(std::chrono::milliseconds timeout) {
     const auto pumped = host_->pump(timeout);
     logging_.poll();
+    file_events_.poll();
     if (pumped && !*pumped && state_ != HostState::failed) {
         state_ = HostState::closed;
     }

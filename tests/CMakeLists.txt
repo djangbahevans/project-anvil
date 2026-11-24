@@ -56,6 +56,7 @@ add_executable(anvil_exthost_tests
   exthost/commands_service_test.cpp
   exthost/contributions_test.cpp
   exthost/documents_service_test.cpp
+  exthost/file_event_service_test.cpp
   exthost/file_system_service_test.cpp
   exthost/frame_test.cpp
   exthost/init_data_test.cpp
@@ -87,6 +88,7 @@ find_program(ANVIL_NODE node)
 add_executable(anvil_exthost_integration_tests
   exthost/documents_integration_test.cpp
   exthost/extension_host_test.cpp
+  exthost/file_event_integration_test.cpp
   exthost/file_system_integration_test.cpp
   exthost/host_process_test.cpp
   exthost/launch_integration_test.cpp
@@ -103,7 +105,8 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_FILESYSTEM_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/filesystem-extension"
   ANVIL_LOGGING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/logging-extension"
   ANVIL_FAILING_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/failing-extension"
-  ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension")
+  ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension"
+  ANVIL_WATCHER_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/watcher-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
 
 if(TARGET anvil_ui)

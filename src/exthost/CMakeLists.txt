@@ -5,6 +5,7 @@ add_library(anvil_exthost STATIC
   contributions.cpp
   documents_service.cpp
   extension_host.cpp
+  file_event_service.cpp
   file_system_service.cpp
   frame.cpp
   host_process.cpp
