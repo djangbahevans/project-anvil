@@ -312,6 +312,9 @@ TEST(TreeSitterHighlighter, EditedHighlightingEqualsAFreshParseOfTheNewText) {
             const auto change = buffer.replace(edit.start, edit.end, edit.text);
             ASSERT_TRUE(change.has_value());
             ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+            ASSERT_EQ(highlighter->describe_tree(),
+                      json_highlighter(buffer.snapshot())->describe_tree())
+                << "document " << document << " step " << step;
             ASSERT_EQ(render(*highlighter, buffer.snapshot()), fresh_render(buffer.snapshot()))
                 << "document " << document << " step " << step << " edit [" << edit.start << ", "
                 << edit.end << ") -> \"" << edit.text << "\"\n"
@@ -341,6 +344,8 @@ TEST(TreeSitterHighlighter, ADocumentChangeOfSeveralEditsIsFollowed) {
         const auto change = document.apply_edits(edits);
         ASSERT_TRUE(change.has_value());
         ASSERT_TRUE(highlighter->apply(*change, document.text()).has_value());
+        ASSERT_EQ(highlighter->describe_tree(), json_highlighter(document.text())->describe_tree())
+            << "step " << step;
         ASSERT_EQ(render(*highlighter, document.text()), fresh_render(document.text()))
             << "step " << step;
     }

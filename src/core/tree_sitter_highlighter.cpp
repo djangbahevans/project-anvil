@@ -82,6 +82,23 @@ const char* read_chunk(void* payload, std::uint32_t byte, TSPoint, std::uint32_t
 }
 
 // The row and the byte column that tree-sitter's points use, not the UTF-16 column.
+void describe(TSNode node, std::string& out) {
+    const TSPoint start = ts_node_start_point(node);
+    const TSPoint end = ts_node_end_point(node);
+    out += std::string(ts_node_type(node)) + "[" + std::to_string(start.row) + ":" +
+           std::to_string(start.column) + "-" + std::to_string(end.row) + ":" +
+           std::to_string(end.column) + "]";
+    const std::uint32_t children = ts_node_child_count(node);
+    if (children == 0) {
+        return;
+    }
+    out += "(";
+    for (std::uint32_t i = 0; i < children; ++i) {
+        describe(ts_node_child(node, i), out);
+    }
+    out += ")";
+}
+
 TSPoint point_at(const Text& text, std::size_t offset) {
     const std::size_t row = text.position_at(offset).line;
     return {static_cast<std::uint32_t>(row),
@@ -300,6 +317,14 @@ std::string_view TreeSitterHighlighter::root_scope() const {
 
 std::uint64_t TreeSitterHighlighter::version() const {
     return impl_->version;
+}
+
+std::string TreeSitterHighlighter::describe_tree() const {
+    std::string out;
+    if (impl_->tree) {
+        describe(ts_tree_root_node(impl_->tree.get()), out);
+    }
+    return out;
 }
 
 std::size_t TreeSitterHighlighter::bytes_read() const {

@@ -12,6 +12,7 @@
 #include <expected>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -55,6 +56,9 @@ public:
     // Diagnostics for tests and benchmarks, counted since the highlighter was made: the bytes the
     // parser read from the text, and the times the query ran for a line.
     std::size_t bytes_read() const;
+    // The tree as nested node types with their start and end rows and byte columns, which an
+    // edited tree and a fresh one must agree on.
+    std::string describe_tree() const;
     std::size_t line_queries() const;
 
     std::vector<HighlightSpan> spans(std::size_t line) const override;
