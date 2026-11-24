@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLineEdit>
@@ -902,6 +903,7 @@ void MainWindow::register_commands() {
     add("editor.action.previousMatchFindAction", tr("Find Previous"),
         [this] { find_bar()->find_previous(); });
     add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
+    add("workbench.action.newWindow", tr("New Window"), [this] { open_new_window(); });
     // There is no settings or shortcuts editor: both the interface and the JSON commands open the
     // file.
     const auto open_settings = [this] { open_user_file(options_.settings_file, "{}\n"); };
@@ -1962,6 +1964,28 @@ bool MainWindow::open_user_file(const std::filesystem::path& file, std::string_v
         }
     }
     return open_file(QString::fromStdString(file.string()));
+}
+
+void MainWindow::open_new_window() {
+    platform::ProcessSpec spec;
+    spec.executable =
+        options_.executable.empty()
+            ? std::filesystem::path(QCoreApplication::applicationFilePath().toStdString())
+            : options_.executable;
+    spec.environment = platform::current_environment();
+    std::error_code error;
+    std::filesystem::path directory = std::filesystem::current_path(error);
+    if (error || !std::filesystem::is_directory(directory, error)) {
+        directory = std::filesystem::temp_directory_path(error);
+    }
+    spec.working_directory = directory;
+    const auto started =
+        options_.start_process ? options_.start_process(spec) : platform::spawn_detached(spec);
+    if (!started) {
+        status_bar_->show_message(tr("The new window cannot be started: %1")
+                                      .arg(QString::fromStdString(started.error().message)),
+                                  8000);
+    }
 }
 
 void MainWindow::open_dialog() {

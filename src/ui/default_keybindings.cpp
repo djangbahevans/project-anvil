@@ -179,6 +179,7 @@ const Row rows[] = {
      {"ctrl+k ctrl+s"},
      {"ctrl+k ctrl+s"},
      {"cmd+k cmd+s"}},
+    {"workbench.action.newWindow", "", {"ctrl+shift+n"}, {"ctrl+shift+n"}, {"cmd+shift+n"}},
     {"workbench.action.reopenClosedEditor",
      "",
      {"ctrl+shift+t"},

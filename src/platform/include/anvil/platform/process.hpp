@@ -49,6 +49,12 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Starts a process that goes on after this one ends, such as another window of the editor. It has a
+// session of its own, nothing waits for it, and nothing kills it; this process collects its exit
+// status when it ends while this one still runs. Returns its process id. The specification is read
+// as for `Process::spawn`.
+std::expected<std::int64_t, Error> spawn_detached(const ProcessSpec& spec);
+
 std::int64_t current_process_id();
 
 // The environment of the current process as "NAME=value" entries.

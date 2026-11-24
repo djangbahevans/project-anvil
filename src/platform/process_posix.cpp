@@ -43,7 +43,9 @@ struct Process::Impl {
     }
 };
 
-std::expected<Process, Error> Process::spawn(const ProcessSpec& spec) {
+namespace {
+
+std::expected<pid_t, Error> start(const ProcessSpec& spec, bool own_session) {
     const std::string executable = spec.executable.string();
 
     std::vector<char*> argv;
@@ -83,18 +85,48 @@ std::expected<Process, Error> Process::spawn(const ProcessSpec& spec) {
         }
     }
 
-    auto impl = std::make_unique<Impl>();
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    if (own_session) {
+        posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSID);
+    }
+    pid_t pid = -1;
     const int result =
-        posix_spawn(&impl->pid, executable.c_str(), &actions, nullptr, argv.data(), envp.data());
+        posix_spawn(&pid, executable.c_str(), &actions, &attributes, argv.data(), envp.data());
+    posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     if (result != 0) {
-        impl->pid = -1;
         return std::unexpected(
             Error{ErrorCode::io_error, "cannot start " + executable +
                                            (directory.empty() ? "" : " in " + directory) + ": " +
                                            std::strerror(result)});
     }
+    return pid;
+}
+
+} // namespace
+
+std::expected<Process, Error> Process::spawn(const ProcessSpec& spec) {
+    const auto pid = start(spec, false);
+    if (!pid) {
+        return std::unexpected(pid.error());
+    }
+    auto impl = std::make_unique<Impl>();
+    impl->pid = *pid;
     return Process(std::move(impl));
+}
+
+std::expected<std::int64_t, Error> spawn_detached(const ProcessSpec& spec) {
+    const auto pid = start(spec, true);
+    if (!pid) {
+        return std::unexpected(pid.error());
+    }
+    std::thread([child = *pid] {
+        int status = 0;
+        while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {
+        }
+    }).detach();
+    return *pid;
 }
 
 Process::Process(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
