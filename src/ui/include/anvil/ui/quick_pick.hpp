@@ -64,6 +64,10 @@ public:
     // Closes the popup without a choice.
     void cancel();
 
+    // The items that were set, in the order they were given.
+    const std::vector<QuickPickItem>& items() const {
+        return items_;
+    }
     QLineEdit* filter_field() const {
         return filter_;
     }
