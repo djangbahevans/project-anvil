@@ -31,6 +31,7 @@ protected:
         fs::create_directories(root_ / "dir");
         dir_ = root_ / "dir";
         session_ = std::make_unique<Session>("{}");
+        providers_ = std::make_unique<FileSystemProviders>(*session_, router_, logger_);
         host_ = std::make_unique<FakeHost>(*session_);
         session_->set_request_handler([this](const Request& r) { return router_.dispatch(r); });
         host_->complete_handshake();
@@ -42,7 +43,8 @@ protected:
     }
 
     void create_service(std::optional<core::Workspace> workspace = std::nullopt) {
-        service_ = std::make_unique<FileEventService>(*session_, router_, logger_, workspace);
+        service_ =
+            std::make_unique<FileEventService>(*session_, router_, *providers_, logger_, workspace);
     }
 
     // Sends `$watch` (`session` and `correlate` as the extension host sends them).
@@ -122,6 +124,7 @@ protected:
     std::unique_ptr<FakeHost> host_;
     RequestRouter router_;
     std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
+    std::unique_ptr<FileSystemProviders> providers_;
     std::unique_ptr<FileEventService> service_;
     std::vector<json> batches_;
     std::uint32_t next_request_ = 1;
@@ -303,4 +306,89 @@ TEST_F(FileEventServiceTest, TheWorkspaceWatcherStaysWhenAnExtensionUnwatchesThe
 
     write(dir_ / "a.txt", "x");
     EXPECT_TRUE(wait_for([&](auto&) { return has("created", dir_ / "a.txt"); }));
+}
+
+// A provider that is registered for a scheme: watching its resources is the provider's job.
+TEST_F(FileEventServiceTest, AWatchOfAProvidedResourceIsPassedToTheProviderAndEndsWithIt) {
+    create_service();
+    ASSERT_TRUE(host_
+                    ->send_rpc(Request{next_request_++,
+                                       static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                                       "$registerFileSystemProvider", JsonArgs{R"([3,"memfs",2])"}})
+                    .has_value());
+    host_->drain_rpc();
+
+    const json resource = {{"$mid", 1}, {"scheme", "memfs"}, {"path", "/dir"}};
+    ASSERT_TRUE(
+        host_
+            ->send_rpc(Request{
+                next_request_++,
+                static_cast<std::uint8_t>(ProxyId::MainThreadFileSystemEventService), "$watch",
+                JsonArgs{json::array({"acme.ext",
+                                      0.75,
+                                      resource,
+                                      {{"recursive", true}, {"excludes", json::array()}},
+                                      false})
+                             .dump()}})
+            .has_value());
+    std::vector<Request> provider_calls;
+    for (const RpcMessage& message : host_->drain_rpc()) {
+        if (const auto* request = std::get_if<Request>(&message)) {
+            provider_calls.push_back(*request);
+        }
+    }
+    ASSERT_EQ(provider_calls.size(), 1u);
+    EXPECT_EQ(provider_calls[0].proxy_id, static_cast<std::uint8_t>(ProxyId::ExtHostFileSystem));
+    EXPECT_EQ(provider_calls[0].method, "$watch");
+    const auto& args = std::get<MixedArgs>(provider_calls[0].args);
+    EXPECT_EQ(json::parse(std::get<JsonArg>(args[0]).json), 3);
+    EXPECT_EQ(json::parse(std::get<JsonArg>(args[1]).json), 0.75);
+    EXPECT_EQ(service_->watcher_count(), 0u) << "the editor watches no folder for it";
+
+    ASSERT_TRUE(
+        host_
+            ->send_rpc(Request{next_request_++,
+                               static_cast<std::uint8_t>(ProxyId::MainThreadFileSystemEventService),
+                               "$unwatch", JsonArgs{"[0.75]"}})
+            .has_value());
+    provider_calls.clear();
+    for (const RpcMessage& message : host_->drain_rpc()) {
+        if (const auto* request = std::get_if<Request>(&message)) {
+            provider_calls.push_back(*request);
+        }
+    }
+    ASSERT_EQ(provider_calls.size(), 1u);
+    EXPECT_EQ(provider_calls[0].method, "$unwatch");
+}
+
+TEST_F(FileEventServiceTest, ChangesThatAProviderReportsAreSentAsFileEvents) {
+    create_service();
+    host_->send_rpc(Request{next_request_++,
+                            static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                            "$registerFileSystemProvider", JsonArgs{R"([3,"memfs",2])"}});
+    host_->drain_rpc();
+
+    const auto uri = [](const std::string& path) {
+        return json{{"$mid", 1}, {"scheme", "memfs"}, {"path", path}};
+    };
+    host_->send_rpc(
+        Request{next_request_++, static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                "$onFileSystemChange",
+                JsonArgs{json::array({3, json::array({{{"resource", uri("/new")}, {"type", 1}},
+                                                      {{"resource", uri("/edited")}, {"type", 0}},
+                                                      {{"resource", uri("/gone")}, {"type", 2}},
+                                                      {{"resource", uri("/new2")}, {"type", 1}}})})
+                             .dump()}});
+    std::vector<json> batches;
+    for (const RpcMessage& message : host_->drain_rpc()) {
+        const auto* request = std::get_if<Request>(&message);
+        if (request && request->method == "$onFileEvent") {
+            batches.push_back(json::parse(std::get<JsonArgs>(request->args).json)[0]);
+        }
+    }
+    ASSERT_EQ(batches.size(), 1u);
+    EXPECT_FALSE(batches[0].contains("session"));
+    EXPECT_EQ(batches[0]["created"], json::array({uri("/new"), uri("/new2")}));
+    EXPECT_EQ(batches[0]["changed"], json::array({uri("/edited")}));
+    EXPECT_EQ(batches[0]["deleted"], json::array({uri("/gone")}));
 }

@@ -35,6 +35,14 @@ using HandlerResult = std::variant<Ok, OkJson, OkBuffer, Failed>;
 // result), or the serialized error.
 using CallResult = std::expected<std::optional<std::string>, std::string>;
 
+// The reply to a call that may carry bytes: a buffer (`ReplyOKVSBuffer`, `buffer` set), a JSON
+// value (`json` set, empty for an undefined result), or the serialized error.
+struct BinaryReply {
+    std::optional<std::string> json;
+    std::optional<Bytes> buffer;
+};
+using BinaryResult = std::expected<BinaryReply, std::string>;
+
 enum class SessionState {
     awaiting_ready,
     awaiting_initialized,
@@ -55,6 +63,7 @@ public:
     // Returns the reply, or std::nullopt to reply later with reply().
     using RequestHandler = std::function<std::optional<HandlerResult>(const Request&)>;
     using ReplyHandler = std::function<void(CallResult)>;
+    using BinaryReplyHandler = std::function<void(BinaryResult)>;
     using ReadyHandler = std::function<void()>;
 
     explicit Session(std::string init_data_json);
@@ -73,6 +82,11 @@ public:
     // array. `on_reply` runs when the reply arrives, or immediately with an error if the session
     // is not running.
     void call(ProxyId target, std::string method, std::string args_json, ReplyHandler on_reply);
+
+    // Calls `method` with arguments that may be buffers (`RequestMixedArgs`); the reply may be a
+    // buffer. Otherwise like call().
+    void call_binary(ProxyId target, std::string method, MixedArgs args,
+                     BinaryReplyHandler on_reply);
 
     // Completes every call that has no reply yet with `reason` as its error; replies that arrive
     // later are dropped.
@@ -105,7 +119,10 @@ private:
     std::uint32_t last_received_id_ = 0;
     bool needs_ack_ = false;
     std::uint32_t next_request_ = 1;
-    std::unordered_map<std::uint32_t, ReplyHandler> pending_calls_;
+    void send_call(ProxyId target, std::string method, std::variant<JsonArgs, MixedArgs> args,
+                   BinaryReplyHandler on_reply);
+
+    std::unordered_map<std::uint32_t, BinaryReplyHandler> pending_calls_;
     RequestHandler request_handler_;
     ReadyHandler ready_handler_;
 };

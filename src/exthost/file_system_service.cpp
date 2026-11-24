@@ -98,7 +98,7 @@ bool overwrites(const json& options) {
 } // namespace
 
 FileSystemService::FileSystemService(Session& session, RequestRouter& router,
-                                     ActivationService& activation,
+                                     ActivationService& activation, FileSystemProviders& providers,
                                      std::shared_ptr<core::Logger> logger) {
     using Result = std::optional<HandlerResult>;
     using Handler = std::function<Result(const Request&, const json&)>;
@@ -107,45 +107,63 @@ FileSystemService::FileSystemService(Session& session, RequestRouter& router,
     // VS Code's file service fires `onFileSystem:<scheme>` before every operation on a resource
     // and waits for the extensions that start (`activateProvider`), so that a provider that an
     // extension registers for the scheme is there when the operation runs. Nothing registers
-    // providers yet: once the activation has finished the operation fails as for a scheme that has
-    // no provider. `resources` is the number of leading arguments that are resources.
-    const auto serve = [&router, &session, &activation, logger](const char* method, Handler handler,
-                                                                std::size_t resources = 1) {
-        router.on(service, method,
-                  [&session, &activation, logger, handler = std::move(handler),
-                   resources](const Request& request, const json& args) -> Result {
-                      std::vector<core::Uri> foreign;
-                      for (std::size_t i = 0; i < resources && i < args.size(); ++i) {
-                          const auto uri = uri_from_json(args[i]);
-                          if (uri && uri->scheme != "file" &&
-                              std::ranges::none_of(foreign, [&](const core::Uri& other) {
-                                  return other.scheme == uri->scheme;
-                              })) {
-                              foreign.push_back(*uri);
-                          }
-                      }
-                      if (foreign.empty()) {
-                          return handler(request, args);
-                      }
-                      const std::uint32_t req = request.req;
-                      auto waiting = std::make_shared<std::size_t>(foreign.size());
-                      for (const core::Uri& uri : foreign) {
-                          activation.fire("onFileSystem:" + uri.scheme, ActivationKind::normal,
-                                          [&session, logger, req, waiting, first = foreign.front(),
-                                           scheme = uri.scheme](CallResult result) {
-                                              if (!result) {
-                                                  logger->log(
-                                                      core::LogLevel::warning, "extension host",
-                                                      "Activating the file system of '" + scheme +
-                                                          "' failed: " + result.error());
-                                              }
-                                              if (--*waiting == 0) {
-                                                  session.reply(req, no_provider(first));
-                                              }
-                                          });
-                      }
-                      return std::nullopt;
-                  });
+    // providers yet: once the activation has finished the operation is the provider's, or fails as
+    // for a scheme that has no provider. `resources` is the number of leading arguments that are
+    // resources.
+    const auto serve = [&router, &session, &activation, &providers,
+                        logger](const char* method, Handler handler, std::size_t resources = 1) {
+        router.on(
+            service, method,
+            [&session, &activation, &providers, logger, method = std::string(method),
+             handler = std::move(handler),
+             resources](const Request& request, const json& args) -> Result {
+                std::vector<core::Uri> foreign;
+                for (std::size_t i = 0; i < resources && i < args.size(); ++i) {
+                    const auto uri = uri_from_json(args[i]);
+                    if (uri && uri->scheme != "file" &&
+                        std::ranges::none_of(foreign, [&](const core::Uri& other) {
+                            return other.scheme == uri->scheme;
+                        })) {
+                        foreign.push_back(*uri);
+                    }
+                }
+                if (foreign.empty()) {
+                    return handler(request, args);
+                }
+                const std::uint32_t req = request.req;
+                std::optional<Bytes> content;
+                if (const Bytes* buffer = buffer_argument(request, 1)) {
+                    content = *buffer;
+                }
+                auto waiting = std::make_shared<std::size_t>(foreign.size());
+                auto request_args = std::make_shared<json>(args);
+                auto request_content = std::make_shared<std::optional<Bytes>>(std::move(content));
+                for (const core::Uri& uri : foreign) {
+                    activation.fire("onFileSystem:" + uri.scheme, ActivationKind::normal,
+                                    [&session, &providers, logger, req, waiting, method,
+                                     request_args, request_content, first = foreign.front(),
+                                     scheme = uri.scheme](CallResult result) {
+                                        if (!result) {
+                                            logger->log(core::LogLevel::warning, "extension host",
+                                                        "Activating the file system of '" + scheme +
+                                                            "' failed: " + result.error());
+                                        }
+                                        if (--*waiting != 0) {
+                                            return;
+                                        }
+                                        if (!providers.find(first.scheme)) {
+                                            session.reply(req, no_provider(first));
+                                            return;
+                                        }
+                                        providers.serve(method, *request_args,
+                                                        std::move(*request_content),
+                                                        [&session, req](HandlerResult reply) {
+                                                            session.reply(req, std::move(reply));
+                                                        });
+                                    });
+                }
+                return std::nullopt;
+            });
     };
 
     serve("$stat", [](const Request&, const json& args) -> Result {

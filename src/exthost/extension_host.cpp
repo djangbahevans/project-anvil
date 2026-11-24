@@ -43,8 +43,9 @@ ExtensionHost::ExtensionHost(std::unique_ptr<HostProcess> host,
     : logger_(logger ? std::move(logger) : std::make_shared<core::NullLogger>()),
       host_(std::move(host)), activation_(host_->session()),
       commands_(host_->session(), router_, activation_), documents_(host_->session(), router_),
-      logging_(logger_, router_), file_system_(host_->session(), router_, activation_, logger_),
-      file_events_(host_->session(), router_, logger_, workspace),
+      logging_(logger_, router_), providers_(host_->session(), router_, logger_),
+      file_system_(host_->session(), router_, activation_, providers_, logger_),
+      file_events_(host_->session(), router_, providers_, logger_, workspace),
       workspace_(std::move(workspace)) {
     register_startup_services(router_);
     host_->session().set_request_handler(

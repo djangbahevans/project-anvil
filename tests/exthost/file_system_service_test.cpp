@@ -19,7 +19,8 @@ class FileSystemServiceTest : public ::testing::Test {
 protected:
     FileSystemServiceTest()
         : session_("{}"), host_(session_), activation_(session_),
-          service_(session_, router_, activation_, logger_) {
+          providers_(session_, router_, logger_),
+          service_(session_, router_, activation_, providers_, logger_) {
         activation_.set_ready();
         session_.set_request_handler(
             [this](const Request& request) { return router_.dispatch(request); });
@@ -101,6 +102,7 @@ protected:
     RequestRouter router_;
     ActivationService activation_;
     std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
+    FileSystemProviders providers_;
     FileSystemService service_;
     fs::path directory_;
     std::uint32_t next_req_ = 1;
@@ -390,6 +392,130 @@ TEST_F(FileSystemServiceTest, AResourceOfAnotherSchemeIsUnavailableAfterItsEvent
     EXPECT_EQ(name_of(between.reply), "Unavailable");
     EXPECT_EQ(between.events,
               (std::vector<std::string>{"onFileSystem:memfs", "onFileSystem:other"}));
+}
+
+// A request from the extension host for a resource of `memfs`, with a provider registered for it.
+// The service fires the activation event, then calls the provider, then replies.
+class ProviderRoutingTest : public FileSystemServiceTest {
+protected:
+    void register_provider(int capabilities) {
+        call("$registerFileSystemProvider", json::array({3, "memfs", capabilities}));
+    }
+    json memfs_uri(const std::string& path) {
+        return uri_to_json(core::Uri{"memfs", "", path, "", ""});
+    }
+
+    // Sends the request, answers the activation event, and returns the call that the service
+    // made to the provider (a default Request when there was none).
+    Request until_provider_call(const std::string& method, MixedArgs args) {
+        const std::uint32_t req = next_req_++;
+        EXPECT_TRUE(
+            host_
+                .send_rpc(Request{req, static_cast<std::uint8_t>(ProxyId::MainThreadFileSystem),
+                                  method, std::move(args)})
+                .has_value());
+        const auto first = host_.drain_rpc();
+        for (const RpcMessage& message : first) {
+            if (const auto* activation = std::get_if<Request>(&message)) {
+                EXPECT_TRUE(host_.send_rpc(EmptyReply{activation->req}).has_value());
+            }
+        }
+        pending_req_ = req;
+        const auto second = host_.drain_rpc();
+        for (const RpcMessage& message : second) {
+            if (const auto* request = std::get_if<Request>(&message)) {
+                return *request;
+            }
+        }
+        last_ = second;
+        return Request{};
+    }
+    // What the service replied to the request of until_provider_call, after the provider's reply.
+    RpcMessage reply_after(RpcMessage provider_reply) {
+        EXPECT_TRUE(host_.send_rpc(provider_reply).has_value());
+        const auto messages = host_.drain_rpc();
+        EXPECT_EQ(messages.size(), 1u);
+        return messages.empty() ? RpcMessage{EmptyReply{0}} : messages[0];
+    }
+
+    std::uint32_t pending_req_ = 0;
+    std::vector<RpcMessage> last_;
+};
+
+TEST_F(ProviderRoutingTest, AReadIsServedByTheProviderAndItsBufferIsPassedOn) {
+    register_provider(2);
+    const Request forwarded = until_provider_call("$readFile", {JsonArg{memfs_uri("/a").dump()}});
+    ASSERT_EQ(forwarded.method, "$readFile");
+    EXPECT_EQ(forwarded.proxy_id, static_cast<std::uint8_t>(ProxyId::ExtHostFileSystem));
+    const auto& args = std::get<MixedArgs>(forwarded.args);
+    EXPECT_EQ(json::parse(std::get<JsonArg>(args.at(0)).json), 3);
+
+    const RpcMessage reply = reply_after(BufferReply{forwarded.req, anvil::to_bytes("bytes")});
+    EXPECT_EQ(reply, (RpcMessage{BufferReply{pending_req_, anvil::to_bytes("bytes")}}));
+}
+
+TEST_F(ProviderRoutingTest, AJsonResultIsPassedOn) {
+    register_provider(2);
+    const Request forwarded = until_provider_call("$stat", {JsonArg{memfs_uri("/a").dump()}});
+    const RpcMessage reply = reply_after(JsonReply{forwarded.req, R"({"type":1,"size":3})"});
+    EXPECT_EQ(reply, (RpcMessage{JsonReply{pending_req_, R"({"type":1,"size":3})"}}));
+}
+
+TEST_F(ProviderRoutingTest, AWriteSendsTheBufferAndTheDefaultOptions) {
+    register_provider(2);
+    const Request forwarded = until_provider_call(
+        "$writeFile", {JsonArg{memfs_uri("/a").dump()}, BufferArg{anvil::to_bytes("content")}});
+    ASSERT_EQ(forwarded.method, "$writeFile");
+    const auto& args = std::get<MixedArgs>(forwarded.args);
+    ASSERT_EQ(args.size(), 4u);
+    EXPECT_EQ(std::get<BufferArg>(args[2]).data, anvil::to_bytes("content"));
+    EXPECT_EQ(json::parse(std::get<JsonArg>(args[3]).json)["create"], true);
+
+    EXPECT_EQ(reply_after(EmptyReply{forwarded.req}), (RpcMessage{EmptyReply{pending_req_}}));
+}
+
+TEST_F(ProviderRoutingTest, TheTrashIsUsedOnlyWhenTheProviderHasIt) {
+    register_provider(2);
+    Request forwarded =
+        until_provider_call("$delete", {JsonArg{memfs_uri("/a").dump()},
+                                        JsonArg{R"({"recursive":true,"useTrash":true})"}});
+    EXPECT_EQ(json::parse(std::get<JsonArg>(std::get<MixedArgs>(forwarded.args).at(2)).json),
+              json::parse(R"({"recursive":true,"useTrash":false,"atomic":false})"));
+}
+
+TEST_F(ProviderRoutingTest, AProviderErrorReachesTheRequestWithItsCode) {
+    register_provider(2);
+    const Request forwarded = until_provider_call("$stat", {JsonArg{memfs_uri("/a").dump()}});
+    const RpcMessage reply = reply_after(ErrorReply{
+        forwarded.req,
+        json{{"$isError", true}, {"name", "EntryNotFound (FileSystemError)"}, {"message", "gone"}}
+            .dump()});
+    ASSERT_TRUE(std::holds_alternative<ErrorReply>(reply));
+    const json error = json::parse(std::get<ErrorReply>(reply).json);
+    EXPECT_EQ(error["name"], "EntryNotFound");
+    EXPECT_EQ(error["message"], "gone");
+}
+
+TEST_F(ProviderRoutingTest, AWriteToAReadOnlyProviderFailsAfterTheActivation) {
+    register_provider(2 | (1 << 11));
+    const Request forwarded = until_provider_call(
+        "$writeFile", {JsonArg{memfs_uri("/a").dump()}, BufferArg{anvil::to_bytes("x")}});
+    EXPECT_EQ(forwarded.method, "") << "the provider is not called";
+    ASSERT_EQ(last_.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<ErrorReply>(last_[0]));
+    EXPECT_EQ(json::parse(std::get<ErrorReply>(last_[0]).json)["name"], "NoPermissions");
+}
+
+TEST_F(ProviderRoutingTest, ARenameToAnotherSchemeFailsAsUnavailable) {
+    register_provider(2);
+    const json other = uri_to_json(core::Uri{"other", "", "/b", "", ""});
+    const Request forwarded =
+        until_provider_call("$rename", {JsonArg{memfs_uri("/a").dump()}, JsonArg{other.dump()},
+                                        JsonArg{R"({"overwrite":false})"}});
+    EXPECT_EQ(forwarded.method, "");
+    ASSERT_GE(last_.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<ErrorReply>(last_[0]));
+    EXPECT_EQ(json::parse(std::get<ErrorReply>(last_[0]).json)["name"], "Unavailable");
 }
 
 TEST_F(FileSystemServiceTest, OperationsOnLocalResourcesFireNoEvent) {

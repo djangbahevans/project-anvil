@@ -62,9 +62,12 @@ std::vector<std::string> relative_excludes(const json& excludes, const fs::path&
 } // namespace
 
 FileEventService::FileEventService(Session& session, RequestRouter& router,
+                                   FileSystemProviders& providers,
                                    std::shared_ptr<core::Logger> logger,
                                    const std::optional<core::Workspace>& workspace)
-    : session_(session), logger_(std::move(logger)) {
+    : session_(session), providers_(providers), logger_(std::move(logger)) {
+    providers_.set_change_listener(
+        [this](const std::vector<ProviderChange>& changes) { send_provider_changes(changes); });
     router.on(ProxyId::MainThreadFileSystemEventService, "$watch",
               [this](const Request&, const json& args) { return watch(args); });
     router.on(ProxyId::MainThreadFileSystemEventService, "$unwatch",
@@ -110,6 +113,12 @@ std::optional<HandlerResult> FileEventService::watch(const json& args) {
     const double session = args[1].get<double>();
     const auto uri = uri_from_json(args[2]);
     const auto base = uri ? uri->file_path() : std::nullopt;
+    if (uri && !base && providers_.find(uri->scheme)) {
+        if (providers_.watch(*uri, session, args[3])) {
+            provider_sessions_[session] = uri->scheme;
+        }
+        return Ok{};
+    }
     if (!base) {
         logger_->log(core::LogLevel::warning, source,
                      owner + " watches a resource that is not a file: " +
@@ -151,7 +160,14 @@ std::optional<HandlerResult> FileEventService::unwatch(const json& args) {
     if (!args.is_array() || args.empty() || !args[0].is_number()) {
         return Failed{error_json("$unwatch needs a session")};
     }
-    const auto found = sessions_.find(args[0].get<double>());
+    const double session = args[0].get<double>();
+    if (const auto provided = provider_sessions_.find(session);
+        provided != provider_sessions_.end()) {
+        providers_.unwatch(provided->second, session);
+        provider_sessions_.erase(provided);
+        return Ok{};
+    }
+    const auto found = sessions_.find(session);
     if (found == sessions_.end()) {
         return Ok{};
     }
@@ -189,17 +205,33 @@ void FileEventService::send(const Watch& watch, const std::vector<FileEvent>& ev
             break;
         }
     }
+    send_batch(std::move(created), std::move(changed), std::move(deleted), watch.session);
+}
+
+void FileEventService::send_batch(json created, json changed, json deleted,
+                                  std::optional<double> session) {
     if (created.empty() && changed.empty() && deleted.empty()) {
         return;
     }
     json batch = {{"created", std::move(created)},
                   {"changed", std::move(changed)},
                   {"deleted", std::move(deleted)}};
-    if (watch.session) {
-        batch["session"] = *watch.session;
+    if (session) {
+        batch["session"] = *session;
     }
     session_.call(ProxyId::ExtHostFileSystemEventService, "$onFileEvent",
                   json::array({std::move(batch)}).dump(), [](CallResult) {});
+}
+
+void FileEventService::send_provider_changes(const std::vector<ProviderChange>& changes) {
+    json created = json::array();
+    json changed = json::array();
+    json deleted = json::array();
+    for (const ProviderChange& change : changes) {
+        const json uri = uri_to_json(change.resource);
+        (change.type == 1 ? created : change.type == 2 ? deleted : changed).push_back(uri);
+    }
+    send_batch(std::move(created), std::move(changed), std::move(deleted), std::nullopt);
 }
 
 void FileEventService::poll() {
