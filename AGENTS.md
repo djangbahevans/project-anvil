@@ -44,11 +44,12 @@ An issue without a readiness label has not been groomed: run `groom-issue` on it
 sudo apt install build-essential clang cmake ninja-build libgtest-dev nlohmann-json3-dev \
     libpcre2-dev libbenchmark-dev qt6-base-dev clang-format python3 make
 scripts/fetch-vscode.sh          # pinned VS Code checkout in .deps/vscode, needs Node.js 24 and pnpm
+scripts/fetch-tree-sitter.sh     # pinned tree-sitter runtime and grammars in .deps/tree-sitter, needs curl and a C compiler
 ```
 
 The script also builds the two native modules the extension host loads, which needs `make`, a C++ compiler and Python, and fails if it cannot. Set `ANVIL_ALLOW_MISSING_NATIVE_MODULES=1` to continue without them (the extension host then writes no log files and does not watch its parent process).
 
-Without `.deps/vscode` and Node.js, everything builds and the tests that need the extension host skip themselves.
+Without `.deps/vscode` and Node.js, everything builds and the tests that need the extension host skip themselves. Without `.deps/tree-sitter`, everything builds, the editor has no syntax highlighting and the tests of the tree-sitter highlighter skip themselves; run the script before configuring, because CMake looks for the directory then.
 
 ## Everyday commands
 
@@ -75,7 +76,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, title bar and window frame, tab strip, splitter, editor area and its groups, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
-| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the token theme matcher and the key binding parser, generating the key, icon and menu tables, copying the color themes, formatting, setting and reading the relations between issues |
+| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the token theme matcher and the key binding parser, generating the key, icon and menu tables, copying the color themes, fetching the tree-sitter sources, formatting, setting and reading the relations between issues |
 
 ## Conventions
 
@@ -124,6 +125,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 - [Adding a MainThread service](docs/howto/adding-a-main-thread-service.md)
 - [Adding an editor command](docs/howto/adding-a-command.md)
+- [Adding a tree-sitter grammar](docs/howto/adding-a-grammar.md)
 - [Upgrading the pinned VS Code](docs/howto/upgrading-vscode.md)
 
 ## Definition of done

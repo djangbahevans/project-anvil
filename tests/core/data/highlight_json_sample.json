@@ -1,0 +1,9 @@
+{
+  // a comment
+  "name": "café \"quoted\"",
+  "code": "\u0041\n",
+  "list": [1, -2.5e3, true, false, null],
+  /* block
+     comment */
+  "emoji": "😀 x", "nested": {"k": []}
+}

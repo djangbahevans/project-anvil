@@ -79,6 +79,10 @@ bool is_char_boundary(const NodePtr& node, std::size_t offset);
 // Appends the bytes of [offset, offset + length) to `out`, clamped to the end of the tree.
 void append_range(const NodePtr& node, std::size_t offset, std::size_t length, std::string& out);
 
+// The bytes from `offset` to the end of the leaf chunk that holds it, which stay valid as long as
+// the tree does. Empty when `offset` is at or past the end of the tree.
+std::string_view chunk_at(const NodePtr& node, std::size_t offset);
+
 // Number of leaf chunks.
 std::size_t chunk_count(const NodePtr& node);
 

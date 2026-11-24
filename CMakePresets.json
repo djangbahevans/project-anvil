@@ -21,6 +21,7 @@
       "displayName": "Linux Clang Debug",
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug"
       },
@@ -35,6 +36,7 @@
       "displayName": "Linux Clang Release",
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Release"
       },
@@ -49,6 +51,7 @@
       "displayName": "Linux Clang Debug with ASan and UBSan",
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
         "ANVIL_SANITIZE": "ON"
@@ -64,6 +67,7 @@
       "displayName": "Linux GCC Debug",
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
         "CMAKE_BUILD_TYPE": "Debug"
       },
@@ -78,6 +82,7 @@
       "displayName": "Windows MSVC Debug",
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
         "CMAKE_CXX_COMPILER": "cl",
         "CMAKE_BUILD_TYPE": "Debug"
       },
@@ -100,6 +105,7 @@
       "displayName": "Windows MSVC Release",
       "inherits": "base",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
         "CMAKE_CXX_COMPILER": "cl",
         "CMAKE_BUILD_TYPE": "Release"
       },
