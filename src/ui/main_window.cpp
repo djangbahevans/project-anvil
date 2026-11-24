@@ -85,9 +85,11 @@ public:
     explicit LayoutWatcher(MainWindow& window) : window_(window) {}
 
     void structure_changed() override {
+        window_.prune_navigation_history();
         window_.refresh_current();
     }
     void tabs_changed(workbench::GroupId) override {
+        window_.prune_navigation_history();
         window_.refresh_current();
     }
     void active_tab_changed(workbench::GroupId) override {
@@ -204,11 +206,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     connect(area_, &EditorArea::tab_selected, this, [this](workbench::GroupId group, int index) {
         activate_tab(group, static_cast<std::size_t>(index));
     });
-    connect(area_, &EditorArea::tab_moved, this,
-            [this](workbench::GroupId group, int from, int to) {
-                layout_.move_tab(group, static_cast<std::size_t>(from), group,
-                                 static_cast<std::size_t>(to));
-            });
+    connect(
+        area_, &EditorArea::tab_moved, this, [this](workbench::GroupId group, int from, int to) {
+            move_tab(group, static_cast<std::size_t>(from), group, static_cast<std::size_t>(to));
+        });
     connect(area_, &EditorArea::close_requested, this, [this](workbench::GroupId group, int index) {
         close_tab_at(group, static_cast<std::size_t>(index));
     });
@@ -240,22 +241,22 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     connect(area_, &EditorArea::selections_changed, this, &MainWindow::on_selections_changed);
     connect(area_, &EditorArea::tab_dropped_on_strip, this,
             [this](workbench::GroupId from, int index, workbench::GroupId to, int position) {
-                layout_.move_tab(from, static_cast<std::size_t>(index), to,
-                                 static_cast<std::size_t>(position));
+                move_tab(from, static_cast<std::size_t>(index), to,
+                         static_cast<std::size_t>(position));
                 focus_current_editor();
             });
     connect(area_, &EditorArea::tab_dropped_on_group, this,
             [this](workbench::GroupId from, int index, workbench::GroupId to) {
                 const workbench::EditorGroup* target = layout_.group(to);
-                layout_.move_tab(from, static_cast<std::size_t>(index), to,
-                                 target ? target->tabs.size() : 0);
+                move_tab(from, static_cast<std::size_t>(index), to,
+                         target ? target->tabs.size() : 0);
                 focus_current_editor();
             });
     connect(area_, &EditorArea::tab_dropped_on_edge, this,
             [this](workbench::GroupId from, int index, workbench::GroupId to,
                    workbench::Direction direction) {
                 if (const auto created = layout_.split(to, direction)) {
-                    layout_.move_tab(from, static_cast<std::size_t>(index), *created, 0);
+                    move_tab(from, static_cast<std::size_t>(index), *created, 0);
                 }
                 focus_current_editor();
             });
@@ -811,6 +812,12 @@ void MainWindow::register_commands() {
         change_setting("files.autoSave", auto_save_ == core::AutoSave::off ? "afterDelay" : "off",
                        tr("Auto Save"));
     });
+    add("workbench.action.navigateBack", tr("Go Back"),
+        [this] { navigate(history_.go_back(), false); });
+    add("workbench.action.navigateForward", tr("Go Forward"),
+        [this] { navigate(history_.go_forward(), false); });
+    add("workbench.action.navigateToLastEditLocation", tr("Go to Last Edit Location"),
+        [this] { navigate(history_.go_to_last_edit(), true); });
     add("workbench.action.showCommands", tr("Show All Commands"),
         [this] { show_command_palette(); });
     add("workbench.action.toggleSidebarVisibility", tr("Toggle Primary Side Bar Visibility"),
@@ -915,6 +922,9 @@ core::ContextKeys MainWindow::menu_context() const {
     keys.set("sideBarVisible", workbench_->is_visible(Part::sidebar));
     keys.set("panelVisible", workbench_->is_visible(Part::panel));
     keys.set("panelPosition", std::string(panel_position_name(workbench_->panel_position())));
+    keys.set("canNavigateBack", history_.can_go_back());
+    keys.set("canNavigateForward", history_.can_go_forward());
+    keys.set("canNavigateToLastEditLocation", history_.can_go_to_last_edit());
     return keys;
 }
 
@@ -1079,6 +1089,18 @@ void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Docum
     documents_.try_emplace(uri, std::move(document));
     layout_.show(uri);
     focus_current_editor();
+}
+
+bool MainWindow::move_tab(workbench::GroupId from, std::size_t index, workbench::GroupId to,
+                          std::size_t to_index) {
+    const workbench::EditorGroup* source = layout_.group(from);
+    if (!source || index >= source->tabs.size() || !layout_.group(to)) {
+        return false;
+    }
+    // The move can close the source group, which drops the places of the group.
+    const core::Uri uri = source->tabs[index];
+    history_.move_editor(from, to, uri);
+    return layout_.move_tab(from, index, to, to_index);
 }
 
 void MainWindow::activate_tab(workbench::GroupId group, std::size_t index) {
@@ -1500,6 +1522,7 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
         bridge_.remove_document(uri);
         bridge_.add_document(new_uri, document);
         layout_.replace_document(uri, new_uri);
+        history_.replace_uri(uri, new_uri);
     }
     update_document(new_uri);
     return true;
@@ -1617,6 +1640,7 @@ void MainWindow::on_text_changed(workbench::GroupId group, const core::DocumentC
         return;
     }
     bridge_.text_changed(state->tabs[*state->active], change);
+    record_selection(group, workbench::SelectionReason::edit);
     if (auto_save_ == core::AutoSave::after_delay) {
         schedule_auto_save(state->tabs[*state->active]);
     }
@@ -1631,7 +1655,100 @@ void MainWindow::on_selections_changed(workbench::GroupId group) {
         return;
     }
     bridge_.selections_changed(state->tabs[*state->active]);
+    record_selection(group, workbench::SelectionReason::user);
     update_status();
+}
+
+std::optional<workbench::NavigationSelection> MainWindow::selection_of(const core::Uri& uri) const {
+    const auto found = documents_.find(uri);
+    if (found == documents_.end()) {
+        return std::nullopt;
+    }
+    const core::Document& document = *found->second;
+    const core::Selection& primary = document.selections().primary();
+    return workbench::NavigationSelection{document.text().position_at(primary.anchor),
+                                          document.text().position_at(primary.active)};
+}
+
+void MainWindow::record_activation() {
+    const core::Uri* uri = current_uri_ptr();
+    if (walking_history_ || !uri) {
+        return;
+    }
+    if (const auto selection = selection_of(*uri)) {
+        history_.editor_activated(layout_.focused(), *uri, *selection);
+    }
+}
+
+void MainWindow::record_selection(workbench::GroupId group, workbench::SelectionReason reason) {
+    const workbench::EditorGroup* state = layout_.group(group);
+    if (walking_history_ || !state || !state->active) {
+        return;
+    }
+    const core::Uri& uri = state->tabs[*state->active];
+    if (const auto selection = selection_of(uri)) {
+        history_.selection_changed(group, uri, *selection, reason);
+    }
+}
+
+void MainWindow::prune_navigation_history() {
+    const std::vector<workbench::GroupId> groups = layout_.group_ids();
+    history_.remove_if([&](const workbench::NavigationEntry& entry) {
+        if (std::ranges::find(groups, entry.group) == groups.end()) {
+            return true;
+        }
+        return !entry.uri.file_path() && layout_.locations(entry.uri).empty();
+    });
+}
+
+bool MainWindow::show_place(const workbench::NavigationEntry& place) {
+    const auto path = place.uri.file_path();
+    if (!documents_.contains(place.uri) && (!path || !std::filesystem::exists(*path))) {
+        history_.remove_uri(place.uri);
+        status_bar_->show_message(tr("%1 cannot be opened again").arg(display_name(place.uri)),
+                                  5000);
+        return false;
+    }
+    const struct Walking {
+        explicit Walking(bool& flag) : flag(flag) {
+            flag = true;
+        }
+        ~Walking() {
+            flag = false;
+        }
+        bool& flag;
+    } walking(walking_history_);
+    if (layout_.group(place.group)) {
+        layout_.focus(place.group);
+    }
+    if (documents_.contains(place.uri)) {
+        layout_.open(layout_.focused(), place.uri);
+        focus_current_editor();
+    } else if (!open_file(QString::fromStdString(path->string()))) {
+        history_.remove_uri(place.uri);
+        return false;
+    }
+    const core::Text& text = documents_.at(place.uri)->text();
+    view()->select_range(
+        {text.offset_at(place.selection.anchor), text.offset_at(place.selection.active)});
+    return true;
+}
+
+void MainWindow::navigate(std::optional<workbench::NavigationEntry> place, bool to_edit) {
+    while (place) {
+        if (show_place(*place)) {
+            const auto selection = selection_of(place->uri);
+            if (selection) {
+                if (to_edit) {
+                    history_.arrived_at_edit(layout_.focused(), place->uri, *selection);
+                } else {
+                    history_.arrived(layout_.focused(), place->uri, *selection);
+                }
+            }
+            return;
+        }
+        place = to_edit ? history_.go_to_last_edit() : std::nullopt;
+    }
 }
 
 void MainWindow::refresh_current() {
@@ -1647,6 +1764,7 @@ void MainWindow::refresh_current() {
     } else if (!current) {
         shown_uri_.reset();
     }
+    record_activation();
     update_title();
     update_status();
 }

@@ -2638,6 +2638,9 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.toggleSidebarVisibility",
                                           "workbench.action.togglePanel",
                                           "workbench.action.toggleActivityBarVisibility",
+                                          "workbench.action.navigateBack",
+                                          "workbench.action.navigateForward",
+                                          "workbench.action.navigateToLastEditLocation",
                                           "workbench.action.activityBarLocation.default",
                                           "workbench.action.activityBarLocation.hide",
                                           "workbench.action.toggleStatusbarVisibility",
@@ -2835,6 +2838,9 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleSidebarVisibility",
         "workbench.action.toggleStatusbarVisibility",
         "workbench.action.toggleSidebarPosition",
+        "workbench.action.navigateBack",
+        "workbench.action.navigateForward",
+        "workbench.action.navigateToLastEditLocation",
         "workbench.action.activityBarLocation.default",
         "workbench.action.activityBarLocation.hide",
         "workbench.action.positionPanelTop",
@@ -5989,4 +5995,299 @@ TEST_F(LanguageTest, TheLanguageOfTheShownDocumentIsInTheStatusBarWithoutAnExten
     EXPECT_EQ(shown_language(), "Python");
     ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.md").string())));
     EXPECT_EQ(shown_language(), "Markdown");
+}
+
+class NavigationHistoryTest : public MainWindowTest {
+protected:
+    static std::string numbered_lines(int count) {
+        std::string text;
+        for (int i = 0; i < count; ++i) {
+            text += "line " + std::to_string(i) + "\n";
+        }
+        return text;
+    }
+
+    void open(const std::filesystem::path& path) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    }
+
+    std::size_t offset_of_line(std::size_t line) const {
+        return window_->current_document()->text().offset_at({line, 0});
+    }
+    void go_to_line(std::size_t line) {
+        window_->view()->select_range(core::Selection::caret(offset_of_line(line)));
+    }
+    std::size_t caret_line() const {
+        const core::Document& document = *window_->current_document();
+        return document.text().position_at(document.selections().primary().active).line;
+    }
+    std::string shown_name() const {
+        return window_->current_uri().file_path()->filename().string();
+    }
+    bool close_tab_of(const core::Uri& uri) {
+        const auto& tabs = window_->editor_layout().group(window_->editor_layout().focused())->tabs;
+        const auto at = std::ranges::find(tabs, uri);
+        return at != tabs.end() &&
+               window_->close_document(static_cast<std::size_t>(at - tabs.begin()));
+    }
+    bool enabled(const char* command) {
+        QAction* item = menu_action(command);
+        return item && item->isEnabled();
+    }
+    void run(const char* command) {
+        QAction* item = menu_action(command);
+        ASSERT_NE(item, nullptr) << command;
+        ASSERT_TRUE(item->isEnabled()) << command;
+        item->trigger();
+    }
+};
+
+TEST_F(NavigationHistoryTest, TheGoMenuItemsAreDisabledUntilThereIsAPlaceToGoTo) {
+    create_window();
+    for (const char* command : {"workbench.action.navigateBack", "workbench.action.navigateForward",
+                                "workbench.action.navigateToLastEditLocation"}) {
+        QAction* item = menu_action(command);
+        ASSERT_NE(item, nullptr) << command;
+        EXPECT_FALSE(item->isEnabled()) << command;
+    }
+}
+
+TEST_F(NavigationHistoryTest, BackAndForwardReturnToTheLinesTheCaretWasLeftOn) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(80);
+    go_to_line(150);
+    ASSERT_EQ(caret_line(), 150U);
+
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(shown_name(), "a.txt");
+    EXPECT_EQ(caret_line(), 80U);
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(caret_line(), 0U);
+    EXPECT_TRUE(enabled("workbench.action.navigateBack"));
+
+    run("workbench.action.navigateForward");
+    EXPECT_EQ(caret_line(), 80U);
+    run("workbench.action.navigateForward");
+    EXPECT_EQ(caret_line(), 150U);
+    EXPECT_FALSE(enabled("workbench.action.navigateForward"));
+}
+
+TEST_F(NavigationHistoryTest, SmallMovesInTheSameAreaAddNoPlace) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    const std::size_t before = window_->navigation_history().selections().entries().size();
+    for (const std::size_t line : {3U, 7U, 12U, 5U, 9U}) {
+        go_to_line(line);
+    }
+    EXPECT_EQ(window_->navigation_history().selections().entries().size(), before);
+    go_to_line(60);
+    EXPECT_EQ(window_->navigation_history().selections().entries().size(), before + 1);
+}
+
+TEST_F(NavigationHistoryTest, WalkingTheHistoryAddsNoPlaces) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(80);
+    open(write("b.txt", numbered_lines(200)));
+    go_to_line(120);
+    const auto before = window_->navigation_history().selections().entries();
+
+    for (int round = 0; round < 2; ++round) {
+        while (enabled("workbench.action.navigateBack")) {
+            run("workbench.action.navigateBack");
+        }
+        while (enabled("workbench.action.navigateForward")) {
+            run("workbench.action.navigateForward");
+        }
+    }
+    EXPECT_EQ(window_->navigation_history().selections().entries(), before);
+    EXPECT_EQ(shown_name(), "b.txt");
+    EXPECT_EQ(caret_line(), 120U);
+}
+
+TEST_F(NavigationHistoryTest, BackSwitchesDocumentsAndForwardComesBack) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(40);
+    open(write("b.txt", numbered_lines(200)));
+    go_to_line(90);
+
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(shown_name(), "b.txt");
+    EXPECT_EQ(caret_line(), 0U);
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(shown_name(), "a.txt");
+    EXPECT_EQ(caret_line(), 40U);
+    run("workbench.action.navigateForward");
+    EXPECT_EQ(shown_name(), "b.txt");
+}
+
+TEST_F(NavigationHistoryTest, ADocumentThatWasClosedIsOpenedAgain) {
+    create_window();
+    const auto a = write("a.txt", numbered_lines(200));
+    open(a);
+    go_to_line(70);
+    open(write("b.txt", numbered_lines(10)));
+    ASSERT_TRUE(close_tab_of(core::Uri::file(a)));
+    ASSERT_TRUE(window_->editor_layout().locations(core::Uri::file(a)).empty());
+
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(shown_name(), "a.txt");
+    EXPECT_EQ(caret_line(), 70U);
+}
+
+TEST_F(NavigationHistoryTest, ADeletedFileIsForgottenAndTheWindowStaysWhereItIs) {
+    create_window();
+    const auto a = write("a.txt", numbered_lines(200));
+    open(a);
+    go_to_line(70);
+    open(write("b.txt", numbered_lines(10)));
+    ASSERT_TRUE(close_tab_of(core::Uri::file(a)));
+    std::filesystem::remove(a);
+
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(shown_name(), "b.txt");
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        EXPECT_NE(entry.uri, core::Uri::file(a));
+    }
+}
+
+TEST_F(NavigationHistoryTest, AClosedUntitledDocumentLeavesNoPlaces) {
+    create_window();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    const core::Uri untitled = window_->current_uri();
+    ASSERT_FALSE(untitled.file_path());
+    open(write("a.txt", numbered_lines(10)));
+    ASSERT_TRUE(close_tab_of(untitled));
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        EXPECT_NE(entry.uri, untitled);
+    }
+}
+
+TEST_F(NavigationHistoryTest, ThePlacesOfAClosedGroupAreForgotten) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(60);
+    window_->commands().execute("workbench.action.splitEditorRight");
+    const workbench::GroupId second = window_->editor_layout().focused();
+    open(write("b.txt", numbered_lines(200)));
+    go_to_line(90);
+    window_->editor_layout().focus(second);
+    window_->commands().execute("workbench.action.closeGroup");
+    ASSERT_EQ(window_->editor_layout().group_ids().size(), 1U);
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        EXPECT_NE(entry.group, second);
+    }
+}
+
+TEST_F(NavigationHistoryTest, BackShowsADocumentInTheGroupThatHadIt) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(60);
+    const workbench::GroupId first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    const workbench::GroupId second = window_->editor_layout().focused();
+    ASSERT_NE(first, second);
+    open(write("b.txt", numbered_lines(200)));
+
+    while (enabled("workbench.action.navigateBack") &&
+           window_->editor_layout().focused() != first) {
+        run("workbench.action.navigateBack");
+    }
+    EXPECT_EQ(window_->editor_layout().focused(), first);
+    EXPECT_EQ(shown_name(), "a.txt");
+}
+
+TEST_F(NavigationHistoryTest, ATabDroppedOnAnotherGroupTakesItsPlacesAlong) {
+    create_window();
+    const auto a = write("a.txt", numbered_lines(200));
+    open(a);
+    go_to_line(60);
+    const workbench::GroupId first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    const workbench::GroupId second = window_->editor_layout().focused();
+    window_->editor_layout().focus(first);
+    const int index = static_cast<int>(*window_->editor_layout().group(first)->active);
+
+    emit window_->editor_area()->tab_dropped_on_group(first, index, second);
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        if (entry.uri == core::Uri::file(a)) {
+            EXPECT_EQ(entry.group, second);
+        }
+    }
+    EXPECT_EQ(window_->editor_layout().group(second)->tabs.back(), core::Uri::file(a));
+}
+
+TEST_F(NavigationHistoryTest, LastEditLocationGoesToTheNewestEditAndBackReturns) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(70);
+    type("X");
+    open(write("b.txt", numbered_lines(200)));
+    go_to_line(30);
+    ASSERT_EQ(shown_name(), "b.txt");
+
+    run("workbench.action.navigateToLastEditLocation");
+    EXPECT_EQ(shown_name(), "a.txt");
+    EXPECT_EQ(caret_line(), 70U);
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(shown_name(), "b.txt");
+    EXPECT_EQ(caret_line(), 30U);
+}
+
+TEST_F(NavigationHistoryTest, OnlyEditsMakeAnEditLocation) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(70);
+    EXPECT_FALSE(enabled("workbench.action.navigateToLastEditLocation"));
+    type("X");
+    EXPECT_TRUE(enabled("workbench.action.navigateToLastEditLocation"));
+}
+
+TEST_F(NavigationHistoryTest, ASavedUntitledDocumentKeepsItsPlaces) {
+    create_window();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    const core::Uri untitled = window_->current_uri();
+    type("hello");
+    const std::size_t entries = window_->navigation_history().selections().entries().size();
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "saved.txt").string())));
+    EXPECT_EQ(window_->navigation_history().selections().entries().size(), entries);
+    bool saved_is_listed = false;
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        saved_is_listed = saved_is_listed || entry.uri == core::Uri::file(scratch_ / "saved.txt");
+        EXPECT_NE(entry.uri.path, untitled.path);
+    }
+    EXPECT_TRUE(saved_is_listed);
+}
+
+TEST_F(NavigationHistoryTest, TheGoMenuItemsRunTheirCommands) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(80);
+    type("x");
+    run("workbench.action.navigateBack");
+    const std::vector<std::string> ids = {"workbench.action.navigateBack",
+                                          "workbench.action.navigateForward",
+                                          "workbench.action.navigateToLastEditLocation"};
+    std::vector<std::string> executed;
+    for (const std::string& id : ids) {
+        window_->commands().add(id, "recorded",
+                                [&executed, id](const json&) { executed.push_back(id); });
+    }
+    for (const std::string& id : ids) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        ASSERT_TRUE(item->isEnabled()) << id;
+        executed.clear();
+        item->trigger();
+        EXPECT_EQ(executed, std::vector<std::string>{id}) << id;
+    }
+}
+
+TEST_F(NavigationHistoryTest, TheMenuShowsTheKeysOfTheCommands) {
+    create_window();
+    QAction* last = menu_action("workbench.action.navigateToLastEditLocation");
+    ASSERT_NE(last, nullptr);
+    EXPECT_TRUE(last->text().endsWith("\tCtrl+K Ctrl+Q")) << last->text().toStdString();
 }

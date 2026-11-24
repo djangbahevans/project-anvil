@@ -26,6 +26,7 @@
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/workbench/editor_layout.hpp"
 #include "anvil/workbench/menu_model.hpp"
+#include "anvil/workbench/navigation_history.hpp"
 
 #include <QMainWindow>
 #include <QTimer>
@@ -133,6 +134,9 @@ public:
     }
     workbench::EditorLayout& editor_layout() {
         return layout_;
+    }
+    const workbench::NavigationHistory& navigation_history() const {
+        return history_;
     }
     // The parts of the window: the editor area, and the empty activity bar, sidebar and panel
     // around it.
@@ -279,6 +283,9 @@ private:
     // adding it to the open documents when it is new.
     void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
     void activate_tab(workbench::GroupId group, std::size_t index);
+    // Moves a tab, and the places of its document in the navigation history with it.
+    bool move_tab(workbench::GroupId from, std::size_t index, workbench::GroupId to,
+                  std::size_t to_index);
     void focus_current_editor();
     // Focuses the nth group (counting from 0) in the order they are shown; the group after the
     // last one is made by splitting it, and a further one does nothing.
@@ -308,6 +315,17 @@ private:
     void update_status();
     void on_text_changed(workbench::GroupId group, const core::DocumentChange& change);
     void on_selections_changed(workbench::GroupId group);
+    // The primary selection of the document, or nothing when it is not open.
+    std::optional<workbench::NavigationSelection> selection_of(const core::Uri& uri) const;
+    // Tells the navigation history where the user is, unless the window is walking it.
+    void record_activation();
+    void record_selection(workbench::GroupId group, workbench::SelectionReason reason);
+    // Drops the places of groups that are gone and of documents that cannot be opened again.
+    void prune_navigation_history();
+    // Shows the place, opening its document again when it was closed. Returns false, and forgets
+    // the places of the document, when the document cannot be opened.
+    bool show_place(const workbench::NavigationEntry& place);
+    void navigate(std::optional<workbench::NavigationEntry> place, bool to_edit);
     void save_as_dialog();
     void open_dialog();
     // Shows the command palette, unless a dialog is open.
@@ -381,6 +399,9 @@ private:
     EditorArea* area_ = nullptr;
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
+    workbench::NavigationHistory history_;
+    // Set while the window shows a place of the history, which is not a place of its own.
+    bool walking_history_ = false;
     // The extension themes given to the theme store: an identifier and a file for each.
     std::set<std::string> offered_themes_;
     std::size_t next_untitled_ = 1;
