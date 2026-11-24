@@ -97,6 +97,20 @@ TEST(SmartSelect, ABraceOnItsOwnLineTakesTheLineAboveIt) {
                      "    if (x)\n    {\n        y;\n    }"}));
 }
 
+TEST(SmartSelect, APairInsideAnotherLineGivesTheTextThatLeadsToIt) {
+    EXPECT_EQ(expansions("x = {\n  |1\n} + 2"), (Texts{"", "1", "  1", "\n  1\n", "{\n  1\n}",
+                                                       "x = {\n  1\n}", "x = {\n  1\n} + 2"}));
+    EXPECT_EQ(expansions("  x = {\n    |1\n  } + 2"),
+              (Texts{"", "1", "    1", "\n    1\n  ", "{\n    1\n  }", "x = {\n    1\n  }",
+                     "  x = {\n    1\n  }", "  x = {\n    1\n  } + 2"}));
+}
+
+TEST(SmartSelect, ARangeThatCrossesTheNextOneIsLeftOut) {
+    EXPECT_EQ(expansions("f(a, {\n  |y\n})"),
+              (Texts{"", "y", "  y", "\n  y\n", "{\n  y\n}", "a, {\n  y\n}", "(a, {\n  y\n})",
+                     "f(a, {\n  y\n})"}));
+}
+
 TEST(SmartSelect, NestedPairsGrowOutwardAndEachKindOfBracketCounts) {
     EXPECT_EQ(expansions("a[(b|)]"), (Texts{"", "b", "(b)", "[(b)]", "a[(b)]"}));
 }
@@ -133,6 +147,14 @@ TEST(SmartSelect, ASelectionExpandsToTheNextRangeThatContainsIt) {
     EXPECT_EQ(editor.selected(), (Texts{"fooBar, baz"}));
 }
 
+TEST(SmartSelect, ASelectionThatIsARangeAlreadyExpandsPastIt) {
+    Editor editor("call(fooBar, baz)", {Selection{5, 11}});
+    editor.controller.expand_selection();
+    EXPECT_EQ(editor.selected(), (Texts{"fooBar, baz"}));
+    editor.controller.shrink_selection();
+    EXPECT_EQ(editor.document.selections().all(), (std::vector<Selection>{Selection{5, 11}}));
+}
+
 TEST(SmartSelect, AReversedSelectionExpandsToAForwardSelection) {
     Editor editor("foo bar baz", {Selection{7, 5}});
     editor.controller.expand_selection();
@@ -149,6 +171,19 @@ TEST(SmartSelect, EverySelectionExpandsOnItsOwn) {
     EXPECT_EQ(editor.selected(), (Texts{"(a b)", "(c d)"}));
     editor.controller.shrink_selection();
     EXPECT_EQ(editor.selected(), (Texts{"a b", "c d"}));
+}
+
+TEST(SmartSelect, ThePrimarySelectionStaysThePrimarySelection) {
+    Editor editor("(a b) (c d)");
+    ASSERT_TRUE(editor.document
+                    .set_selections(SelectionSet::from(
+                        {Selection::caret(1), Selection::caret(7), Selection::caret(10)}, 1))
+                    .has_value());
+    editor.controller.expand_selection();
+    EXPECT_EQ(editor.document.selections().primary_index(), 1U);
+    EXPECT_EQ(editor.text_of(editor.document.selections().primary()), "c");
+    editor.controller.shrink_selection();
+    EXPECT_EQ(editor.document.selections().primary_index(), 1U);
 }
 
 TEST(SmartSelect, SelectionsThatMeetAreMergedAndShrinkSeparatesThem) {
