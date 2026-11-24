@@ -25,11 +25,15 @@ struct EditorDefaults {
 // Whether the window draws its own title bar (`custom`) or has the system's frame (`native`).
 enum class TitleBarStyle { custom, native };
 
+// files.autoSave: when a document with a file and unsaved changes is saved without being asked.
+enum class AutoSave { off, after_delay, on_focus_change, on_window_change };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
     static constexpr int max_font_size = 100;
     static constexpr int max_tab_size = 1024;
+    static constexpr int max_auto_save_delay = 24 * 60 * 60 * 1000;
 
     // editor.fontFamily
     std::string font_family;
@@ -47,6 +51,12 @@ struct EditorSettings {
     // before it, and not the neighbor
     bool focus_recent_editor_after_close = true;
 
+    // files.autoSave
+    AutoSave auto_save = AutoSave::off;
+    // files.autoSaveDelay, in milliseconds: how long after its last change a document is saved
+    // when `auto_save` is `after_delay`
+    int auto_save_delay = 1000;
+
     // window.titleBarStyle: read when the window is created, so a change applies after a restart
     TitleBarStyle title_bar_style = TitleBarStyle::custom;
 
@@ -59,9 +69,11 @@ struct EditorSettings {
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
-    // 6-100, tab size to 1-1024: the upper bound keeps a typo from making Tab insert gigabytes).
-    // A value of the wrong type, a `files.eol` that is not one of "\n", "\r\n" and "auto", or a
-    // `window.titleBarStyle` that is not "custom" or "native", fails
+    // 6-100, tab size to 1-1024: the upper bound keeps a typo from making Tab insert gigabytes;
+    // the auto save delay to 0 ms-24 h). A value of the wrong type, a `files.eol` that is not one
+    // of "\n", "\r\n" and "auto", a `files.autoSave` that is not "off", "afterDelay",
+    // "onFocusChange" or "onWindowChange", or a `window.titleBarStyle` that is not "custom" or
+    // "native", fails
     // with ErrorCode::invalid_argument and a message that names every offending key.
     static std::expected<EditorSettings, Error> from_settings(const Settings& settings,
                                                               const EditorDefaults& defaults);
