@@ -79,6 +79,7 @@ target_compile_definitions(anvil_exthost_tests PRIVATE ANVIL_TEST_DATA_DIR="${CM
 gtest_discover_tests(anvil_exthost_tests)
 
 add_executable(anvil_workbench_tests
+  workbench/editor_layout_arrangement_test.cpp
   workbench/editor_layout_model_test.cpp
   workbench/editor_layout_navigation_test.cpp
   workbench/editor_layout_test.cpp

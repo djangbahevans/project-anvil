@@ -56,6 +56,13 @@ struct LayoutNode {
     bool operator==(const LayoutNode&) const = default;
 };
 
+// A way to arrange groups without naming them: a node with children is a splitter, one without is
+// a group. Every splitter of a shape lays its children out in the orientation opposite to the
+// splitter around it.
+struct LayoutShape {
+    std::vector<LayoutShape> children;
+};
+
 struct TabLocation {
     GroupId group{};
     std::size_t index = 0;
@@ -189,6 +196,18 @@ public:
     // follow while nothing else changes the tabs or the focus; each call moves one step in it, and
     // stops at its ends. False when there is no tab to show.
     bool navigate_recent(bool older, bool in_group);
+
+    // Arranges the groups as the shape says: the root is a splitter of `orientation` with
+    // `children`, and every splitter gives its children equal shares. The groups that exist go to
+    // the groups of the shape in the order they are shown. When the shape has fewer groups, the
+    // tabs of the ones left over are added at the end of the last group that stays, which shows the
+    // tab that a left-over group had in front when it had the focus; when it has more, empty groups
+    // are added. The focused group stays focused unless it goes, and then the last group that stays
+    // gets the focus.
+    void apply_layout(Orientation orientation, const std::vector<LayoutShape>& children);
+    // Turns every splitter the other way, columns into rows and rows into columns, keeping the
+    // order of the groups and the shares. False when there is only one group.
+    bool flip();
 
     // Sets the ratios of the splitter that is reached from the root by the given child positions,
     // scaled to add up to one. Returns false for a path that is not a splitter, a wrong number of

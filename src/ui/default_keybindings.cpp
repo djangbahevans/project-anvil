@@ -87,6 +87,12 @@ const Row rows[] = {
      {"shift+alt+i"},
      {"shift+alt+i"}},
 
+    {"workbench.action.toggleEditorGroupLayout",
+     "",
+     {"shift+alt+0"},
+     {"shift+alt+0"},
+     {"cmd+alt+0"}},
+
     // Tabs and groups.
     {"workbench.action.nextEditor",
      "",

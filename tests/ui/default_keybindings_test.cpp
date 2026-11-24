@@ -180,6 +180,18 @@ TEST(DefaultKeybindingsTest, TheTabAndGroupKeysAreVSCodes) {
     }
 }
 
+TEST(DefaultKeybindingsTest, FlipLayoutHasVSCodesKeyAndTheLayoutsHaveNone) {
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::linux),
+                      "workbench.action.toggleEditorGroupLayout"),
+              chords({"shift+alt+0"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos),
+                      "workbench.action.toggleEditorGroupLayout"),
+              chords({"cmd+alt+0"}));
+    EXPECT_TRUE(keys_of(default_keybindings(KeyPlatform::linux),
+                        "workbench.action.editorLayoutTwoByTwoGrid")
+                    .empty());
+}
+
 TEST(DefaultKeybindingsTest, WindowsHasItsOwnSecondaryKeys) {
     const auto windows = default_keybindings(KeyPlatform::windows);
     EXPECT_EQ(keys_of(windows, "workbench.action.closeActiveEditor"),
