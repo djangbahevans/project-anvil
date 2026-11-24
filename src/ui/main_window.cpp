@@ -111,10 +111,14 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));
     connect(palette_, &QuickPick::accepted, this, [this](std::size_t item) {
-        if (item < palette_ids_.size()) {
+        if (pick_action_) {
+            const auto action = std::exchange(pick_action_, nullptr);
+            action(item);
+        } else if (item < palette_ids_.size()) {
             run_palette_command(palette_ids_[item]);
         }
     });
+    connect(palette_, &QuickPick::cancelled, this, [this] { pick_action_ = nullptr; });
     area_ = new EditorArea(
         layout_, colors_, [this](const core::Uri& uri) { return tab_info(uri); },
         [this](const core::Uri& uri) {
@@ -319,6 +323,8 @@ MainWindow::~MainWindow() {
     for (QMenu* menu : findChildren<QMenu*>()) {
         menu->setStyle(nullptr);
     }
+    // The pick closes when its widget is deleted, after the members that its handlers use are gone.
+    palette_->disconnect(this);
     // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
     disconnect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
     // The area observes the layout, which is destroyed before the child widgets are.
@@ -376,7 +382,11 @@ void MainWindow::workspace_changed() {
                                       15000);
         } else {
             for (const auto& [uri, document] : documents_) {
-                bridge_.add_document(uri, document);
+                const auto chosen = chosen_languages_.find(uri);
+                bridge_.add_document(uri, document,
+                                     chosen == chosen_languages_.end()
+                                         ? std::nullopt
+                                         : std::optional<std::string>(chosen->second));
             }
             apply_extension_host_options();
             if (shown_uri_) {
@@ -551,6 +561,10 @@ const MainWindow::DocumentLanguage& MainWindow::language_of_document(const core:
 void MainWindow::refresh_document_languages() {
     document_languages_.clear();
     for (const auto& [uri, document] : documents_) {
+        if (const auto chosen = chosen_languages_.find(uri); chosen != chosen_languages_.end()) {
+            document_languages_.emplace(uri, describe_language(chosen->second));
+            continue;
+        }
         if (bridge_.language_is_fixed(uri)) {
             continue;
         }
@@ -559,6 +573,123 @@ void MainWindow::refresh_document_languages() {
         document_languages_.emplace(uri, describe_language(id));
     }
     update_status();
+}
+
+void MainWindow::forget_document_language(const core::Uri& uri) {
+    document_languages_.erase(uri);
+    chosen_languages_.erase(uri);
+}
+
+void MainWindow::pick_from(const QString& placeholder, std::vector<QuickPickItem> items,
+                           std::function<void(std::size_t)> chosen) {
+    if (QApplication::activeModalWidget()) {
+        return;
+    }
+    pick_action_ = std::move(chosen);
+    palette_->set_ignored_prefix({});
+    palette_->set_placeholder(placeholder);
+    palette_->set_empty_message(tr("No matching results"));
+    palette_->set_items(std::move(items));
+    palette_->set_top_offset(has_custom_title_bar() ? title_bar_->height() : menu_bar_->height());
+    palette_->open();
+}
+
+std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current,
+                                                      std::vector<std::string>& ids) const {
+    struct Named {
+        std::string id;
+        QString name;
+    };
+    std::vector<Named> languages;
+    for (const std::string& id : languages_.language_ids()) {
+        if (const core::Language* language = languages_.language(id); language && language->name) {
+            languages.push_back({id, QString::fromStdString(*language->name)});
+        }
+    }
+    std::ranges::stable_sort(languages, [&](const Named& a, const Named& b) {
+        if ((a.id == current) != (b.id == current)) {
+            return a.id == current;
+        }
+        return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    std::vector<QuickPickItem> items;
+    ids.clear();
+    for (Named& language : languages) {
+        items.push_back({language.name,
+                         language.id == current ? tr("Current") : QString(),
+                         QString::fromStdString(language.id),
+                         {},
+                         false});
+        ids.push_back(std::move(language.id));
+    }
+    return items;
+}
+
+void MainWindow::choose_language(const core::Uri& uri, const std::string& id) {
+    if (!documents_.contains(uri)) {
+        return;
+    }
+    chosen_languages_[uri] = id;
+    document_languages_.insert_or_assign(uri, describe_language(id));
+    bridge_.language_changed(uri, id);
+    update_status();
+}
+
+void MainWindow::change_language_mode() {
+    const core::Uri* shown = current_uri_ptr();
+    if (!shown) {
+        return;
+    }
+    // The pick is not modal: the document can be closed or renamed before the user chooses.
+    const core::Uri uri = *shown;
+    auto ids = std::make_shared<std::vector<std::string>>();
+    std::vector<QuickPickItem> items = language_picks(language_of_document(uri).id, *ids);
+    const auto file = uri.file_path();
+    const std::string extension = file ? file->extension().string() : std::string();
+    const std::string base = file ? file->filename().string() : std::string();
+    if (!extension.empty()) {
+        items.push_back(
+            {tr("Configure File Association for '%1'…").arg(QString::fromStdString(extension)),
+             {},
+             {},
+             {},
+             false});
+    }
+    const std::size_t associate = ids->size();
+    pick_from(tr("Select Language Mode"), std::move(items),
+              [this, uri, ids, associate, extension, base](std::size_t item) {
+                  if (item < associate) {
+                      choose_language(uri, (*ids)[item]);
+                      focus_current_editor();
+                      return;
+                  }
+                  if (item != associate || extension.empty()) {
+                      return;
+                  }
+                  // The quick pick is still closing, and opening it again at once loses the focus.
+                  QTimer::singleShot(0, this, [this, extension, base] {
+                      std::vector<std::string> languages;
+                      std::vector<QuickPickItem> picks = language_picks({}, languages);
+                      const std::string key = base.starts_with('.') ? base : "*" + extension;
+                      pick_from(tr("Select Language Mode to Associate with '%1'")
+                                    .arg(QString::fromStdString(extension)),
+                                std::move(picks),
+                                [this, key, languages = std::move(languages)](std::size_t pick) {
+                                    if (pick >= languages.size()) {
+                                        return;
+                                    }
+                                    const core::Settings& settings = settings_->settings();
+                                    const nlohmann::json* known =
+                                        settings.find("files.associations");
+                                    nlohmann::json associations = known && known->is_object()
+                                                                      ? *known
+                                                                      : nlohmann::json::object();
+                                    associations[key] = languages[pick];
+                                    change_setting("files.associations", std::move(associations),
+                                                   tr("File Associations"));
+                                });
+                  });
+              });
 }
 
 void MainWindow::apply_extension_host_options() {
@@ -637,6 +768,8 @@ void MainWindow::register_commands() {
     add("saveAll", tr("Save All"), [this] { save_all(); });
     add("workbench.action.files.revert", tr("Revert File"), [this] { revert(); });
     add("workbench.action.files.saveAs", tr("Save As…"), [this] { save_as_dialog(); });
+    add("workbench.action.editor.changeLanguageMode", tr("Change Language Mode"),
+        [this] { change_language_mode(); });
     add("workbench.action.closeActiveEditor", tr("Close Editor"), [this] {
         const workbench::EditorGroup* group = layout_.group(layout_.focused());
         if (group->active) {
@@ -1177,7 +1310,7 @@ bool MainWindow::close_document_in(workbench::GroupId group,
     layout_.close_tab(target.group, target.index);
     if (layout_.locations(*uri).empty()) {
         bridge_.remove_document(*uri);
-        document_languages_.erase(*uri);
+        forget_document_language(*uri);
         documents_.erase(*uri);
     }
     return true;
@@ -1225,7 +1358,7 @@ bool MainWindow::close_group(workbench::GroupId group) {
     for (const auto& document : documents) {
         if (const auto uri = uri_of(document); uri && layout_.locations(*uri).empty()) {
             bridge_.remove_document(*uri);
-            document_languages_.erase(*uri);
+            forget_document_language(*uri);
             documents_.erase(*uri);
         }
     }
@@ -1514,13 +1647,19 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
     }
     if (!(uri == new_uri)) {
         // The document keeps its text and history; extensions see it under its new name.
+        std::optional<std::string> chosen;
+        if (const auto found = chosen_languages_.find(uri); found != chosen_languages_.end()) {
+            chosen = found->second;
+            chosen_languages_.erase(found);
+            chosen_languages_.emplace(new_uri, *chosen);
+        }
         document_languages_.erase(uri);
         auto node = documents_.extract(uri);
         const std::shared_ptr<core::Document> document = node.mapped();
         node.key() = new_uri;
         documents_.insert(std::move(node));
         bridge_.remove_document(uri);
-        bridge_.add_document(new_uri, document);
+        bridge_.add_document(new_uri, document, chosen);
         history_.replace_uri(uri, new_uri);
         layout_.replace_document(uri, new_uri);
     }
@@ -1580,6 +1719,10 @@ void MainWindow::show_command_palette() {
         }
     }
 
+    pick_action_ = nullptr;
+    palette_->set_ignored_prefix(">");
+    palette_->set_placeholder(tr("Type the name of a command to run"));
+    palette_->set_empty_message(tr("No matching commands"));
     palette_ids_.clear();
     std::vector<QuickPickItem> items;
     for (Entry& entry : entries) {
@@ -1795,7 +1938,8 @@ void MainWindow::update_status() {
     }
     status_bar_->set_item(language_item_id, StatusBarSide::right,
                           {.text = language_of_document(*current).name,
-                           .tooltip = tr("Language Mode"),
+                           .tooltip = tr("Select Language Mode"),
+                           .command = "workbench.action.editor.changeLanguageMode",
                            .priority = language_priority});
     const core::Document& document = *documents_.at(*current);
     const core::Position position =

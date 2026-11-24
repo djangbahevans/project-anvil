@@ -6337,3 +6337,215 @@ TEST_F(NavigationHistoryTest, TheMenuShowsTheKeysOfTheCommands) {
     ASSERT_NE(last, nullptr);
     EXPECT_TRUE(last->text().endsWith("\tCtrl+K Ctrl+Q")) << last->text().toStdString();
 }
+
+class ChangeLanguageModeTest : public LanguageTest {
+protected:
+    static constexpr const char* command = "workbench.action.editor.changeLanguageMode";
+
+    // The labels of the items of the pick that the command opened.
+    std::vector<QString> labels() const {
+        std::vector<QString> result;
+        for (const ui::QuickPickItem& item : window_->command_palette()->items()) {
+            result.push_back(item.label);
+        }
+        return result;
+    }
+
+    // Types `text` in the open pick and chooses the item that matches best.
+    void choose(const QString& text) {
+        ui::QuickPick* pick = window_->command_palette();
+        ASSERT_TRUE(pick->isVisible());
+        QTest::keyClicks(pick->filter_field(), text);
+        QTest::keyClick(pick->filter_field(), Qt::Key_Return);
+        QApplication::processEvents();
+    }
+};
+
+TEST_F(ChangeLanguageModeTest,
+       ListsTheNamedLanguagesWithTheCurrentOneFirstAndMarkedAndTheAssociationLast) {
+    create_window();
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    ui::QuickPick* pick = window_->command_palette();
+    ASSERT_TRUE(pick->isVisible());
+
+    const auto& items = pick->items();
+    ASSERT_GT(items.size(), 70U);
+    EXPECT_EQ(items.front().label, "TypeScript");
+    EXPECT_EQ(items.front().description, "Current");
+    EXPECT_EQ(items.front().detail, "typescript");
+    EXPECT_EQ(items.back().label, "Configure File Association for '.ts'…");
+    for (std::size_t i = 1; i + 1 < items.size(); ++i) {
+        EXPECT_TRUE(items[i].description.isEmpty()) << items[i].label.toStdString();
+        EXPECT_FALSE(items[i].detail.isEmpty()) << items[i].label.toStdString();
+        if (i > 1) {
+            EXPECT_LE(items[i - 1].label.compare(items[i].label, Qt::CaseInsensitive), 0)
+                << items[i].label.toStdString();
+        }
+    }
+    const auto plain = std::ranges::find(items, QString("Plain Text"), &ui::QuickPickItem::label);
+    ASSERT_NE(plain, items.end());
+    EXPECT_EQ(plain->detail, "plaintext");
+    EXPECT_EQ(pick->filter_field()->text(), "");
+}
+
+TEST_F(ChangeLanguageModeTest, ADocumentWithoutAFileHasNoAssociationEntry) {
+    create_window();
+    window_->commands().execute(command);
+    EXPECT_EQ(window_->command_palette()->items().front().label, "Plain Text");
+    EXPECT_EQ(window_->command_palette()->items().front().description, "Current");
+    EXPECT_FALSE(labels().back().startsWith("Configure"));
+    ASSERT_TRUE(open(write("Makefile", "all:")));
+    window_->command_palette()->cancel();
+    window_->commands().execute(command);
+    EXPECT_TRUE(labels().back().startsWith("Configure") == false);
+}
+
+TEST_F(ChangeLanguageModeTest, ChoosingALanguageChangesItForExtensionsAndTheStatusBar) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    ASSERT_EQ(host_language(), "typescript");
+    window_->commands().execute(command);
+    choose("Python");
+    EXPECT_TRUE(window_->command_palette()->isHidden());
+    EXPECT_TRUE(host_language_becomes("python"));
+    EXPECT_EQ(shown_language(), "Python");
+
+    window_->commands().execute(command);
+    EXPECT_EQ(window_->command_palette()->items().front().label, "Python");
+    EXPECT_EQ(window_->command_palette()->items().front().description, "Current");
+}
+
+TEST_F(ChangeLanguageModeTest, CancellingChangesNothing) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->command_palette()->isHidden());
+    EXPECT_EQ(host_language(), "typescript");
+    EXPECT_EQ(shown_language(), "TypeScript");
+    // The next use of the palette is the command palette again.
+    window_->commands().execute("workbench.action.showCommands");
+    EXPECT_EQ(window_->command_palette()->filter_field()->text(), ">");
+    EXPECT_NE(window_->command_palette()->items().front().label, "TypeScript");
+}
+
+TEST_F(ChangeLanguageModeTest,
+       TheChoiceSurvivesSaveAsAndAChangeOfTheAssociationsAndEndsWithTheDocument) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.txt", "abc")));
+    window_->commands().execute(command);
+    choose("Python");
+    ASSERT_TRUE(host_language_becomes("python"));
+
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.ts").string())));
+    EXPECT_EQ(host_language(), "python");
+    EXPECT_EQ(shown_language(), "Python");
+
+    window_->change_setting("files.associations", json{{"*.ts", "markdown"}});
+    ASSERT_TRUE(open(write("c.ts", "abc")));
+    EXPECT_TRUE(host_language_becomes("markdown"));
+    ASSERT_TRUE(open(scratch_ / "b.ts"));
+    EXPECT_EQ(host_language(), "python");
+    EXPECT_EQ(shown_language(), "Python");
+
+    ASSERT_TRUE(window_->close_document(1));
+    ASSERT_TRUE(open(scratch_ / "b.ts"));
+    EXPECT_EQ(host_language(), "markdown");
+    EXPECT_EQ(shown_language(), "Markdown");
+}
+
+TEST_F(ChangeLanguageModeTest, TheChoiceIsKeptWhenTheExtensionHostRestarts) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    choose("Python");
+    ASSERT_TRUE(host_language_becomes("python"));
+    std::filesystem::create_directories(scratch_ / "project");
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    ASSERT_TRUE(wait_until([&] {
+        return window_->bridge().host() &&
+               window_->bridge().host()->state() == exthost::HostState::ready;
+    }));
+    EXPECT_EQ(host_language(), "python");
+    EXPECT_EQ(shown_language(), "Python");
+}
+
+TEST_F(ChangeLanguageModeTest, TheChoiceIsNotWrittenToTheSettings) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    choose("Python");
+    EXPECT_EQ(shown_language(), "Python");
+    EXPECT_EQ(platform::read_file(settings_file_).value_or("?"), "{}");
+}
+
+TEST_F(ChangeLanguageModeTest,
+       TheAssociationEntryWritesTheSettingAndUpdatesTheOtherDocumentsOfTheExtension) {
+    settings_file_ = write("settings.json", R"j({"files.autoSave": "off"})j");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    ASSERT_TRUE(open(write("b.ts", "abc")));
+    ASSERT_TRUE(open(write("c.txt", "abc")));
+    ASSERT_TRUE(open(scratch_ / "a.ts"));
+    window_->commands().execute(command);
+    choose("Configure");
+    // The second list opens once the first has closed.
+    ASSERT_TRUE(wait_until([&] { return window_->command_palette()->isVisible(); }));
+    EXPECT_EQ(window_->command_palette()->items().size(), labels().size());
+    EXPECT_EQ(window_->command_palette()->filter_field()->placeholderText(),
+              "Select Language Mode to Associate with '.ts'");
+    choose("Python");
+
+    const std::string text = platform::read_file(settings_file_).value_or("");
+    EXPECT_NE(text.find(R"j("*.ts":"python")j"), std::string::npos) << text;
+    EXPECT_NE(text.find("files.autoSave"), std::string::npos) << text;
+    EXPECT_TRUE(wait_until([&] { return host_language() == "python"; }));
+    ASSERT_TRUE(open(scratch_ / "b.ts"));
+    EXPECT_EQ(host_language(), "python");
+    ASSERT_TRUE(open(scratch_ / "c.txt"));
+    EXPECT_EQ(host_language(), "plaintext");
+}
+
+TEST_F(ChangeLanguageModeTest, TheAssociationEntryKeepsTheAssociationsThatAreThere) {
+    settings_file_ = write("settings.json", R"j({"files.associations": {"*.cfg": "ini"}})j");
+    create_window();
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    choose("Configure");
+    ASSERT_TRUE(wait_until([&] { return window_->command_palette()->isVisible(); }));
+    choose("Markdown");
+    const std::string text = platform::read_file(settings_file_).value_or("");
+    EXPECT_NE(text.find(R"j("*.cfg":"ini")j"), std::string::npos) << text;
+    EXPECT_NE(text.find(R"j("*.ts":"markdown")j"), std::string::npos) << text;
+    EXPECT_EQ(shown_language(), "Markdown");
+}
+
+TEST_F(ChangeLanguageModeTest, TheLanguageItemOfTheStatusBarRunsTheCommand) {
+    create_window();
+    EXPECT_EQ(window_->status_bar().item("status.editor.language")->command, command);
+}
+
+TEST_F(ChangeLanguageModeTest, TheCommandIsInTheCommandPalette) {
+    create_window();
+    window_->commands().execute("workbench.action.showCommands");
+    const auto& items = window_->command_palette()->items();
+    EXPECT_NE(std::ranges::find(items, QString("Change Language Mode"), &ui::QuickPickItem::label),
+              items.end());
+}

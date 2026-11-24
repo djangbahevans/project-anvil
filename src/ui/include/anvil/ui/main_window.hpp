@@ -254,6 +254,19 @@ private:
         QString name;
     };
     const DocumentLanguage& language_of_document(const core::Uri& uri);
+    // Lets the user pick the language of the shown document (Change Language Mode).
+    void change_language_mode();
+    // Gives the document the language that the user picked, until it is closed.
+    void choose_language(const core::Uri& uri, const std::string& id);
+    // Forgets what the window knows of the language of a document that leaves the window.
+    void forget_document_language(const core::Uri& uri);
+    // Shows `items` in the quick pick; `chosen` gets the position of the one the user picks.
+    void pick_from(const QString& placeholder, std::vector<QuickPickItem> items,
+                   std::function<void(std::size_t)> chosen);
+    // What a pick of a language shows: the registered languages that have a name, sorted by name,
+    // with `current` first and marked, and the id under each name.
+    std::vector<QuickPickItem> language_picks(const std::string& current,
+                                              std::vector<std::string>& ids) const;
     DocumentLanguage describe_language(const std::string& id) const;
     // The name of the workspace folder, or "Anvil" without one.
     QString workspace_label() const;
@@ -392,6 +405,10 @@ private:
     // The language of each open document, filled when it is first asked for so that the status bar
     // does not ask the registry on every keystroke.
     std::map<core::Uri, DocumentLanguage> document_languages_;
+    // The languages that the user picked for documents, which the registry does not change.
+    std::map<core::Uri, std::string> chosen_languages_;
+    // What the quick pick does with the item that is chosen, while it is not the command palette.
+    std::function<void(std::size_t)> pick_action_;
     // The open documents, each shown by one or more tabs of the layout.
     std::map<core::Uri, std::shared_ptr<core::Document>> documents_;
     workbench::EditorLayout layout_;

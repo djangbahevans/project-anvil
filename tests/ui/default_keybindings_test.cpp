@@ -145,6 +145,13 @@ TEST(DefaultKeybindingsTest, TheNavigationHistoryKeysAreVSCodesOnEveryPlatform) 
               chords({"cmd+k cmd+q"}));
 }
 
+TEST(DefaultKeybindingsTest, ChangeLanguageModeIsACtrlKChordOnEveryPlatform) {
+    const char* command = "workbench.action.editor.changeLanguageMode";
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::linux), command), chords({"ctrl+k m"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::windows), command), chords({"ctrl+k m"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), command), chords({"cmd+k m"}));
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);

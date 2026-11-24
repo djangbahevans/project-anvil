@@ -78,7 +78,9 @@ public:
     // is none or no extension host is running.
     std::shared_ptr<core::Document> find(const core::Uri& uri) const;
 
-    void add_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
+    // `language` is the language id the document has, where the resolver would choose one.
+    void add_document(const core::Uri& uri, std::shared_ptr<core::Document> document,
+                      std::optional<std::string> language = std::nullopt);
     void remove_document(const core::Uri& uri);
 
     // Chooses the language id of the documents that are registered without one, in this host and in

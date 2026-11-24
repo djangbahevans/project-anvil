@@ -92,9 +92,10 @@ std::shared_ptr<core::Document> ExtensionHostBridge::find(const core::Uri& uri) 
 }
 
 void ExtensionHostBridge::add_document(const core::Uri& uri,
-                                       std::shared_ptr<core::Document> document) {
+                                       std::shared_ptr<core::Document> document,
+                                       std::optional<std::string> language) {
     if (host_) {
-        (void)host_->documents().add_document(uri, std::move(document));
+        (void)host_->documents().add_document(uri, std::move(document), std::move(language));
     }
 }
 
