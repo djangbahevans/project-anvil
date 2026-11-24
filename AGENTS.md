@@ -68,8 +68,8 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 
 | Directory | Contents |
 | --- | --- |
-| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, color themes, key chords, fuzzy matching, UTF-8/UTF-16, URIs, the workspace folder and the command line, JSON with comments (parsed, with positions, and edited in place), settings, logging interface |
-| `src/platform` | processes, local sockets, files, paths, per-platform editor defaults |
+| `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, color themes, key chords, fuzzy matching, UTF-8/UTF-16, URIs, glob patterns, the workspace folder and the command line, JSON with comments (parsed, with positions, and edited in place), settings, logging interface |
+| `src/platform` | processes, local sockets, files, file watching, paths, per-platform editor defaults |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services, the commands, key bindings and palette rules that extension manifests contribute |
 | `src/workbench` | the editor layout: groups of tabs, the split tree, focus, saving and restoring it, and the menu bar of VS Code with the rules that show its entries (no Qt) |
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, title bar and window frame, tab strip, splitter, editor area and its groups, main window, extension host bridge |
