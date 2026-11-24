@@ -5,12 +5,15 @@
 //   cmake --preset linux-clang-release -DANVIL_BUILD_BENCHMARKS=ON
 //   cmake --build --preset linux-clang-release --target anvil_highlighter_bench
 //   build/linux-clang-release/bin/anvil_highlighter_bench
+#include "anvil/core/highlight_worker.hpp"
 #include "anvil/core/text_buffer.hpp"
 #include "anvil/core/tree_sitter_highlighter.hpp"
 
 #include <benchmark/benchmark.h>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <string>
 
 using namespace anvil::core;
@@ -121,5 +124,42 @@ BENCHMARK(ReparseAndSpansOfAScreen)
     ->Arg(0)
     ->ArgName("nested")
     ->Unit(benchmark::kMicrosecond);
+
+// From an edit of one character to the worker's result for it, with the parse on the worker's
+// thread: the time before the editor can show the colors of what was typed.
+void WorkerRoundTrip(benchmark::State& state) {
+    TextBuffer buffer(document(state.range(0) != 0));
+    std::mutex mutex;
+    std::condition_variable arrived;
+    std::uint64_t delivered = 0;
+    auto worker =
+        HighlightWorker::create("json", buffer.snapshot(), 1,
+                                [&](std::uint64_t version, std::shared_ptr<const Highlighter>) {
+                                    {
+                                        const std::lock_guard lock(mutex);
+                                        delivered = version;
+                                    }
+                                    arrived.notify_all();
+                                });
+    if (!worker) {
+        state.SkipWithError("no worker");
+        return;
+    }
+    const auto wait_for = [&](std::uint64_t version) {
+        std::unique_lock lock(mutex);
+        arrived.wait(lock, [&] { return delivered >= version; });
+    };
+    wait_for(1);
+    const std::size_t at = buffer.snapshot().size() / 2;
+    std::uint64_t version = 1;
+    bool insert = true;
+    for (auto _ : state) {
+        const auto change = insert ? buffer.insert(at, " ") : buffer.erase(at, at + 1);
+        insert = !insert;
+        (*worker)->edit(DocumentChange{++version, ChangeCause::edit, {*change}}, buffer.snapshot());
+        wait_for(version);
+    }
+}
+BENCHMARK(WorkerRoundTrip)->Arg(1)->Arg(0)->ArgName("nested")->Unit(benchmark::kMicrosecond);
 
 } // namespace

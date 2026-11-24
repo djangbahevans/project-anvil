@@ -945,10 +945,15 @@ namespace {
 class PaintCounter : public QObject {
 public:
     int paints = 0;
+    // The area that the paints asked to redraw, together.
+    QRegion painted;
 
 protected:
     bool eventFilter(QObject*, QEvent* event) override {
-        paints += event->type() == QEvent::Paint ? 1 : 0;
+        if (event->type() == QEvent::Paint) {
+            ++paints;
+            painted += static_cast<QPaintEvent*>(event)->region();
+        }
         return false;
     }
 };
@@ -1196,6 +1201,9 @@ public:
     void bump() {
         ++version_;
     }
+    void set_scopes(std::map<std::string, std::string> scopes) {
+        scopes_ = std::move(scopes);
+    }
     // The lines that were asked for since the last `clear_asked`.
     mutable std::vector<std::size_t> asked_;
     void clear_asked() const {
@@ -1400,11 +1408,57 @@ TEST_F(SyntaxHighlightingTest, RefreshingPaintsOnlyWhenTheHighlighterHasNewSpans
     view_.refresh_highlighting();
     QApplication::processEvents();
     EXPECT_EQ(counter.paints, 0);
+
+    highlighter_->set_scopes({{"let", "string.fake"}});
     highlighter_->bump();
     view_.refresh_highlighting();
     view_.refresh_highlighting();
     QApplication::processEvents();
     EXPECT_EQ(counter.paints, 1);
+}
+
+TEST_F(SyntaxHighlightingTest, ANewVersionWithTheSameSpansPaintsNothing) {
+    open("let x");
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
+}
+
+TEST_F(SyntaxHighlightingTest, RefreshingPaintsOnlyTheLinesWhoseSpansChanged) {
+    open("let a\nif b\nlet c\nlet d");
+    highlight({{"let", "keyword.control.fake"}, {"if", "string.fake"}});
+    painted();
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+
+    highlighter_->set_scopes({{"let", "keyword.control.fake"}, {"if", "invalid.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+
+    ASSERT_EQ(counter.paints, 1);
+    const QRect changed = counter.painted.boundingRect();
+    EXPECT_EQ(changed.top(), view_.line_height());
+    EXPECT_EQ(changed.height(), view_.line_height());
+}
+
+TEST_F(SyntaxHighlightingTest, TheLinesThatChangedAreThoseOfTheSpansLastLaidOut) {
+    open("let a\nlet b\nlet c");
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+
+    highlighter_->set_scopes({{"let", "string.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+    EXPECT_EQ(counter.painted.boundingRect().height(), 3 * view_.line_height());
 }
 
 TEST_F(SyntaxHighlightingTest, OnlyTheLinesInViewAreAskedForSpans) {

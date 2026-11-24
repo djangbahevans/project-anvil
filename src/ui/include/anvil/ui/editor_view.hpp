@@ -17,6 +17,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace anvil::ui {
@@ -129,7 +130,12 @@ public:
     // Only the lines in view are asked for spans. The view paints again when `refresh_highlighting`
     // finds that the highlighter's version has changed, or at once for a new highlighter.
     void set_highlighter(std::shared_ptr<const core::Highlighter> highlighter);
-    // Paints again if the highlighter has new spans since the last paint.
+    const std::shared_ptr<const core::Highlighter>& highlighter() const {
+        return highlighter_;
+    }
+    // Paints again the lines in view whose spans differ from those last painted, if the
+    // highlighter's version has changed since: when spans arrive for a few lines, the others are
+    // left alone.
     void refresh_highlighting();
 
     // The caret rectangle of byte `offset`, in viewport coordinates.
@@ -185,6 +191,8 @@ private:
     bool has_multi_cursor_modifier(Qt::KeyboardModifiers modifiers) const;
     bool has_other_modifier(Qt::KeyboardModifiers modifiers) const;
     // Draws the marks for the spaces and tabs of the line that `render_whitespace_` asks for.
+    // A number that differs when the spans of the highlighter on `line` differ.
+    std::size_t span_digest(std::size_t line) const;
     // The format of each span of the highlighter on `line`, whose text has `size` UTF-16 units.
     QList<QTextLayout::FormatRange> syntax_formats(const core::TokenTheme& token_theme,
                                                    std::size_t line, qsizetype size) const;
@@ -248,6 +256,9 @@ private:
     std::vector<core::Match> highlights_;
     std::shared_ptr<const core::Highlighter> highlighter_;
     std::uint64_t painted_highlighter_version_ = 0;
+    // A digest of the spans that each line was last laid out with, which tells
+    // `refresh_highlighting` what changed. Lines far from the view are dropped as it runs.
+    mutable std::unordered_map<std::size_t, std::size_t> laid_out_spans_;
     std::optional<OccurrenceSession> occurrence_session_;
 };
 

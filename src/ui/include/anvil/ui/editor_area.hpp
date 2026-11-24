@@ -72,6 +72,9 @@ class EditorArea : public QWidget, private workbench::EditorLayout::Observer {
 public:
     using TabInfo = std::function<TabStrip::Tab(const core::Uri&)>;
     using DocumentLookup = std::function<std::shared_ptr<core::Document>(const core::Uri&)>;
+    // The highlighter for the views of a document, or null for plain text.
+    using HighlighterLookup =
+        std::function<std::shared_ptr<const core::Highlighter>(const core::Uri&)>;
 
     // The layout and the colors must outlive the area.
     EditorArea(workbench::EditorLayout& layout, const WorkbenchColors& colors, TabInfo tab_info,
@@ -81,6 +84,12 @@ public:
     EditorGroupWidget* group(workbench::GroupId id) const;
     EditorGroupWidget* focused_group() const;
     std::vector<EditorGroupWidget*> groups() const;
+
+    // Where the editors get the highlighter of the document they show. Without one they show plain
+    // text. `refresh_highlighters` asks again for every editor, which is what a change of the
+    // language of a document needs.
+    void set_highlighter_lookup(HighlighterLookup lookup);
+    void refresh_highlighters();
 
     // Applies the settings to the editors of every group, and to the groups that come later.
     void apply_settings(const core::EditorSettings& settings);
@@ -131,6 +140,7 @@ private:
     void apply_sizes(const workbench::LayoutNode& node, QWidget* widget);
     void sync_tabs(EditorGroupWidget& widget);
     void sync_document(EditorGroupWidget& widget);
+    void sync_highlighter(EditorGroupWidget& widget);
     // Marks the group that has the focus in the layout and moves the keyboard focus into it.
     void apply_focus();
     void on_focus_changed(QWidget* now);
@@ -146,6 +156,7 @@ private:
     const WorkbenchColors& colors_;
     TabInfo tab_info_;
     DocumentLookup document_for_;
+    HighlighterLookup highlighter_for_;
     core::EditorSettings settings_;
     std::vector<EditorGroupWidget*> groups_;
     QVBoxLayout* box_ = nullptr;

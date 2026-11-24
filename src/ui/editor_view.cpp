@@ -216,6 +216,7 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     controller_ = document_ ? std::make_unique<core::EditController>(*document_) : nullptr;
     max_line_width_ = 0;
     highlights_.clear();
+    laid_out_spans_.clear();
     verticalScrollBar()->setValue(0);
     horizontalScrollBar()->setValue(0);
     update_scroll_bars();
@@ -252,15 +253,49 @@ void EditorView::replace_ranges(std::vector<core::Edit> edits,
 
 void EditorView::set_highlighter(std::shared_ptr<const core::Highlighter> highlighter) {
     highlighter_ = std::move(highlighter);
+    laid_out_spans_.clear();
     painted_highlighter_version_ = highlighter_ ? highlighter_->version() : 0;
     viewport()->update();
 }
 
 void EditorView::refresh_highlighting() {
-    if (highlighter_ && highlighter_->version() != painted_highlighter_version_) {
-        painted_highlighter_version_ = highlighter_->version();
-        viewport()->update();
+    if (!highlighter_ || highlighter_->version() == painted_highlighter_version_) {
+        return;
     }
+    painted_highlighter_version_ = highlighter_->version();
+    if (!document_ || line_height_ <= 0) {
+        viewport()->update();
+        return;
+    }
+    const std::size_t line_count = document_->text().line_count();
+    const std::size_t first = static_cast<std::size_t>(verticalScrollBar()->value() / line_height_);
+    const std::size_t last = std::min(
+        line_count, static_cast<std::size_t>((verticalScrollBar()->value() + viewport()->height()) /
+                                             line_height_) +
+                        1);
+    std::erase_if(laid_out_spans_, [&](const auto& entry) {
+        return entry.first + 1 < first || entry.first > last + 1;
+    });
+    QRegion changed;
+    for (std::size_t line = first; line < last; ++line) {
+        const auto known = laid_out_spans_.find(line);
+        if (known == laid_out_spans_.end() || known->second != span_digest(line)) {
+            const int y = static_cast<int>(line) * line_height_ - verticalScrollBar()->value();
+            changed += QRect(0, y, viewport()->width(), line_height_);
+        }
+    }
+    if (!changed.isEmpty()) {
+        viewport()->update(changed);
+    }
+}
+
+std::size_t EditorView::span_digest(std::size_t line) const {
+    std::size_t digest = 0;
+    for (const core::HighlightSpan& span : highlighter_->spans(line)) {
+        digest = digest * 1000003 ^ (span.begin * 31 + span.end);
+        digest = digest * 1000003 ^ std::hash<std::string_view>{}(span.scope);
+    }
+    return digest;
 }
 
 void EditorView::set_highlights(std::vector<core::Match> highlights) {
@@ -285,6 +320,7 @@ QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenThem
                                                            std::size_t line, qsizetype size) const {
     QList<QTextLayout::FormatRange> formats;
     const std::string_view root = highlighter_->root_scope();
+    laid_out_spans_[line] = span_digest(line);
     for (const core::HighlightSpan& span : highlighter_->spans(line)) {
         const qsizetype begin = static_cast<qsizetype>(span.begin);
         const qsizetype end = std::min(static_cast<qsizetype>(span.end), size);

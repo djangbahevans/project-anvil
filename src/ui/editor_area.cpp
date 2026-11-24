@@ -313,6 +313,27 @@ void EditorArea::sync_tabs(EditorGroupWidget& widget) {
     }
 }
 
+void EditorArea::set_highlighter_lookup(HighlighterLookup lookup) {
+    highlighter_for_ = std::move(lookup);
+}
+
+void EditorArea::refresh_highlighters() {
+    for (EditorGroupWidget* widget : groups_) {
+        sync_highlighter(*widget);
+    }
+}
+
+void EditorArea::sync_highlighter(EditorGroupWidget& widget) {
+    const workbench::EditorGroup* state = layout_.group(widget.id());
+    std::shared_ptr<const core::Highlighter> highlighter;
+    if (state->active && widget.view()->document() && highlighter_for_) {
+        highlighter = highlighter_for_(state->tabs[*state->active]);
+    }
+    if (widget.view()->highlighter() != highlighter) {
+        widget.view()->set_highlighter(std::move(highlighter));
+    }
+}
+
 void EditorArea::sync_document(EditorGroupWidget& widget) {
     const workbench::EditorGroup* state = layout_.group(widget.id());
     std::shared_ptr<core::Document> document;
@@ -322,6 +343,7 @@ void EditorArea::sync_document(EditorGroupWidget& widget) {
     if (widget.view()->document() != document) {
         widget.view()->set_document(document);
     }
+    sync_highlighter(widget);
     widget.set_empty(!document);
     if (state->active) {
         widget.tabs()->set_current_index(static_cast<int>(*state->active));

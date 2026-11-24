@@ -12,6 +12,7 @@
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/highlighting.hpp"
 #include "anvil/ui/keybinding_service.hpp"
 #include "anvil/ui/keybindings_store.hpp"
 #include "anvil/ui/panel.hpp"
@@ -222,6 +223,10 @@ public:
     std::size_t open_document_count() const {
         return documents_.size();
     }
+    // The syntax highlighting of the documents.
+    Highlighting& highlighting() {
+        return *highlighting_;
+    }
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -274,7 +279,13 @@ private:
     void auto_detect_language(const core::Uri& uri);
     // Gives the document the language that the user picked, until it is closed.
     void choose_language(const core::Uri& uri, const std::string& id);
-    // Forgets what the window knows of the language of a document that leaves the window.
+    // The highlighter for the views of the document, null when its language has none.
+    std::shared_ptr<const core::Highlighter> highlighter_of(const core::Uri& uri);
+    // Tells the highlighting that the text of the document changed, and gives the views no
+    // highlighter when the document has outgrown the limit for highlighting.
+    void highlight_edit(const core::Uri& uri, const core::DocumentChange& change);
+    // Forgets what the window knows of the language of a document that leaves the window, and
+    // stops its highlighting.
     void forget_document_language(const core::Uri& uri);
     // What a pick can do besides choosing: start with an item as the chosen row, hear of each item
     // the chosen row moves to, and hear that the pick was closed without a choice.
@@ -459,6 +470,7 @@ private:
     ThemeStore* themes_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;
+    Highlighting* highlighting_ = nullptr;
     core::LanguageRegistry languages_ = core::LanguageRegistry::with_builtin_languages();
     std::vector<core::FileAssociation> file_associations_;
     std::vector<std::string> file_association_problems_;
