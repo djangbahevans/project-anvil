@@ -7562,6 +7562,22 @@ TEST_F(NewWindowTest, AProgramThatCannotBeStartedIsReportedInTheStatusBar) {
     EXPECT_EQ(window_->status_bar().message(), "The new window cannot be started: no such program");
 }
 
+TEST_F(NewWindowTest, AWorkingDirectoryThatIsGoneIsReplacedByOneThatExists) {
+    record_starts();
+    create_window();
+    const std::filesystem::path before = std::filesystem::current_path();
+    const std::filesystem::path doomed = scratch_ / "doomed";
+    std::filesystem::create_directories(doomed);
+    std::filesystem::current_path(doomed);
+    std::filesystem::remove(doomed);
+
+    window_->commands().execute("workbench.action.newWindow");
+    std::filesystem::current_path(before);
+    ASSERT_EQ(started_.size(), 1U);
+    ASSERT_TRUE(started_[0].working_directory.has_value());
+    EXPECT_TRUE(std::filesystem::is_directory(*started_[0].working_directory));
+}
+
 TEST_F(NewWindowTest, TheStandInProgramRunsWithNoArgumentsInADirectoryThatExists) {
     const auto output = scratch_ / "output.txt";
     const auto program = scratch_ / "stand-in.sh";
