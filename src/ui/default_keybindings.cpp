@@ -179,6 +179,11 @@ const Row rows[] = {
      {"ctrl+k ctrl+s"},
      {"ctrl+k ctrl+s"},
      {"cmd+k cmd+s"}},
+    {"workbench.action.reopenClosedEditor",
+     "",
+     {"ctrl+shift+t"},
+     {"ctrl+shift+t"},
+     {"cmd+shift+t"}},
     // Navigation history.
     {"workbench.action.navigateBack",
      "",

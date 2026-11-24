@@ -176,6 +176,18 @@ TEST(DefaultKeybindingsTest, SettingsAndKeyboardShortcutsHaveVSCodesKeys) {
     }
 }
 
+TEST(DefaultKeybindingsTest, ReopenClosedEditorIsCtrlShiftT) {
+    EXPECT_EQ(
+        keys_of(default_keybindings(KeyPlatform::linux), "workbench.action.reopenClosedEditor"),
+        chords({"ctrl+shift+t"}));
+    EXPECT_EQ(
+        keys_of(default_keybindings(KeyPlatform::windows), "workbench.action.reopenClosedEditor"),
+        chords({"ctrl+shift+t"}));
+    EXPECT_EQ(
+        keys_of(default_keybindings(KeyPlatform::macos), "workbench.action.reopenClosedEditor"),
+        chords({"cmd+shift+t"}));
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);

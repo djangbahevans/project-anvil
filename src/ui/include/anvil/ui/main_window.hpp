@@ -24,6 +24,7 @@
 #include "anvil/ui/window_frame.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/workbench/closed_editors.hpp"
 #include "anvil/workbench/editor_layout.hpp"
 #include "anvil/workbench/menu_model.hpp"
 #include "anvil/workbench/navigation_history.hpp"
@@ -348,6 +349,18 @@ private:
     // the places of the document, when the document cannot be opened.
     bool show_place(const workbench::NavigationEntry& place);
     void navigate(std::optional<workbench::NavigationEntry> place, bool to_edit);
+    // Remembers the editor of the tab, which is about to close, for Reopen Closed Editor. An
+    // untitled document with no text is not remembered.
+    void record_closed(workbench::GroupId group, std::size_t index, const core::Uri& uri);
+    // Opens the editors that were closed last, together, again where they were; when none of them
+    // can be opened, the ones before. A document that is open in its group already, and a file that
+    // is gone, are skipped.
+    void reopen_closed_editor();
+    bool reopen(const workbench::ClosedEditor& closed);
+    // The document of a file that is open or that an extension has, or one read from the file;
+    // empty, with a message, when it cannot be read.
+    std::shared_ptr<core::Document> file_document(const std::filesystem::path& file,
+                                                  const core::Uri& uri);
     void save_as_dialog();
     void open_dialog();
     // Opens a file of the user's configuration in the editor, creating it with `initial` when it
@@ -444,6 +457,11 @@ private:
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
     workbench::NavigationHistory history_;
+    workbench::ClosedEditors closed_editors_;
+    // How many operations that close editors are running, so that the closes of a nested one are
+    // one batch with the outer one.
+    int closing_depth_ = 0;
+    class ClosingScope;
     // Set while the window shows a place of the history, which is not a place of its own.
     bool walking_history_ = false;
     // The extension themes given to the theme store: an identifier and a file for each.
