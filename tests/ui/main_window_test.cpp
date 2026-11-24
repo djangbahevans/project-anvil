@@ -2365,6 +2365,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.saveAs",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
+                                          "workbench.action.toggleMultiCursorModifier",
+                                          "editor.action.toggleColumnSelection",
                                           "editor.action.renderWhitespace.none",
                                           "editor.action.renderWhitespace.boundary",
                                           "editor.action.renderWhitespace.selection",
@@ -2505,6 +2507,8 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.files.save",
         "workbench.action.files.saveAs",
         "workbench.action.toggleAutoSave",
+        "workbench.action.toggleMultiCursorModifier",
+        "editor.action.toggleColumnSelection",
         "editor.action.renderWhitespace.none",
         "editor.action.renderWhitespace.boundary",
         "editor.action.renderWhitespace.selection",
@@ -3151,6 +3155,71 @@ TEST_F(MainWindowMenuBarTest, TheControlCharacterCommandFlipsTheSettingAndTheMen
     EXPECT_FALSE(opened_action(menu(3), "editor.action.toggleRenderControlCharacter")->isChecked());
     window_->commands().execute("editor.action.toggleRenderControlCharacter");
     EXPECT_TRUE(window_->settings().editor().render_control_characters);
+}
+
+TEST_F(MainWindowMenuBarTest, TheMultiCursorModifierItemOffersTheOtherModifierAndSwitchesIt) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    QAction* item = opened_action(menu(2), "workbench.action.toggleMultiCursorModifier");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_TRUE(item->text().contains("Ctrl+Click")) << item->text().toStdString();
+    EXPECT_EQ(window_->settings().editor().multi_cursor_modifier, core::MultiCursorModifier::alt);
+
+    item->trigger();
+    EXPECT_EQ(window_->settings().editor().multi_cursor_modifier,
+              core::MultiCursorModifier::ctrl_cmd);
+    EXPECT_NE(platform::read_file(settings_file_)->find("\"ctrlCmd\""), std::string::npos);
+    item = opened_action(menu(2), "workbench.action.toggleMultiCursorModifier");
+    EXPECT_TRUE(item->text().contains("Alt+Click")) << item->text().toStdString();
+
+    item->trigger();
+    EXPECT_EQ(window_->settings().editor().multi_cursor_modifier, core::MultiCursorModifier::alt);
+}
+
+TEST_F(MainWindowMenuBarTest, TheSwitchedModifierIsTheOneThatAddsACursor) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    type("ab\ncd");
+    const auto click_at = [&](std::size_t offset, Qt::KeyboardModifiers modifiers) {
+        const QPoint point = window_->view()->cursor_rect(offset).center();
+        for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(
+                type, QPointF(point), window_->view()->viewport()->mapToGlobal(QPointF(point)),
+                Qt::LeftButton, type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                modifiers);
+            QApplication::sendEvent(window_->view()->viewport(), &event);
+        }
+    };
+    const auto cursors = [&] { return window_->current_document()->selections().all().size(); };
+    click_at(4, Qt::NoModifier);
+    click_at(0, Qt::ControlModifier);
+    EXPECT_EQ(cursors(), 1u) << "Ctrl+click is a plain click while Alt is the modifier";
+    click_at(4, Qt::NoModifier);
+    click_at(0, Qt::AltModifier);
+    EXPECT_EQ(cursors(), 2u);
+
+    window_->commands().execute("workbench.action.toggleMultiCursorModifier");
+    click_at(4, Qt::NoModifier);
+    click_at(0, Qt::AltModifier);
+    EXPECT_EQ(cursors(), 1u);
+    click_at(4, Qt::NoModifier);
+    click_at(0, Qt::ControlModifier);
+    EXPECT_EQ(cursors(), 2u);
+}
+
+TEST_F(MainWindowMenuBarTest, TheColumnSelectionItemIsCheckedWhileTheModeIsOn) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    QAction* item = opened_action(menu(2), "editor.action.toggleColumnSelection");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_FALSE(item->isChecked());
+    item->trigger();
+    EXPECT_TRUE(window_->settings().editor().column_selection);
+    EXPECT_TRUE(opened_action(menu(2), "editor.action.toggleColumnSelection")->isChecked());
+    window_->commands().execute("editor.action.toggleColumnSelection");
+    EXPECT_FALSE(window_->settings().editor().column_selection);
 }
 
 TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {

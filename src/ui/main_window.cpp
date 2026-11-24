@@ -586,6 +586,16 @@ void MainWindow::register_commands() {
                        !settings_->editor().render_control_characters,
                        tr("Render Control Characters"));
     });
+    add("workbench.action.toggleMultiCursorModifier", tr("Toggle Multi-Cursor Modifier"), [this] {
+        const bool ctrl_cmd =
+            settings_->editor().multi_cursor_modifier == core::MultiCursorModifier::ctrl_cmd;
+        change_setting("editor.multiCursorModifier", ctrl_cmd ? "alt" : "ctrlCmd",
+                       tr("Multi-Cursor Modifier"));
+    });
+    add("editor.action.toggleColumnSelection", tr("Toggle Column Selection Mode"), [this] {
+        change_setting("editor.columnSelection", !settings_->editor().column_selection,
+                       tr("Column Selection Mode"));
+    });
     add("workbench.action.toggleAutoSave", tr("Toggle Auto Save"), [this] {
         change_setting("files.autoSave", auto_save_ == core::AutoSave::off ? "afterDelay" : "off",
                        tr("Auto Save"));
@@ -765,6 +775,10 @@ void MainWindow::fill_context(core::ContextKeys& keys) const {
     keys.set("findWidgetVisible", find_bar_visible);
     keys.set("activeEditorGroupEmpty", group && group->tabs.empty());
     keys.set("multipleEditorGroups", layout_.group_ids().size() > 1);
+    keys.set("multiCursorModifier", std::string(settings_->editor().multi_cursor_modifier ==
+                                                        core::MultiCursorModifier::ctrl_cmd
+                                                    ? "ctrlCmd"
+                                                    : "altKey"));
 }
 
 void MainWindow::run_bound_command(const std::string& command, const nlohmann::json* args) {

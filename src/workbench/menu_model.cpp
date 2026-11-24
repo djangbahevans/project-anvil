@@ -41,7 +41,7 @@ void set_menu_context_defaults(core::ContextKeys& keys) {
         keys.set(key, true);
     }
     keys.set("workbenchState", std::string("empty"));
-    keys.set("multiCursorModifier", std::string("ctrlCmd"));
+    keys.set("multiCursorModifier", std::string("altKey"));
     keys.set("titleBarStyle", std::string("native"));
 }
 
