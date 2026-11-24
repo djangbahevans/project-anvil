@@ -276,6 +276,68 @@ TEST_F(SidebarTest, TheActivityBarDrawsTheIndicatorAndTheIconInThemeColors) {
     EXPECT_EQ(image.pixelColor(explorer + QPoint(middle, 2)), QColor("#101010"));
 }
 
+TEST_F(SidebarTest, TheIndicatorIsAtTheOuterEdgeWhenTheSidebarIsOnTheRight) {
+    add("explorer");
+    click("explorer");
+    colors_.set_colors({{"activityBar.background", QColor("#101010")},
+                        {"activityBar.foreground", QColor("#ffffff")},
+                        {"activityBar.activeBorder", QColor("#ff8800")}});
+    workbench_->set_sidebar_side(Side::right);
+    QApplication::processEvents();
+    EXPECT_EQ(sidebar_->activity_bar().side(), Side::right);
+
+    const QImage image = workbench_->activity_bar()->grab().toImage();
+    const QPoint origin = button("explorer")->pos();
+    const int middle = ActivityBar::button_size / 2;
+    EXPECT_EQ(image.pixelColor(origin + QPoint(ActivityBar::button_size - 1, middle)),
+              QColor("#ff8800"));
+    EXPECT_EQ(image.pixelColor(origin + QPoint(1, middle)), QColor("#101010"));
+
+    workbench_->set_sidebar_side(Side::left);
+    QApplication::processEvents();
+    const QImage back = workbench_->activity_bar()->grab().toImage();
+    EXPECT_EQ(back.pixelColor(origin + QPoint(1, middle)), QColor("#ff8800"));
+}
+
+TEST_F(SidebarTest, AButtonAddedWhileTheSidebarIsOnTheRightIsDrawnForTheRight) {
+    workbench_->set_sidebar_side(Side::right);
+    add("explorer");
+    click("explorer");
+    colors_.set_colors({{"activityBar.background", QColor("#101010")},
+                        {"activityBar.activeBorder", QColor("#ff8800")}});
+    QApplication::processEvents();
+    const QImage image = workbench_->activity_bar()->grab().toImage();
+    EXPECT_EQ(image.pixelColor(button("explorer")->pos() +
+                               QPoint(ActivityBar::button_size - 1, ActivityBar::button_size / 2)),
+              QColor("#ff8800"));
+}
+
+TEST_F(SidebarTest, TheActivityBarStaysHiddenWhileItIsNotAllowedAndComesBackWhenItIs) {
+    sidebar_->set_activity_bar_allowed(false);
+    add("explorer");
+    EXPECT_FALSE(workbench_->is_visible(Part::activity_bar));
+    add("search");
+    EXPECT_FALSE(workbench_->is_visible(Part::activity_bar));
+
+    sidebar_->set_activity_bar_allowed(true);
+    EXPECT_TRUE(workbench_->is_visible(Part::activity_bar));
+    sidebar_->set_activity_bar_allowed(false);
+    EXPECT_FALSE(workbench_->is_visible(Part::activity_bar));
+    registry_.remove("explorer");
+    registry_.remove("search");
+    sidebar_->set_activity_bar_allowed(true);
+    EXPECT_FALSE(workbench_->is_visible(Part::activity_bar));
+}
+
+TEST_F(SidebarTest, AContainerCanBeShownWithoutTheActivityBar) {
+    sidebar_->set_activity_bar_allowed(false);
+    add("explorer");
+    sidebar_->activate("explorer");
+    EXPECT_TRUE(workbench_->is_visible(Part::sidebar));
+    EXPECT_FALSE(workbench_->is_visible(Part::activity_bar));
+    EXPECT_EQ(sidebar_->title(), "TITLE OF EXPLORER");
+}
+
 TEST_F(SidebarTest, TheTitleIsTheContainersTitleInCapitals) {
     add("explorer");
     add("search");

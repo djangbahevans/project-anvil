@@ -16,10 +16,11 @@ class ActivityBar;
 // The activity bar and the sidebar: a button for each view container registered for the sidebar,
 // and the container the user chose in the sidebar below a title.
 //
-// The activity bar shows while there is at least one container. Choosing a container shows the
-// sidebar with it; choosing the one that is shown hides the sidebar, as in VS Code. A container's
-// widget is made the first time it is shown and kept after that. Showing the sidebar by another
-// way, such as the View menu, shows the container that was last active, or the first one.
+// The activity bar shows while there is at least one container, unless it is turned off. Choosing a
+// container shows the sidebar with it; choosing the one that is shown hides the sidebar, as in VS
+// Code. A container's widget is made the first time it is shown and kept after that. Showing the
+// sidebar by another way, such as the View menu, shows the container that was last active, or the
+// first one.
 class Sidebar : public QObject {
     Q_OBJECT
 
@@ -37,6 +38,9 @@ public:
     // Shows the sidebar with the container. Nothing happens for an id that is not registered for
     // the sidebar.
     void activate(std::string_view id);
+
+    // Whether the activity bar may show; it shows while it may and a container is registered.
+    void set_activity_bar_allowed(bool allowed);
 
     // The widget of the container, or null before it was first shown.
     QWidget* container_widget(std::string_view id) const;
@@ -68,6 +72,7 @@ private:
     QWidget* title_actions_ = nullptr;
     std::unique_ptr<ViewContainerStack> stack_;
     std::string active_;
+    bool activity_bar_allowed_ = true;
 };
 
 } // namespace anvil::ui

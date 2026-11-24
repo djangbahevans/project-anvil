@@ -4,9 +4,11 @@
 
 #include <QPointer>
 #include <QWidget>
+#include <array>
 #include <optional>
 #include <string_view>
 
+class QHBoxLayout;
 class QSplitter;
 class QVBoxLayout;
 
@@ -28,10 +30,23 @@ enum class Part {
 std::string_view part_id(Part part);
 std::optional<Part> part_from_id(std::string_view id);
 
+// The edge of the window that the primary side bar, and the activity bar beside it, are at.
+enum class Side { left, right };
+
+// Where the panel is in relation to the editor area.
+enum class PanelPosition { top, left, right, bottom };
+
+// `top`, `left`, `right` and `bottom`, the values of VS Code's `panelPosition` context key.
+std::string_view panel_position_name(PanelPosition position);
+
 // Arranges the parts of the window with splitters. The sidebar and the panel resize with a sash
 // and show or hide with their size remembered; hiding one gives its space to the editor area. The
 // parts other than the editor area are empty containers for views to be added to: the sidebar and
 // the panel start hidden, and so does the activity bar, because nothing is in them.
+//
+// The sidebar, with the activity bar, is at the left edge or the right edge. The panel is below the
+// editor area, above it, or at its left or right; a position has its own size, which is a height
+// for the top and the bottom and a width for the left and the right.
 //
 // The status bar and the title bar belong to the window, which hands them over; the status bar goes
 // along the bottom edge and the title bar along the top, and they show and hide like the other
@@ -43,6 +58,8 @@ public:
     static constexpr int activity_bar_width = 48;
     static constexpr int sidebar_minimum_width = 170;
     static constexpr int panel_minimum_height = 77;
+    // The least width of a panel that is at the left or the right of the editor area.
+    static constexpr int panel_minimum_width = 300;
     // What the editor area keeps however small the window gets.
     static constexpr int editor_minimum_width = 220;
     static constexpr int editor_minimum_height = 70;
@@ -74,17 +91,28 @@ public:
     bool is_maximized(Part part) const;
     void set_maximized(Part part, bool maximized);
 
+    Side sidebar_side() const;
+    void set_sidebar_side(Side side);
+
+    PanelPosition panel_position() const;
+    // Moves the panel; a maximized panel stays maximized and a hidden one stays hidden.
+    void set_panel_position(PanelPosition position);
+
     // How far the part reaches along the axis it is resized on: the width of the activity bar, the
-    // sidebar and the editor area, the height of the panel, the status bar and the title bar. A
-    // hidden sidebar or panel reports the size it has when shown again.
+    // sidebar and the editor area, the height of the panel at the top or the bottom and its width
+    // at the left or the right, and the height of the status bar and the title bar. A hidden
+    // sidebar or panel reports the size it has when shown again.
     int size(Part part) const;
     // Resizes the sidebar or the panel, to its minimum at least; the editor area keeps its own
-    // minimum whatever is asked. Other parts keep their size.
+    // minimum whatever is asked. Other parts keep their size. The panel is resized at its current
+    // position.
     void set_size(Part part, int pixels);
 
 signals:
     void visibility_changed(anvil::ui::Part part, bool visible);
     void maximized_changed(anvil::ui::Part part, bool maximized);
+    void sidebar_side_changed(anvil::ui::Side side);
+    void panel_position_changed(anvil::ui::PanelPosition position);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -93,6 +121,11 @@ private:
     class PartWidget;
 
     void apply_sizes();
+    void arrange();
+    bool panel_is_beside_editor() const;
+    int panel_extent() const;
+    int& panel_size();
+    int panel_size() const;
 
     const WorkbenchColors& colors_;
     PartWidget* activity_bar_ = nullptr;
@@ -102,10 +135,13 @@ private:
     QSplitter* across_ = nullptr;
     QSplitter* down_ = nullptr;
     QVBoxLayout* root_layout_ = nullptr;
+    QHBoxLayout* row_layout_ = nullptr;
     QPointer<QWidget> status_bar_;
     QPointer<QWidget> title_bar_;
     int sidebar_size_ = default_size;
-    int panel_size_ = default_size;
+    std::array<int, 4> panel_sizes_{default_size, default_size, default_size, default_size};
+    Side sidebar_side_ = Side::left;
+    PanelPosition panel_position_ = PanelPosition::bottom;
     bool panel_maximized_ = false;
 };
 

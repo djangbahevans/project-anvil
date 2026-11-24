@@ -1,5 +1,6 @@
 #pragma once
 
+#include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QPointer>
@@ -62,6 +63,8 @@ public:
     }
     void set_sidebar_shown(bool shown);
     void set_panel_shown(bool shown);
+    // The side bar button shows the side bar at the edge it is at.
+    void set_sidebar_side(Side side);
     QAbstractButton* sidebar_button() const {
         return sidebar_button_;
     }

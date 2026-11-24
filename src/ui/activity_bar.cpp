@@ -23,13 +23,18 @@ public:
     const std::string& id() const {
         return entry_.id;
     }
+    void set_side(Side side) {
+        side_ = side;
+        update();
+    }
 
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         const bool active = isChecked();
         if (active) {
-            painter.fillRect(QRect(0, 0, 2, height()), colors_.color("activityBar.activeBorder"));
+            painter.fillRect(QRect(side_ == Side::left ? 0 : width() - 2, 0, 2, height()),
+                             colors_.color("activityBar.activeBorder"));
         }
         const QColor color =
             colors_.color(active || underMouse() || hasFocus() ? "activityBar.foreground"
@@ -49,6 +54,7 @@ protected:
 private:
     const WorkbenchColors& colors_;
     Entry entry_;
+    Side side_ = Side::left;
 };
 
 ActivityBar::ActivityBar(const WorkbenchColors& colors, QWidget* parent)
@@ -72,10 +78,18 @@ void ActivityBar::set_entries(const std::vector<Entry>& entries) {
     buttons_.clear();
     for (const Entry& entry : entries) {
         auto* button = new Button(colors_, entry, this);
+        button->set_side(side_);
         layout_->insertWidget(static_cast<int>(buttons_.size()), button);
         buttons_.push_back(button);
         connect(button, &QToolButton::clicked, this,
                 [this, id = entry.id] { emit activated(QString::fromStdString(id)); });
+    }
+}
+
+void ActivityBar::set_side(Side side) {
+    side_ = side;
+    for (Button* button : buttons_) {
+        button->set_side(side);
     }
 }
 
