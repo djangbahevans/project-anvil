@@ -21,6 +21,7 @@ add_library(anvil_core STATIC
   rope.cpp
   search.cpp
   selection.cpp
+  smart_select.cpp
   settings.cpp
   text.cpp
   text_buffer.cpp

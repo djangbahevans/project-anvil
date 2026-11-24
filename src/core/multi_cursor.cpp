@@ -1,5 +1,6 @@
 #include "anvil/core/brackets.hpp"
 #include "anvil/core/editing.hpp"
+#include "anvil/core/smart_select.hpp"
 
 #include <algorithm>
 
@@ -97,6 +98,54 @@ EditOutcome EditController::jump_to_bracket() {
         carets.push_back(Selection::caret(anvil::core::jump_to_bracket(text, selection.start())));
     }
     return adopt(SelectionSet::from(std::move(carets), document_.selections().primary_index()));
+}
+
+EditOutcome EditController::expand_selection() {
+    return step_selection(true);
+}
+
+EditOutcome EditController::shrink_selection() {
+    return step_selection(false);
+}
+
+EditOutcome EditController::step_selection(bool expand) {
+    const Text& text = document_.text();
+    if (!smart_select_ || smart_select_->version != document_.version() ||
+        !(smart_select_->selections == document_.selections())) {
+        SmartSelectState state;
+        state.primary = document_.selections().primary_index();
+        for (const Selection& selection : document_.selections().all()) {
+            SmartSelectStep step;
+            step.ranges.push_back({selection.start(), selection.end()});
+            for (const Selection& range : selection_ranges(text, selection.active)) {
+                if (range.start() <= selection.start() && selection.end() <= range.end()) {
+                    step.ranges.push_back(range);
+                }
+            }
+            state.steps.push_back(std::move(step));
+        }
+        smart_select_ = std::move(state);
+    }
+
+    std::vector<Selection> stepped;
+    for (SmartSelectStep& step : smart_select_->steps) {
+        std::size_t index = step.index;
+        while (expand ? index + 1 < step.ranges.size() : index > 0) {
+            const std::size_t next = expand ? index + 1 : index - 1;
+            const bool same = step.ranges[next] == step.ranges[index];
+            index = next;
+            if (!same) {
+                break;
+            }
+        }
+        step.index = index;
+        stepped.push_back(step.ranges[index]);
+    }
+    const EditOutcome outcome =
+        adopt(SelectionSet::from(std::move(stepped), smart_select_->primary));
+    smart_select_->version = document_.version();
+    smart_select_->selections = document_.selections();
+    return outcome;
 }
 
 } // namespace anvil::core

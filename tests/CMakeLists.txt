@@ -24,6 +24,7 @@ add_executable(anvil_core_tests
   core/search_test.cpp
   core/theme_resources_test.cpp
   core/selection_test.cpp
+  core/smart_select_test.cpp
   core/settings_test.cpp
   core/text_buffer_test.cpp
   core/text_file_test.cpp

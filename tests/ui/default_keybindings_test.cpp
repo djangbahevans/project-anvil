@@ -165,6 +165,21 @@ TEST(DefaultKeybindingsTest, GoToLineAndGoToBracketHaveVSCodesKeys) {
               chords({"cmd+shift+\\"}));
 }
 
+TEST(DefaultKeybindingsTest, ExpandAndShrinkSelectionHaveVSCodesKeys) {
+    for (const KeyPlatform platform : {KeyPlatform::linux, KeyPlatform::windows}) {
+        const auto bindings = default_keybindings(platform);
+        EXPECT_EQ(keys_of(bindings, "editor.action.smartSelect.expand"),
+                  chords({"shift+alt+right"}));
+        EXPECT_EQ(keys_of(bindings, "editor.action.smartSelect.shrink"),
+                  chords({"shift+alt+left"}));
+    }
+    const auto macos = default_keybindings(KeyPlatform::macos);
+    EXPECT_EQ(keys_of(macos, "editor.action.smartSelect.expand"),
+              chords({"ctrl+cmd+shift+right", "ctrl+shift+right"}));
+    EXPECT_EQ(keys_of(macos, "editor.action.smartSelect.shrink"),
+              chords({"ctrl+cmd+shift+left", "ctrl+shift+left"}));
+}
+
 TEST(DefaultKeybindingsTest, SettingsAndKeyboardShortcutsHaveVSCodesKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);
@@ -347,15 +362,17 @@ TEST(DefaultKeybindingsTest, NoTwoBindingsHaveTheSameKeyCommandAndCondition) {
 TEST(DefaultKeybindingsTest, ABindingOnMacNeverUsesTheWindowsKeyAndControlIsOnlyForEmacsKeys) {
     for (const Keybinding& binding : default_keybindings(KeyPlatform::macos)) {
         for (const KeyStep& step : binding.chord.steps) {
-            // VS Code binds full screen to Control and Command together.
-            if (binding.command != "workbench.action.toggleFullScreen") {
+            // VS Code binds full screen and Expand and Shrink Selection to Control and Command
+            // together.
+            const bool smart_select = binding.command.starts_with("editor.action.smartSelect.");
+            if (binding.command != "workbench.action.toggleFullScreen" && !smart_select) {
                 EXPECT_FALSE(step.modifiers.meta && step.modifiers.ctrl) << binding.command;
             }
             // VS Code binds Back and Forward to Control and the minus key, and Go to Line to
-            // Control and G.
+            // Control and G; Expand and Shrink Selection have Control and Shift with the arrows.
             const bool history = binding.command == "workbench.action.navigateBack" ||
                                  binding.command == "workbench.action.navigateForward" ||
-                                 binding.command == "workbench.action.gotoLine";
+                                 binding.command == "workbench.action.gotoLine" || smart_select;
             if (step.modifiers.ctrl && !history) {
                 EXPECT_TRUE(step.key == Key::key_b || step.key == Key::key_f ||
                             step.key == Key::key_p || step.key == Key::key_n ||

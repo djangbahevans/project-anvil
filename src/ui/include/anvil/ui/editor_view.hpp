@@ -97,6 +97,10 @@ public:
     void add_cursors_to_line_ends();
     // Moves every caret as Go to Bracket does (see core::jump_to_bracket).
     void jump_to_bracket();
+    // Grows every selection to the next range around it, and goes back one (see
+    // core::EditController::expand_selection).
+    void expand_selection();
+    void shrink_selection();
     // "Select all occurrences of find match" (Ctrl+Shift+L). Returns true when more than `limit`
     // matches exist and only `limit` were selected.
     bool select_all_occurrences(const OccurrenceSource& source, std::size_t limit);

@@ -591,6 +591,20 @@ void EditorView::jump_to_bracket() {
     }
 }
 
+void EditorView::expand_selection() {
+    if (controller_) {
+        apply(controller_->expand_selection());
+        ensure_cursor_visible();
+    }
+}
+
+void EditorView::shrink_selection() {
+    if (controller_) {
+        apply(controller_->shrink_selection());
+        ensure_cursor_visible();
+    }
+}
+
 void EditorView::add_occurrence(const OccurrenceSource& source, bool next) {
     if (!controller_) {
         return;
