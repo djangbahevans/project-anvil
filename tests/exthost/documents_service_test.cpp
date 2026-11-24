@@ -200,6 +200,12 @@ TEST_F(DocumentsServiceTest, ALanguageGivenAtRegistrationIsKeptAndNotAskedOfTheR
     EXPECT_EQ(service_.language_of(given), "python");
     EXPECT_TRUE(service_.language_is_fixed(given));
 
+    service_.language_changed(given, "markdown");
+    EXPECT_FALSE(service_.language_is_fixed(given))
+        << "the editor decides the language from now on";
+    service_.language_changed(given, "markdown");
+    EXPECT_EQ(service_.language_of(given), "markdown");
+
     const core::Uri resolved = open("resolved.txt", "x");
     EXPECT_EQ(service_.language_of(resolved), "markdown");
     EXPECT_FALSE(service_.language_is_fixed(resolved));

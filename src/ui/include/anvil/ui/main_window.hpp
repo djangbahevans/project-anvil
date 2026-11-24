@@ -259,6 +259,11 @@ private:
     const DocumentLanguage& language_of_document(const core::Uri& uri);
     // Lets the user pick the language of the shown document (Change Language Mode).
     void change_language_mode();
+    // Asks for the language to associate with the files of an extension, and writes it to
+    // `files.associations`; a name that starts with a dot is associated as a whole.
+    void pick_association(const std::string& extension, const std::string& base);
+    // Gives up the language that the user picked for the document and resolves it again.
+    void auto_detect_language(const core::Uri& uri);
     // Gives the document the language that the user picked, until it is closed.
     void choose_language(const core::Uri& uri, const std::string& id);
     // Forgets what the window knows of the language of a document that leaves the window.

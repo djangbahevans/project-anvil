@@ -84,8 +84,9 @@ public:
     // Whether the language was given when the document was registered, which is how an extension
     // that creates a document with a language asks for it; the resolver does not choose it again.
     bool language_is_fixed(const core::Uri& uri) const;
-    // Gives the document another language id and tells the extension host. Nothing happens when the
-    // document is not registered or already has the id.
+    // Gives the document another language id and tells the extension host, unless it has the id
+    // already. The language is then the editor's to decide, and no longer one that was asked for
+    // when the document was registered. Nothing happens when the document is not registered.
     void language_changed(const core::Uri& uri, std::string language_id);
     std::shared_ptr<core::Document> find(const core::Uri& uri) const;
 
