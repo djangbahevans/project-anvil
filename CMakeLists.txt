@@ -9,6 +9,17 @@ endif()
 
 project(anvil VERSION 0.1.0 LANGUAGES CXX)
 
+# scripts/fetch-tree-sitter.sh puts the tree-sitter runtime and the grammars here. Without them
+# the editor builds and has no syntax highlighting.
+set(ANVIL_TREE_SITTER_DIR "${CMAKE_SOURCE_DIR}/.deps/tree-sitter")
+if(EXISTS "${ANVIL_TREE_SITTER_DIR}/runtime/lib/src/lib.c")
+  set(ANVIL_HAVE_TREE_SITTER ON)
+  enable_language(C)
+  set(CMAKE_C_STANDARD 11)
+  set(CMAKE_C_STANDARD_REQUIRED ON)
+  set(CMAKE_C_EXTENSIONS OFF)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

@@ -73,6 +73,12 @@ public:
 
     bool is_char_boundary(std::size_t offset) const;
 
+    // The bytes from `offset` to the end of the storage chunk that holds it, so that a reader can
+    // walk the whole text without copying it: ask again at `offset + chunk.size()` until the
+    // result is empty. Empty for an offset at or past the end. The view stays valid as long as
+    // this text, or a copy of it, does.
+    std::string_view chunk_at(std::size_t offset) const;
+
     // The number of UTF-16 code units before `offset`, clamped to the end of the text.
     std::size_t utf16_offset(std::size_t offset) const;
 

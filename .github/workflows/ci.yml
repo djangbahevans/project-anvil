@@ -76,6 +76,17 @@ jobs:
       - name: Fetch VS Code for the extension host tests
         run: scripts/fetch-vscode.sh
 
+      - name: Cache the tree-sitter sources
+        uses: actions/cache@v6
+        with:
+          path: .deps/tree-sitter
+          key: tree-sitter-${{ hashFiles('scripts/fetch-tree-sitter.sh') }}
+
+      - name: Fetch the tree-sitter runtime and grammars
+        run: |
+          scripts/fetch-tree-sitter.sh
+          scripts/fetch-tree-sitter.sh --check
+
       - name: Check the generated proxy identifiers
         run: node scripts/generate-proxy-ids.mjs --check
 

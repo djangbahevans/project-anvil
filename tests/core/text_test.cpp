@@ -216,3 +216,60 @@ TEST(Text, ReplacedWithATextHandlesSmallReplacementsAndErrors) {
     ASSERT_FALSE(base.replaced(4, 9, big).has_value());
     EXPECT_EQ(base.replaced(4, 9, big).error().code, ErrorCode::invalid_argument);
 }
+
+namespace {
+
+std::string walk_chunks(const Text& text, std::size_t from) {
+    std::string out;
+    for (std::string_view chunk = text.chunk_at(from); !chunk.empty();
+         chunk = text.chunk_at(from + out.size())) {
+        out += chunk;
+    }
+    return out;
+}
+
+Text many_chunks() {
+    std::string big;
+    for (int i = 0; i < 4000; ++i) {
+        big += "row " + std::to_string(i) + " \xE2\x82\xAC\n";
+    }
+    Text text = text_of(big);
+    EXPECT_GT(text.chunk_count(), 3u);
+    return text;
+}
+
+} // namespace
+
+TEST(Text, ChunkAtWalksTheWholeTextFromAnyOffset) {
+    const Text text = many_chunks();
+    const std::string whole = text.to_string();
+    EXPECT_EQ(walk_chunks(text, 0), whole);
+    for (const std::size_t offset : {std::size_t{1}, std::size_t{2047}, std::size_t{2048},
+                                     std::size_t{4093}, whole.size() / 2, whole.size() - 1}) {
+        EXPECT_EQ(walk_chunks(text, offset), whole.substr(offset)) << offset;
+    }
+}
+
+TEST(Text, ChunkAtIsBoundedByTheChunkAndEmptyAtTheEnd) {
+    const Text text = many_chunks();
+    for (std::size_t offset = 0; offset < text.size(); offset += 997) {
+        const std::string_view chunk = text.chunk_at(offset);
+        ASSERT_FALSE(chunk.empty()) << offset;
+        EXPECT_LE(chunk.size(), 2048u);
+        EXPECT_EQ(chunk, text.slice(offset, chunk.size()));
+    }
+    EXPECT_TRUE(text.chunk_at(text.size()).empty());
+    EXPECT_TRUE(text.chunk_at(text.size() + 100).empty());
+    EXPECT_TRUE(Text{}.chunk_at(0).empty());
+}
+
+TEST(Text, ChunkAtOfASnapshotSurvivesEdits) {
+    Text text = many_chunks();
+    const Text snapshot = text;
+    const std::string before = snapshot.to_string();
+    const std::string_view chunk = snapshot.chunk_at(100);
+    const std::string copy(chunk);
+    text = *text.replaced(0, 50, "edited");
+    EXPECT_EQ(std::string(chunk), copy);
+    EXPECT_EQ(walk_chunks(snapshot, 0), before);
+}

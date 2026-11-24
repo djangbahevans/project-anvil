@@ -300,6 +300,23 @@ void append_range(const NodePtr& node, std::size_t offset, std::size_t length, s
     }
 }
 
+std::string_view chunk_at(const NodePtr& node, std::size_t offset) {
+    if (!node || offset >= node->summary.bytes) {
+        return {};
+    }
+    const Node* current = node.get();
+    while (!current->is_leaf()) {
+        const std::size_t left_bytes = current->left->summary.bytes;
+        if (offset < left_bytes) {
+            current = current->left.get();
+        } else {
+            offset -= left_bytes;
+            current = current->right.get();
+        }
+    }
+    return std::string_view(current->text).substr(offset);
+}
+
 std::size_t chunk_count(const NodePtr& node) {
     if (!node) {
         return 0;

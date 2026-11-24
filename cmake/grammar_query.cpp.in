@@ -1,0 +1,8 @@
+#include <string_view>
+
+namespace anvil::core::grammar_queries {
+
+extern const std::string_view @ANVIL_GRAMMAR_NAME@;
+const std::string_view @ANVIL_GRAMMAR_NAME@ = R"anvil_query(@ANVIL_HIGHLIGHTS_QUERY@)anvil_query";
+
+} // namespace anvil::core::grammar_queries

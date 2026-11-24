@@ -100,6 +100,10 @@ A key is one to four steps (`ctrl+k ctrl+c`), a `when` is VS Code's context key 
 
 `scripts/fetch-vscode.sh` fetches and transpiles the pinned VS Code release into `.deps/vscode` and builds the two native modules the extension host uses (this needs make, a C++ compiler and Python). With it and Node.js on `PATH`, the integration test starts the real extension host and runs an extension command; without them that test is skipped.
 
+## Syntax highlighting
+
+`scripts/fetch-tree-sitter.sh` downloads the pinned releases of the tree-sitter runtime and of the grammars into `.deps/tree-sitter`, and checks each archive against its SHA-256 (`--check` verifies what is already there without downloading). When that directory exists at configure time the build compiles them as C into the core library and defines `ANVIL_TREE_SITTER`; this needs a C compiler besides the C++ one. Without it everything else builds, the editor has no syntax highlighting, and the tests of the highlighter are skipped.
+
 ## Benchmarks
 
 `cmake --preset linux-clang-release -DANVIL_BUILD_BENCHMARKS=ON` builds `bin/anvil_text_bench` (Google Benchmark), which compares the text buffer with a plain string.

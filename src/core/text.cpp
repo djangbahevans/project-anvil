@@ -180,6 +180,10 @@ std::optional<std::string> Text::check_invariants() const {
     return rope::check_invariants(root_);
 }
 
+std::string_view Text::chunk_at(std::size_t offset) const {
+    return rope::chunk_at(root_, offset);
+}
+
 std::size_t Text::chunk_count() const {
     return rope::chunk_count(root_);
 }
