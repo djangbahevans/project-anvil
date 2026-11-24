@@ -25,16 +25,20 @@ std::vector<std::size_t> whitespace_columns(std::u16string_view line, RenderWhit
         return columns;
     }
     to = std::min(to, line.size());
+    // Only these two modes depend on where the text of the line starts and ends.
     std::size_t first = 0;
-    while (first < line.size() && is_blank_char(line[first])) {
-        ++first;
-    }
-    const bool blank = first == line.size();
     std::size_t last = line.size();
-    if (!blank) {
-        last = line.size() - 1;
-        while (is_blank_char(line[last])) {
-            --last;
+    bool blank = false;
+    if (mode == RenderWhitespace::boundary || mode == RenderWhitespace::trailing) {
+        while (first < line.size() && is_blank_char(line[first])) {
+            ++first;
+        }
+        blank = first == line.size();
+        if (!blank) {
+            last = line.size() - 1;
+            while (is_blank_char(line[last])) {
+                --last;
+            }
         }
     }
 

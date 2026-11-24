@@ -24,8 +24,9 @@ struct ColumnRange {
 //  - `trailing`: the spaces and tabs at the end of the line, all of the line if it is blank.
 //  - `selection`: the spaces and tabs inside `selections`, which are columns of this line.
 //
-// Only columns in [`from`, `to`) are returned, and finding them reads the ends of the line and the
-// neighbors of each column, so a window of a long line costs no more than the window.
+// Only columns in [`from`, `to`) are returned. `all` and `selection` read nothing else, so their
+// cost is that of the window; `boundary` and `trailing` also read the blanks at the two ends of the
+// line, which for a line that is mostly blank is the line.
 std::vector<std::size_t> whitespace_columns(std::u16string_view line, RenderWhitespace mode,
                                             std::span<const ColumnRange> selections,
                                             std::size_t from, std::size_t to);
