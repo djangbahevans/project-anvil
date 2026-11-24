@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <tree_sitter/api.h>
@@ -66,10 +68,24 @@ struct CursorDeleter {
     }
 };
 
+struct ReadState {
+    const Text* text = nullptr;
+    std::size_t* bytes_read = nullptr;
+};
+
 const char* read_chunk(void* payload, std::uint32_t byte, TSPoint, std::uint32_t* bytes_read) {
-    const std::string_view chunk = static_cast<const Text*>(payload)->chunk_at(byte);
+    const auto* state = static_cast<const ReadState*>(payload);
+    const std::string_view chunk = state->text->chunk_at(byte);
     *bytes_read = static_cast<std::uint32_t>(chunk.size());
+    *state->bytes_read += chunk.size();
     return chunk.data();
+}
+
+// The row and the byte column that tree-sitter's points use, not the UTF-16 column.
+TSPoint point_at(const Text& text, std::size_t offset) {
+    const std::size_t row = text.position_at(offset).line;
+    return {static_cast<std::uint32_t>(row),
+            static_cast<std::uint32_t>(offset - text.line_start(row))};
 }
 
 struct Capture {
@@ -134,11 +150,20 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
 struct TreeSitterHighlighter::Impl {
     Text text;
     const Grammar* grammar = nullptr;
+    std::unique_ptr<TSParser, ParserDeleter> parser;
     std::unique_ptr<TSTree, TreeDeleter> tree;
     std::unique_ptr<TSQuery, QueryDeleter> query;
     // The scope of each capture of the query, by capture index; empty for a capture the table does
     // not map.
     std::vector<std::string_view> capture_scopes;
+    // The spans of each line once asked for, kept until an edit or a change of the tree reaches
+    // the line. One slot per line of `text`.
+    mutable std::vector<std::optional<std::vector<HighlightSpan>>> cache;
+    std::uint64_t version = 1;
+    std::size_t bytes_read = 0;
+    mutable std::size_t line_queries = 0;
+
+    std::vector<HighlightSpan> compute_spans(std::size_t line) const;
 };
 
 bool TreeSitterHighlighter::supports(std::string_view language_id) {
@@ -179,12 +204,15 @@ TreeSitterHighlighter::create(std::string_view language_id, Text text) {
     auto impl = std::make_unique<Impl>();
     impl->text = std::move(text);
     impl->grammar = grammar;
-    const TSInput input{&impl->text, read_chunk, TSInputEncodingUTF8, nullptr};
+    ReadState state{&impl->text, &impl->bytes_read};
+    const TSInput input{&state, read_chunk, TSInputEncodingUTF8, nullptr};
     impl->tree.reset(ts_parser_parse(parser.get(), nullptr, input));
     if (!impl->tree) {
         return std::unexpected(Error{ErrorCode::environment_unavailable, "parsing failed"});
     }
+    impl->parser = std::move(parser);
     impl->query = std::move(query);
+    impl->cache.resize(impl->text.line_count());
 
     const std::span<const CaptureScope> table = grammar->scopes();
     const std::uint32_t captures = ts_query_capture_count(impl->query.get());
@@ -202,10 +230,21 @@ TreeSitterHighlighter::TreeSitterHighlighter(std::unique_ptr<Impl> impl) : impl_
 TreeSitterHighlighter::~TreeSitterHighlighter() = default;
 
 std::vector<HighlightSpan> TreeSitterHighlighter::spans(std::size_t line) const {
-    const Text& text = impl_->text;
-    if (line >= text.line_count()) {
+    if (line >= impl_->cache.size()) {
         return {};
     }
+    auto& slot = impl_->cache[line];
+    if (!slot) {
+        slot = impl_->compute_spans(line);
+    }
+    return *slot;
+}
+
+std::vector<HighlightSpan> TreeSitterHighlighter::Impl::compute_spans(std::size_t line) const {
+    if (!tree) {
+        return {};
+    }
+    ++line_queries;
     const std::size_t line_begin = text.line_start(line);
     const std::size_t line_end = text.line_end(line);
     if (line_begin == line_end) {
@@ -215,14 +254,14 @@ std::vector<HighlightSpan> TreeSitterHighlighter::spans(std::size_t line) const 
     std::unique_ptr<TSQueryCursor, CursorDeleter> cursor(ts_query_cursor_new());
     ts_query_cursor_set_byte_range(cursor.get(), static_cast<std::uint32_t>(line_begin),
                                    static_cast<std::uint32_t>(line_end));
-    ts_query_cursor_exec(cursor.get(), impl_->query.get(), ts_tree_root_node(impl_->tree.get()));
+    ts_query_cursor_exec(cursor.get(), query.get(), ts_tree_root_node(tree.get()));
 
     std::vector<Capture> captures;
     TSQueryMatch match;
     std::uint32_t index = 0;
     while (ts_query_cursor_next_capture(cursor.get(), &match, &index)) {
         const TSQueryCapture& capture = match.captures[index];
-        const std::string_view scope = impl_->capture_scopes[capture.index];
+        const std::string_view scope = capture_scopes[capture.index];
         if (scope.empty()) {
             continue;
         }
@@ -260,7 +299,113 @@ std::string_view TreeSitterHighlighter::root_scope() const {
 }
 
 std::uint64_t TreeSitterHighlighter::version() const {
-    return 1;
+    return impl_->version;
+}
+
+std::size_t TreeSitterHighlighter::bytes_read() const {
+    return impl_->bytes_read;
+}
+
+std::size_t TreeSitterHighlighter::line_queries() const {
+    return impl_->line_queries;
+}
+
+std::expected<void, Error> TreeSitterHighlighter::apply(const TextChange& change,
+                                                        const Text& new_text) {
+    return apply(std::span<const TextChange>(&change, 1), new_text);
+}
+
+std::expected<void, Error> TreeSitterHighlighter::apply(const DocumentChange& change,
+                                                        const Text& new_text) {
+    return apply(std::span<const TextChange>(change.changes), new_text);
+}
+
+std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChange> changes,
+                                                        const Text& new_text) {
+    if (!impl_->tree) {
+        return std::unexpected(Error{ErrorCode::environment_unavailable, "the text is not parsed"});
+    }
+    if (new_text.size() > std::numeric_limits<std::uint32_t>::max()) {
+        return std::unexpected(
+            Error{ErrorCode::limit_exceeded, "text is too large for tree-sitter"});
+    }
+
+    // Each change is described against the text the ones before it left, which the highlighter
+    // rebuilds from its own text; the points of an edit need the lines of those texts.
+    struct Step {
+        TSInputEdit edit;
+        std::size_t first_row = 0;
+        std::size_t old_rows = 0;
+        std::size_t new_rows = 0;
+    };
+    std::vector<Step> steps;
+    steps.reserve(changes.size());
+    Text current = impl_->text;
+    for (const TextChange& change : changes) {
+        const std::size_t old_end = change.offset + change.removed_bytes;
+        auto next = current.replaced(change.offset, old_end, change.text);
+        if (!next) {
+            return std::unexpected(next.error());
+        }
+        const std::size_t new_end = change.offset + change.text.size();
+        Step step;
+        step.edit = TSInputEdit{static_cast<std::uint32_t>(change.offset),
+                                static_cast<std::uint32_t>(old_end),
+                                static_cast<std::uint32_t>(new_end),
+                                point_at(current, change.offset),
+                                point_at(current, old_end),
+                                point_at(*next, new_end)};
+        step.first_row = step.edit.start_point.row;
+        step.old_rows = step.edit.old_end_point.row - step.first_row + 1;
+        step.new_rows = step.edit.new_end_point.row - step.first_row + 1;
+        steps.push_back(step);
+        current = std::move(*next);
+    }
+    if (current.size() != new_text.size()) {
+        return std::unexpected(
+            Error{ErrorCode::invalid_argument, "the changes do not lead to the new text"});
+    }
+
+    for (const Step& step : steps) {
+        ts_tree_edit(impl_->tree.get(), &step.edit);
+        auto& cache = impl_->cache;
+        const auto first =
+            cache.begin() + static_cast<std::ptrdiff_t>(std::min(step.first_row, cache.size()));
+        const auto last =
+            first + static_cast<std::ptrdiff_t>(
+                        std::min(step.old_rows, static_cast<std::size_t>(cache.end() - first)));
+        cache.erase(first, last);
+        cache.insert(cache.begin() +
+                         static_cast<std::ptrdiff_t>(std::min(step.first_row, cache.size())),
+                     step.new_rows, std::nullopt);
+    }
+
+    impl_->text = new_text;
+    ReadState state{&impl_->text, &impl_->bytes_read};
+    const TSInput input{&state, read_chunk, TSInputEncodingUTF8, nullptr};
+    std::unique_ptr<TSTree, TreeDeleter> tree(
+        ts_parser_parse(impl_->parser.get(), impl_->tree.get(), input));
+    if (!tree) {
+        impl_->tree.reset();
+        impl_->cache.assign(impl_->text.line_count(), std::nullopt);
+        ++impl_->version;
+        return std::unexpected(Error{ErrorCode::environment_unavailable, "parsing failed"});
+    }
+
+    std::uint32_t range_count = 0;
+    TSRange* ranges = ts_tree_get_changed_ranges(impl_->tree.get(), tree.get(), &range_count);
+    impl_->tree = std::move(tree);
+    impl_->cache.resize(impl_->text.line_count());
+    for (std::uint32_t i = 0; i < range_count; ++i) {
+        const std::size_t last_row =
+            std::min<std::size_t>(ranges[i].end_point.row, impl_->cache.size() - 1);
+        for (std::size_t row = ranges[i].start_point.row; row <= last_row; ++row) {
+            impl_->cache[row].reset();
+        }
+    }
+    std::free(ranges);
+    ++impl_->version;
+    return {};
 }
 
 } // namespace anvil::core

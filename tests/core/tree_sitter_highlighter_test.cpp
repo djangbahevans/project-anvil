@@ -3,6 +3,7 @@
 
 #include <fstream>
 #include <gtest/gtest.h>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -57,6 +58,71 @@ void expect_well_formed(const Highlighter& highlighter, const Text& text) {
             previous_end = span.end;
         }
     }
+}
+
+// What a fresh highlighter says about the text, which an edited one must agree with.
+std::string fresh_render(const Text& text) {
+    const auto highlighter = json_highlighter(text);
+    return highlighter ? render(*highlighter, text) : std::string();
+}
+
+// A document with enough variety that random edits break it in many ways: nested containers,
+// strings with escapes, multibyte text, comments and a line comment that ends the line.
+std::string json_document(std::mt19937& random, int items) {
+    static const char* const values[] = {"1",
+                                         "-2.5e3",
+                                         "true",
+                                         "null",
+                                         "\"plain\"",
+                                         "\"caf\xC3\xA9 \xF0\x9F\x98\x80\"",
+                                         "\"a\\n\\\"b\"",
+                                         "[1, [2, {\"k\": 3}]]",
+                                         "{}"};
+    std::string out = "{\n";
+    for (int i = 0; i < items; ++i) {
+        out += "  \"key" + std::to_string(i) + "\": ";
+        out += values[random() % std::size(values)];
+        if (random() % 5 == 0) {
+            out += " // note \xC3\xA9";
+        }
+        if (random() % 7 == 0) {
+            out += "\n  /* block\n     comment */";
+        }
+        out += i + 1 < items ? ",\n" : "\n";
+    }
+    return out + "}\n";
+}
+
+const char* const fragments[] = {
+    "",   "{",  "}",  "[",    "]",         ",", ":",    "\"",    "\\",       "/*",
+    "*/", "//", "\n", "\n\n", " ",         "1", "null", "\"x\"", "\xC3\xA9", "\xF0\x9F\x98\x80",
+    "tr", "ue", "-",  "e5",   "\"k\": 1, "};
+
+// A random edit: a range on character boundaries and a replacement made of fragments.
+struct RandomEdit {
+    std::size_t start = 0;
+    std::size_t end = 0;
+    std::string text;
+};
+
+RandomEdit random_edit(std::mt19937& random, const Text& text) {
+    const std::size_t size = text.size();
+    auto boundary = [&](std::size_t offset) {
+        offset = std::min(offset, size);
+        while (!text.is_char_boundary(offset)) {
+            ++offset;
+        }
+        return offset;
+    };
+    RandomEdit edit;
+    edit.start = boundary(random() % (size + 1));
+    const std::size_t length = random() % 3 == 0 ? random() % 40 : random() % 4;
+    edit.end = boundary(edit.start + length);
+    const int parts = static_cast<int>(random() % 4);
+    for (int i = 0; i < parts; ++i) {
+        edit.text += fragments[random() % std::size(fragments)];
+    }
+    return edit;
 }
 
 } // namespace
@@ -230,6 +296,149 @@ TEST(TreeSitterHighlighter, TheHighlighterKeepsTheSnapshotItWasMadeFrom) {
     const auto spans = highlighter->spans(0);
     ASSERT_EQ(spans.size(), 1u);
     EXPECT_EQ(spans[0].scope, "constant.numeric.json");
+}
+
+TEST(TreeSitterHighlighter, EditedHighlightingEqualsAFreshParseOfTheNewText) {
+    std::mt19937 random(2026);
+    for (int document = 0; document < 10; ++document) {
+        TextBuffer buffer(text_of(json_document(random, 4 + document * 3)));
+        const auto highlighter = json_highlighter(buffer.snapshot());
+        ASSERT_TRUE(highlighter);
+        for (int step = 0; step < 120; ++step) {
+            // Fill the cache, so that a span kept past an edit that should have dropped it shows.
+            (void)render(*highlighter, buffer.snapshot());
+
+            const RandomEdit edit = random_edit(random, buffer.snapshot());
+            const auto change = buffer.replace(edit.start, edit.end, edit.text);
+            ASSERT_TRUE(change.has_value());
+            ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+            ASSERT_EQ(render(*highlighter, buffer.snapshot()), fresh_render(buffer.snapshot()))
+                << "document " << document << " step " << step << " edit [" << edit.start << ", "
+                << edit.end << ") -> \"" << edit.text << "\"\n"
+                << buffer.snapshot().to_string();
+        }
+    }
+}
+
+TEST(TreeSitterHighlighter, ADocumentChangeOfSeveralEditsIsFollowed) {
+    std::mt19937 random(7);
+    Document document(text_of(json_document(random, 30)));
+    const auto highlighter = json_highlighter(document.text());
+    ASSERT_TRUE(highlighter);
+    for (int step = 0; step < 120; ++step) {
+        (void)render(*highlighter, document.text());
+        std::vector<Edit> edits;
+        std::size_t floor = 0;
+        for (int i = 0, count = 1 + static_cast<int>(random() % 4); i < count; ++i) {
+            const Text rest = document.text();
+            RandomEdit edit = random_edit(random, rest);
+            if (edit.start < floor) {
+                continue;
+            }
+            floor = edit.end;
+            edits.push_back(Edit{edit.start, edit.end, edit.text});
+        }
+        const auto change = document.apply_edits(edits);
+        ASSERT_TRUE(change.has_value());
+        ASSERT_TRUE(highlighter->apply(*change, document.text()).has_value());
+        ASSERT_EQ(render(*highlighter, document.text()), fresh_render(document.text()))
+            << "step " << step;
+    }
+}
+
+TEST(TreeSitterHighlighter, AnEditThatDoesNotLeadToTheNewTextIsRefusedAndChangesNothing) {
+    TextBuffer buffer(text_of("[1, 2]\n[3]"));
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    const std::string before = render(*highlighter, buffer.snapshot());
+    const auto change = buffer.replace(1, 2, "\"long\"");
+    ASSERT_TRUE(change.has_value());
+
+    const auto wrong_text = highlighter->apply(*change, text_of("[1, 2]\n[3]"));
+    ASSERT_FALSE(wrong_text.has_value());
+    EXPECT_EQ(wrong_text.error().code, ErrorCode::invalid_argument);
+
+    TextChange past_the_end = *change;
+    past_the_end.offset = 1000;
+    EXPECT_FALSE(highlighter->apply(past_the_end, buffer.snapshot()).has_value());
+    EXPECT_EQ(render(*highlighter, text_of("[1, 2]\n[3]")), before);
+
+    ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    EXPECT_EQ(render(*highlighter, buffer.snapshot()), fresh_render(buffer.snapshot()));
+}
+
+TEST(TreeSitterHighlighter, TheVersionChangesWithEachEdit) {
+    TextBuffer buffer(text_of("[1]"));
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    const std::uint64_t first = highlighter->version();
+    const auto change = buffer.insert(2, "2");
+    ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    EXPECT_NE(highlighter->version(), first);
+}
+
+namespace {
+
+// Objects within objects, so that no node has more than a few dozen children.
+std::string nested_json(int groups) {
+    std::string out = "{\n";
+    for (int a = 0; a < groups; ++a) {
+        out += "  \"group" + std::to_string(a) + "\": {\n";
+        for (int b = 0; b < 30; ++b) {
+            out += "    \"item" + std::to_string(b) +
+                   "\": [1, 2.5, \"value\", true, null, {\"a\": \"b\"}]";
+            out += b + 1 < 30 ? ",\n" : "\n";
+        }
+        out += a + 1 < groups ? "  },\n" : "  }\n";
+    }
+    return out + "}\n";
+}
+
+std::string big_json(std::size_t lines) {
+    std::string out = "{\n";
+    for (std::size_t i = 0; i < lines; ++i) {
+        out +=
+            "  \"key" + std::to_string(i) + "\": [1, 2.5, \"value\", true, null, {\"a\": \"b\"}]";
+        out += i + 1 < lines ? ",\n" : "\n";
+    }
+    return out + "}\n";
+}
+
+} // namespace
+
+TEST(TreeSitterHighlighter, AnEditAsksTheQueryForTheLinesItReachedOnly) {
+    TextBuffer buffer(text_of(big_json(2000)));
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    (void)render(*highlighter, buffer.snapshot());
+    ASSERT_EQ(highlighter->line_queries(), buffer.snapshot().line_count());
+
+    // A character inside a number on line 1000 changes that line and nothing else.
+    const std::size_t at = buffer.snapshot().line_start(1000) + 20;
+    const auto change = buffer.replace(at, at + 1, "7");
+    ASSERT_TRUE(change.has_value());
+    ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    const std::size_t before = highlighter->line_queries();
+    (void)render(*highlighter, buffer.snapshot());
+    EXPECT_LE(highlighter->line_queries() - before, 3u);
+    EXPECT_GE(highlighter->line_queries() - before, 1u);
+}
+
+TEST(TreeSitterHighlighter, AnEditReparsesAFractionOfTheBytesOfTheFirstParse) {
+    TextBuffer buffer(text_of(nested_json(700)));
+    ASSERT_GT(buffer.snapshot().size(), 1000u * 1000);
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    const std::size_t first_parse = highlighter->bytes_read();
+    ASSERT_GE(first_parse, buffer.snapshot().size());
+
+    const std::size_t at = buffer.snapshot().size() / 2;
+    const auto change = buffer.replace(at, at, " ");
+    ASSERT_TRUE(change.has_value());
+    ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    const std::size_t reparse = highlighter->bytes_read() - first_parse;
+    EXPECT_GT(reparse, 0u);
+    EXPECT_LT(reparse * 50, first_parse) << reparse << " of " << first_parse;
 }
 
 #else

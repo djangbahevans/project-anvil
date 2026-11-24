@@ -2,13 +2,16 @@
 
 #ifdef ANVIL_TREE_SITTER
 
+#include "anvil/core/document.hpp"
 #include "anvil/core/error.hpp"
 #include "anvil/core/highlighter.hpp"
 #include "anvil/core/text.hpp"
+#include "anvil/core/text_buffer.hpp"
 
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -35,6 +38,24 @@ public:
     ~TreeSitterHighlighter() override;
     TreeSitterHighlighter(const TreeSitterHighlighter&) = delete;
     TreeSitterHighlighter& operator=(const TreeSitterHighlighter&) = delete;
+
+    // Follows an edit of the text this highlighter describes: `new_text` is the text after the
+    // change. The tree is edited and parsed again with the old tree, which reads only what the edit
+    // reached, and the spans kept for a line stay unless the line was edited or lies in a range
+    // whose syntax changed. The result of `spans` is that of a highlighter made from `new_text`.
+    //
+    // A list of changes is in the order they were applied, each described against the text the
+    // ones before left (a `DocumentChange` is that). Fails with ErrorCode::invalid_argument when
+    // the changes do not lead from the highlighter's text to one the size of `new_text`, and then
+    // leaves the highlighter as it was.
+    std::expected<void, Error> apply(const TextChange& change, const Text& new_text);
+    std::expected<void, Error> apply(const DocumentChange& change, const Text& new_text);
+    std::expected<void, Error> apply(std::span<const TextChange> changes, const Text& new_text);
+
+    // Diagnostics for tests and benchmarks, counted since the highlighter was made: the bytes the
+    // parser read from the text, and the times the query ran for a line.
+    std::size_t bytes_read() const;
+    std::size_t line_queries() const;
 
     std::vector<HighlightSpan> spans(std::size_t line) const override;
     std::string_view root_scope() const override;
