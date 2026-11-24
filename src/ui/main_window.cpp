@@ -1106,6 +1106,10 @@ void MainWindow::register_commands() {
         [this] { navigate(history_.go_to_last_edit(), true); });
     add("workbench.action.gotoLine", tr("Go to Line/Column..."), [this] { show_go_to_line(); });
     add("editor.action.jumpToBracket", tr("Go to Bracket"), [this] { view()->jump_to_bracket(); });
+    add("editor.action.smartSelect.expand", tr("Expand Selection"),
+        [this] { view()->expand_selection(); });
+    add("editor.action.smartSelect.shrink", tr("Shrink Selection"),
+        [this] { view()->shrink_selection(); });
     add("workbench.action.selectTheme", tr("Preferences: Color Theme"),
         [this] { select_color_theme(); });
     add("workbench.action.reopenClosedEditor", tr("Reopen Closed Editor"),

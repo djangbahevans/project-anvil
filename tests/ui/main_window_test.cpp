@@ -2662,6 +2662,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.newWindow",
                                           "workbench.action.gotoLine",
                                           "editor.action.jumpToBracket",
+                                          "editor.action.smartSelect.expand",
+                                          "editor.action.smartSelect.shrink",
                                           "workbench.action.openSettings",
                                           "workbench.action.openSettingsJson",
                                           "workbench.action.openGlobalKeybindings",
@@ -2865,6 +2867,8 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleSidebarPosition",
         "workbench.action.gotoLine",
         "editor.action.jumpToBracket",
+        "editor.action.smartSelect.expand",
+        "editor.action.smartSelect.shrink",
         "workbench.action.openSettings",
         "workbench.action.openGlobalKeybindings",
         "workbench.action.selectTheme",
@@ -7603,4 +7607,88 @@ TEST_F(NewWindowTest, TheStandInProgramRunsWithNoArgumentsInADirectoryThatExists
     ASSERT_EQ(lines.size(), 2U);
     EXPECT_EQ(lines[0], "0");
     EXPECT_TRUE(std::filesystem::is_directory(lines[1])) << lines[1];
+}
+
+class SmartSelectTest : public MainWindowTest {
+protected:
+    void open(const std::string& text, std::vector<core::Selection> selections) {
+        create_window();
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", text).string())));
+        window_->resize(900, 600);
+        window_->show();
+        QApplication::processEvents();
+        window_->view()->select_ranges(std::move(selections), 0);
+    }
+
+    std::vector<std::string> selected() const {
+        const core::Document& document = *window_->current_document();
+        std::vector<std::string> result;
+        for (const core::Selection& selection : document.selections().all()) {
+            result.push_back(
+                document.text().slice(selection.start(), selection.end() - selection.start()));
+        }
+        return result;
+    }
+};
+
+TEST_F(SmartSelectTest, TheSelectionMenuItemsAreEnabledAndShowTheirKeys) {
+    open("f(a)\n", {core::Selection::caret(2)});
+    QAction* expand = menu_action("editor.action.smartSelect.expand");
+    ASSERT_NE(expand, nullptr);
+    EXPECT_TRUE(expand->isEnabled());
+    EXPECT_TRUE(expand->text().endsWith("\tShift+Alt+RightArrow")) << expand->text().toStdString();
+    QAction* shrink = menu_action("editor.action.smartSelect.shrink");
+    ASSERT_NE(shrink, nullptr);
+    EXPECT_TRUE(shrink->isEnabled());
+    EXPECT_TRUE(shrink->text().endsWith("\tShift+Alt+LeftArrow")) << shrink->text().toStdString();
+}
+
+TEST_F(SmartSelectTest, ExpandAndShrinkRunFromTheMenuAndThePalette) {
+    open("f(ab, cd)\n", {core::Selection::caret(3)});
+    menu_action("editor.action.smartSelect.expand")->trigger();
+    EXPECT_EQ(selected(), (std::vector<std::string>{"ab"}));
+    window_->commands().execute("editor.action.smartSelect.expand");
+    EXPECT_EQ(selected(), (std::vector<std::string>{"ab, cd"}));
+    menu_action("editor.action.smartSelect.shrink")->trigger();
+    EXPECT_EQ(selected(), (std::vector<std::string>{"ab"}));
+    window_->commands().execute("editor.action.smartSelect.shrink");
+    EXPECT_TRUE(window_->current_document()->selections().primary().empty());
+}
+
+TEST_F(SmartSelectTest, EveryCursorExpandsAndTheShortcutsWork) {
+    open("(a b) (c d)\n", {core::Selection::caret(1), core::Selection::caret(7)});
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_Right, Qt::ShiftModifier | Qt::AltModifier);
+    EXPECT_EQ(selected(), (std::vector<std::string>({"a", "c"})));
+    QTest::keyClick(window_->view(), Qt::Key_Right, Qt::ShiftModifier | Qt::AltModifier);
+    EXPECT_EQ(selected(), (std::vector<std::string>({"a b", "c d"})));
+    QTest::keyClick(window_->view(), Qt::Key_Left, Qt::ShiftModifier | Qt::AltModifier);
+    EXPECT_EQ(selected(), (std::vector<std::string>({"a", "c"})));
+}
+
+TEST_F(SmartSelectTest, ShrinkAfterATypedCharacterDoesNothing) {
+    open("foo bar\n", {core::Selection::caret(1)});
+    window_->commands().execute("editor.action.smartSelect.expand");
+    window_->commands().execute("editor.action.smartSelect.expand");
+    ASSERT_EQ(selected(), (std::vector<std::string>{"foo bar"}));
+    window_->view()->select_range(core::Selection::caret(3));
+    window_->commands().execute("editor.action.smartSelect.shrink");
+    EXPECT_EQ(window_->current_document()->selections().primary(), core::Selection::caret(3));
+}
+
+TEST_F(SmartSelectTest, ExpandingKeepsTheSelectionInView) {
+    std::string text;
+    for (int i = 0; i < 200; ++i) {
+        text += "line" + std::to_string(i) + "\n";
+    }
+    open(text, {core::Selection::caret(2)});
+    window_->commands().execute("editor.action.smartSelect.expand");
+    ASSERT_EQ(window_->current_document()->selections().primary(), (core::Selection{0, 5}));
+    EXPECT_EQ(window_->view()->verticalScrollBar()->value(), 0);
+    window_->commands().execute("editor.action.smartSelect.expand");
+    EXPECT_EQ(window_->current_document()->selections().primary(),
+              (core::Selection{0, text.size()}));
+    EXPECT_GT(window_->view()->verticalScrollBar()->value(), 0);
 }
