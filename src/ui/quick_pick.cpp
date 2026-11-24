@@ -299,6 +299,11 @@ std::vector<core::MatchRange> QuickPick::label_highlights(std::size_t row) const
                                        : std::vector<core::MatchRange>{};
 }
 
+void QuickPick::set_filtering(bool enabled) {
+    filtering_ = enabled;
+    refilter();
+}
+
 void QuickPick::refilter() {
     QString text = filter_->text();
     if (!ignored_prefix_.isEmpty() && text.startsWith(ignored_prefix_)) {
@@ -307,7 +312,7 @@ void QuickPick::refilter() {
     const core::PreparedQuery query = core::prepare_query(text.toStdString());
 
     std::vector<Model::Row> rows;
-    if (query.normalized.empty()) {
+    if (!filtering_ || query.normalized.empty()) {
         rows.resize(items_.size());
         for (std::size_t i = 0; i < rows.size(); ++i) {
             rows[i].item = i;

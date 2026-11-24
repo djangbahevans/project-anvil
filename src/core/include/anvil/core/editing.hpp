@@ -157,6 +157,9 @@ public:
     // start of it. Selections that are carets give nothing; when no selection gives a caret,
     // nothing changes.
     EditOutcome add_cursors_to_line_ends();
+    // Replaces every selection with a caret where Go to Bracket takes the start of it (see
+    // jump_to_bracket).
+    EditOutcome jump_to_bracket();
 
     // --- lines ---
 

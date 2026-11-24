@@ -167,6 +167,12 @@ const Row rows[] = {
      {"shift+f3"},
      {"cmd+shift+g", "shift+f3"}},
 
+    {"workbench.action.gotoLine", "", {"ctrl+g"}, {"ctrl+g"}, {"ctrl+g"}},
+    {"editor.action.jumpToBracket",
+     in_editor,
+     {"ctrl+shift+\\"},
+     {"ctrl+shift+\\"},
+     {"cmd+shift+\\"}},
     // Navigation history.
     {"workbench.action.navigateBack",
      "",

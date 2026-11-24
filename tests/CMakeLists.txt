@@ -9,7 +9,9 @@ add_executable(anvil_core_tests
   core/editing_test.cpp
   core/editor_settings_test.cpp
   core/fuzzy_test.cpp
+  core/brackets_test.cpp
   core/glob_test.cpp
+  core/go_to_line_test.cpp
   core/language_registry_test.cpp
   core/jsonc_edit_model_test.cpp
   core/jsonc_edit_test.cpp

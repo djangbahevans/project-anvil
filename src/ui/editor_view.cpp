@@ -232,6 +232,13 @@ void EditorView::select_range(core::Selection range) {
     }
 }
 
+void EditorView::select_ranges(std::vector<core::Selection> ranges, std::size_t primary) {
+    if (controller_) {
+        apply(controller_->select_ranges(std::move(ranges), primary));
+        ensure_cursor_visible();
+    }
+}
+
 void EditorView::replace_ranges(std::vector<core::Edit> edits,
                                 std::optional<core::Selection> selection_after) {
     if (controller_) {
@@ -519,6 +526,13 @@ void EditorView::add_cursors_vertically(bool down) {
 void EditorView::add_cursors_to_line_ends() {
     if (controller_) {
         apply(controller_->add_cursors_to_line_ends());
+    }
+}
+
+void EditorView::jump_to_bracket() {
+    if (controller_) {
+        apply(controller_->jump_to_bracket());
+        ensure_cursor_visible();
     }
 }
 
