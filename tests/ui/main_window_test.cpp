@@ -2838,9 +2838,6 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleSidebarVisibility",
         "workbench.action.toggleStatusbarVisibility",
         "workbench.action.toggleSidebarPosition",
-        "workbench.action.navigateBack",
-        "workbench.action.navigateForward",
-        "workbench.action.navigateToLastEditLocation",
         "workbench.action.activityBarLocation.default",
         "workbench.action.activityBarLocation.hide",
         "workbench.action.positionPanelTop",
@@ -6245,22 +6242,6 @@ TEST_F(NavigationHistoryTest, OnlyEditsMakeAnEditLocation) {
     EXPECT_TRUE(enabled("workbench.action.navigateToLastEditLocation"));
 }
 
-TEST_F(NavigationHistoryTest, ASavedUntitledDocumentKeepsItsPlaces) {
-    create_window();
-    window_->commands().execute("workbench.action.files.newUntitledFile");
-    const core::Uri untitled = window_->current_uri();
-    type("hello");
-    const std::size_t entries = window_->navigation_history().selections().entries().size();
-    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "saved.txt").string())));
-    EXPECT_EQ(window_->navigation_history().selections().entries().size(), entries);
-    bool saved_is_listed = false;
-    for (const auto& entry : window_->navigation_history().selections().entries()) {
-        saved_is_listed = saved_is_listed || entry.uri == core::Uri::file(scratch_ / "saved.txt");
-        EXPECT_NE(entry.uri.path, untitled.path);
-    }
-    EXPECT_TRUE(saved_is_listed);
-}
-
 TEST_F(NavigationHistoryTest, TheGoMenuItemsRunTheirCommands) {
     create_window();
     open(write("a.txt", numbered_lines(200)));
@@ -6283,6 +6264,71 @@ TEST_F(NavigationHistoryTest, TheGoMenuItemsRunTheirCommands) {
         item->trigger();
         EXPECT_EQ(executed, std::vector<std::string>{id}) << id;
     }
+}
+
+TEST_F(NavigationHistoryTest, AFileThatCannotBeReadAnymoreIsForgottenAfterTheWarning) {
+    create_window();
+    const auto a = write("a.txt", numbered_lines(200));
+    open(a);
+    go_to_line(70);
+    open(write("b.txt", numbered_lines(10)));
+    ASSERT_TRUE(close_tab_of(core::Uri::file(a)));
+    write("a.txt", "\xff\xfe\xfd");
+
+    answer_next_prompt(QMessageBox::Ok);
+    run("workbench.action.navigateBack");
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(shown_name(), "b.txt");
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        EXPECT_NE(entry.uri, core::Uri::file(a));
+    }
+}
+
+TEST_F(NavigationHistoryTest, APlaceBeyondTheEndOfAShortenedDocumentIsClampedAndAddsNoPlace) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(150);
+    go_to_line(20);
+    const core::Document& document = *window_->current_document();
+    const std::vector<core::Edit> cut = {{offset_of_line(100), document.text().size(), ""}};
+    ASSERT_TRUE(window_->current_document()->apply_edits(cut).has_value());
+    const auto before = window_->navigation_history().selections().entries();
+
+    run("workbench.action.navigateBack");
+    EXPECT_EQ(window_->navigation_history().selections().entries(), before);
+    EXPECT_GE(caret_line(), 99U);
+    EXPECT_TRUE(enabled("workbench.action.navigateForward"));
+}
+
+TEST_F(NavigationHistoryTest, AMoveNearAPlaceReachedByWalkingReplacesItAndKeepsTheRest) {
+    create_window();
+    open(write("a.txt", numbered_lines(200)));
+    go_to_line(80);
+    go_to_line(150);
+    const std::size_t count = window_->navigation_history().selections().entries().size();
+
+    run("workbench.action.navigateBack");
+    ASSERT_EQ(caret_line(), 80U);
+    go_to_line(84);
+    EXPECT_EQ(window_->navigation_history().selections().entries().size(), count);
+    EXPECT_EQ(window_->navigation_history().selections().current()->selection.line(), 84U);
+    EXPECT_TRUE(enabled("workbench.action.navigateForward"));
+}
+
+TEST_F(NavigationHistoryTest, ASavedUntitledDocumentKeepsItsPlacesInTheOrderTheyWereVisited) {
+    create_window();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    const core::Uri untitled = window_->current_uri();
+    type("hello");
+    open(write("a.txt", numbered_lines(10)));
+    window_->editor_layout().show(untitled);
+    ASSERT_EQ(window_->current_uri(), untitled);
+    const core::Uri saved = core::Uri::file(scratch_ / "saved.txt");
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "saved.txt").string())));
+
+    const auto& entries = window_->navigation_history().selections().entries();
+    EXPECT_EQ(std::ranges::count(entries, saved, &workbench::NavigationEntry::uri), 2);
+    EXPECT_EQ(std::ranges::count(entries, untitled, &workbench::NavigationEntry::uri), 0);
 }
 
 TEST_F(NavigationHistoryTest, TheMenuShowsTheKeysOfTheCommands) {

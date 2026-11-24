@@ -1521,8 +1521,8 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
         documents_.insert(std::move(node));
         bridge_.remove_document(uri);
         bridge_.add_document(new_uri, document);
-        layout_.replace_document(uri, new_uri);
         history_.replace_uri(uri, new_uri);
+        layout_.replace_document(uri, new_uri);
     }
     update_document(new_uri);
     return true;
