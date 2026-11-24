@@ -7448,6 +7448,7 @@ TEST_F(ThemePickerTest, AThemeOfAnExtensionIsInTheListAndAThemeWithoutAFileCanno
                                    .label = "Extension Theme",
                                    .kind = core::ThemeKind::light,
                                    .file = scratch_ / "missing-theme.json"}});
+    window_->status_bar().clear_message();
     window_->commands().execute("workbench.action.selectTheme");
     const auto item = item_of("Extension Theme");
     ASSERT_TRUE(item.has_value());
@@ -7455,6 +7456,8 @@ TEST_F(ThemePickerTest, AThemeOfAnExtensionIsInTheListAndAThemeWithoutAFileCanno
 
     QTest::keyClicks(pick()->filter_field(), "Extension");
     EXPECT_EQ(applied(), "Dark 2026");
+    EXPECT_TRUE(window_->status_bar().message().isEmpty())
+        << window_->status_bar().message().toStdString();
     press(Qt::Key_Return);
     EXPECT_TRUE(pick()->isVisible());
     EXPECT_EQ(settings_text(), "{}");
@@ -7463,6 +7466,7 @@ TEST_F(ThemePickerTest, AThemeOfAnExtensionIsInTheListAndAThemeWithoutAFileCanno
 TEST_F(ThemePickerTest, WithNoThemesTheStatusBarSaysSoAndNothingOpens) {
     themes_directory_ = scratch_ / "no-themes";
     start();
+    window_->status_bar().clear_message();
     window_->commands().execute("workbench.action.selectTheme");
     EXPECT_FALSE(pick()->isVisible());
     EXPECT_EQ(window_->status_bar().message(), "There are no color themes to choose from");
