@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -58,6 +59,8 @@ protected:
         options.settings_file = settings_file_;
         options.keybindings_file = keybindings_file_;
         options.themes_directory = themes_directory_;
+        options.executable = executable_;
+        options.start_process = start_process_;
         options.custom_title_bar = custom_title_bar_;
         options.workspace = workspace_;
         options.choose_folder = choose_folder_;
@@ -276,6 +279,8 @@ protected:
     std::vector<std::filesystem::path> extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION};
     // Unset: the themes that ship with the editor.
     std::optional<std::filesystem::path> themes_directory_;
+    std::filesystem::path executable_;
+    std::function<std::expected<std::int64_t, Error>(const platform::ProcessSpec&)> start_process_;
     std::unique_ptr<MainWindow> window_;
     bool prompt_shown_ = false;
 };
@@ -2654,6 +2659,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.navigateToLastEditLocation",
                                           "workbench.action.reopenClosedEditor",
                                           "workbench.action.selectTheme",
+                                          "workbench.action.newWindow",
                                           "workbench.action.gotoLine",
                                           "editor.action.jumpToBracket",
                                           "workbench.action.openSettings",
@@ -2862,6 +2868,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.openSettings",
         "workbench.action.openGlobalKeybindings",
         "workbench.action.selectTheme",
+        "workbench.action.newWindow",
         "workbench.action.activityBarLocation.default",
         "workbench.action.activityBarLocation.hide",
         "workbench.action.positionPanelTop",
@@ -7481,4 +7488,103 @@ TEST_F(ThemePickerTest, TheCommandIsInThePaletteAndTheShortcutOpensTheQuickPick)
     QTest::keyClick(window_->view(), Qt::Key_T, Qt::ControlModifier);
     EXPECT_TRUE(pick()->isVisible());
     EXPECT_EQ(label_of(1), "Dark 2026");
+}
+
+class NewWindowTest : public MainWindowTest {
+protected:
+    // Replaces the start of a process by a recorder of what would be started.
+    void record_starts() {
+        start_process_ =
+            [this](const platform::ProcessSpec& spec) -> std::expected<std::int64_t, Error> {
+            started_.push_back(spec);
+            return 4242;
+        };
+    }
+
+    std::vector<platform::ProcessSpec> started_;
+};
+
+TEST_F(NewWindowTest, TheItemIsEnabledAndShowsItsKey) {
+    create_window();
+    QAction* item = menu_action("workbench.action.newWindow");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_TRUE(item->text().endsWith("\tCtrl+Shift+N")) << item->text().toStdString();
+}
+
+TEST_F(NewWindowTest, TheCommandStartsTheProgramWithNoArgumentsInADirectoryThatExists) {
+    record_starts();
+    executable_ = scratch_ / "stand-in";
+    create_window();
+    menu_action("workbench.action.newWindow")->trigger();
+
+    ASSERT_EQ(started_.size(), 1U);
+    const platform::ProcessSpec& spec = started_[0];
+    EXPECT_EQ(spec.executable, scratch_ / "stand-in");
+    EXPECT_TRUE(spec.arguments.empty());
+    ASSERT_TRUE(spec.working_directory.has_value());
+    EXPECT_TRUE(std::filesystem::is_directory(*spec.working_directory));
+    EXPECT_EQ(spec.environment, platform::current_environment());
+}
+
+TEST_F(NewWindowTest, WithoutAProgramGivenTheRunningOneIsStarted) {
+    record_starts();
+    create_window();
+    window_->commands().execute("workbench.action.newWindow");
+    ASSERT_EQ(started_.size(), 1U);
+    EXPECT_EQ(started_[0].executable.string(),
+              QCoreApplication::applicationFilePath().toStdString());
+}
+
+TEST_F(NewWindowTest, EachRunStartsAnotherProcessAndTheWindowThatAskedIsNotAffected) {
+    record_starts();
+    create_window();
+    window_->show();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
+    type("x");
+    const std::size_t documents = window_->open_document_count();
+
+    window_->commands().execute("workbench.action.newWindow");
+    window_->commands().execute("workbench.action.newWindow");
+    EXPECT_EQ(started_.size(), 2U);
+    EXPECT_TRUE(window_->isVisible());
+    EXPECT_EQ(window_->open_document_count(), documents);
+    EXPECT_EQ(current_text(), "xabc");
+    EXPECT_TRUE(window_->current_document()->is_dirty());
+}
+
+TEST_F(NewWindowTest, AProgramThatCannotBeStartedIsReportedInTheStatusBar) {
+    start_process_ = [](const platform::ProcessSpec&) -> std::expected<std::int64_t, Error> {
+        return std::unexpected(Error{ErrorCode::io_error, "no such program"});
+    };
+    create_window();
+    window_->commands().execute("workbench.action.newWindow");
+    EXPECT_EQ(window_->status_bar().message(), "The new window cannot be started: no such program");
+}
+
+TEST_F(NewWindowTest, TheStandInProgramRunsWithNoArgumentsInADirectoryThatExists) {
+    const auto output = scratch_ / "output.txt";
+    const auto program = scratch_ / "stand-in.sh";
+    ASSERT_TRUE(platform::write_file(program, "#!/bin/sh\necho \"$#\" > '" + output.string() +
+                                                  "'\npwd >> '" + output.string() + "'\n")
+                    .has_value());
+    std::filesystem::permissions(program, std::filesystem::perms::owner_all);
+    executable_ = program;
+    create_window();
+    window_->commands().execute("workbench.action.newWindow");
+
+    std::vector<std::string> lines;
+    EXPECT_TRUE(QTest::qWaitFor(
+        [&] {
+            lines.clear();
+            std::ifstream in(output);
+            for (std::string line; std::getline(in, line);) {
+                lines.push_back(line);
+            }
+            return lines.size() == 2;
+        },
+        5000));
+    ASSERT_EQ(lines.size(), 2U);
+    EXPECT_EQ(lines[0], "0");
+    EXPECT_TRUE(std::filesystem::is_directory(lines[1])) << lines[1];
 }

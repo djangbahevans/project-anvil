@@ -196,6 +196,14 @@ TEST(DefaultKeybindingsTest, ColorThemeIsACtrlKChordOnEveryPlatform) {
     EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), command), chords({"cmd+k cmd+t"}));
 }
 
+TEST(DefaultKeybindingsTest, NewWindowIsCtrlShiftN) {
+    const char* command = "workbench.action.newWindow";
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::linux), command), chords({"ctrl+shift+n"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::windows), command),
+              chords({"ctrl+shift+n"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), command), chords({"cmd+shift+n"}));
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);

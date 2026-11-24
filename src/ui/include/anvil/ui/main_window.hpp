@@ -1,10 +1,12 @@
 #pragma once
 
 #include "anvil/core/document.hpp"
+#include "anvil/core/error.hpp"
 #include "anvil/core/language_registry.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/uri.hpp"
 #include "anvil/core/workspace.hpp"
+#include "anvil/platform/process.hpp"
 #include "anvil/ui/command_registry.hpp"
 #include "anvil/ui/editor_area.hpp"
 #include "anvil/ui/editor_view.hpp"
@@ -67,6 +69,11 @@ struct MainWindowOptions {
     std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
     bool confirm_unsaved_changes = true;
+    // The program that File > New Window starts, with no arguments; the running program when empty.
+    std::filesystem::path executable;
+    // Starts that program; the platform's start of a process that outlives this one when unset.
+    // Tests replace it to see what would be started.
+    std::function<std::expected<std::int64_t, Error>(const platform::ProcessSpec&)> start_process;
     // Whether the window has no frame of its own and draws the title bar, with the menu bar and the
     // window buttons in it (ADR 0015). Without it, and always on macOS, the window has the
     // system's frame. The environment variable ANVIL_NATIVE_FRAME also turns it off.
@@ -373,6 +380,9 @@ private:
                                                   const core::Uri& uri);
     void save_as_dialog();
     void open_dialog();
+    // Starts another editor in a window of its own: the same program, with no arguments, in a
+    // directory that exists, with the environment of this one.
+    void open_new_window();
     // Opens a file of the user's configuration in the editor, creating it with `initial` when it
     // is missing. Says so in the status bar when the window has no such file, or it cannot be
     // created.
