@@ -98,6 +98,22 @@ protected:
         }
     }
 
+    // The title that the palette lists first when nothing was used yet: the one that sorts first
+    // of the commands it shows.
+    QString first_command_title() const {
+        QString first;
+        for (const auto& command : window_->commands().commands()) {
+            if (command.id == "setContext" || command.id == "editor.action.selectAllMatches") {
+                continue;
+            }
+            const QString title = QString::fromStdString(command.title);
+            if (first.isEmpty() || title.compare(first, Qt::CaseInsensitive) < 0) {
+                first = title;
+            }
+        }
+        return first;
+    }
+
     // Waits for the event loop, which services the extension host, until `done` holds.
     template <class Done> bool wait_until(Done done) {
         for (int i = 0; i < 3000 && !done(); ++i) {
@@ -773,7 +789,7 @@ TEST_F(MainWindowTest, ClickingAStatusBarItemDoesNotChangeTheCommandPaletteRecen
                       window_->status_bar().item_rect("test.item").center());
     window_->commands().execute("workbench.action.showCommands");
     EXPECT_EQ(window_->command_palette()->list()->model()->index(0, 0).data().toString(),
-              "Add Selection to Next Find Match");
+              first_command_title());
 }
 
 TEST_F(MainWindowTest, ShowsTheCursorCountForMultipleCursors) {
@@ -3841,7 +3857,7 @@ TEST_F(MainWindowTest, RecentlyUsedCommandsComeFirstInThePalette) {
         return window_->command_palette()->list()->model()->index(0, 0).data().toString();
     };
     window_->commands().execute("workbench.action.showCommands");
-    EXPECT_EQ(first_title(), "Add Selection to Next Find Match");
+    EXPECT_EQ(first_title(), first_command_title());
     QTest::keyClicks(window_->command_palette()->filter_field(), "select all");
     QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
 
