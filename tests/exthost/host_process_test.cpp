@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 using namespace anvil::exthost;
 using std::chrono::milliseconds;
@@ -28,7 +29,8 @@ TEST(HostProcess, StartFailsWhenTheVsCodeCheckoutIsMissing) {
 }
 
 TEST(HostProcess, StartReportsAnExtensionHostThatExitsBeforeConnecting) {
-    const auto checkout = std::filesystem::temp_directory_path() / "anvil-fake-vscode";
+    const auto checkout = std::filesystem::temp_directory_path() /
+                          ("anvil-fake-vscode-" + std::to_string(::getpid()));
     std::filesystem::create_directories(checkout / "out");
     std::ofstream(checkout / "out" / "bootstrap-fork.js").put('\n');
 
