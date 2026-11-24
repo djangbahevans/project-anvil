@@ -81,6 +81,38 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             problems.emplace_back("workbench.layoutControl.enabled must be true or false");
         }
     }
+    if (settings.contains("workbench.statusBar.visible")) {
+        if (const auto shown = settings.get<bool>("workbench.statusBar.visible")) {
+            result.status_bar_visible = *shown;
+        } else {
+            problems.emplace_back("workbench.statusBar.visible must be true or false");
+        }
+    }
+    if (settings.contains("workbench.sideBar.location")) {
+        const auto location = settings.get<std::string>("workbench.sideBar.location");
+        if (location == "left") {
+            result.side_bar_location = SideBarLocation::left;
+        } else if (location == "right") {
+            result.side_bar_location = SideBarLocation::right;
+        } else {
+            problems.emplace_back(R"(workbench.sideBar.location must be "left" or "right")");
+        }
+    }
+    if (settings.contains("workbench.activityBar.location")) {
+        const auto location = settings.get<std::string>("workbench.activityBar.location");
+        if (location == "default") {
+            result.activity_bar_location = ActivityBarLocation::standard;
+        } else if (location == "top") {
+            result.activity_bar_location = ActivityBarLocation::top;
+        } else if (location == "bottom") {
+            result.activity_bar_location = ActivityBarLocation::bottom;
+        } else if (location == "hidden") {
+            result.activity_bar_location = ActivityBarLocation::hidden;
+        } else {
+            problems.emplace_back(
+                R"(workbench.activityBar.location must be "default", "top", "bottom" or "hidden")");
+        }
+    }
     if (settings.contains("window.titleBarStyle")) {
         const auto style = settings.get<std::string>("window.titleBarStyle");
         if (style && *style == "custom") {

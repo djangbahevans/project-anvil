@@ -126,6 +126,39 @@ TEST(EditorSettings, TheCommandCenterAndTheLayoutControlsAreOnUnlessTheSettingsT
     EXPECT_TRUE(read(R"j({"window.commandCenter": true})j")->command_center);
 }
 
+TEST(EditorSettings, ThePartsOfTheWindowAreShownAtTheirDefaultPlacesUnlessTheSettingsSayOtherwise) {
+    using anvil::core::ActivityBarLocation;
+    using anvil::core::SideBarLocation;
+    EXPECT_TRUE(read("{}")->status_bar_visible);
+    EXPECT_EQ(read("{}")->side_bar_location, SideBarLocation::left);
+    EXPECT_EQ(read("{}")->activity_bar_location, ActivityBarLocation::standard);
+
+    EXPECT_FALSE(read(R"j({"workbench.statusBar.visible": false})j")->status_bar_visible);
+    EXPECT_FALSE(read(R"j({"workbench": {"statusBar": {"visible": false}}})j")->status_bar_visible);
+    EXPECT_EQ(read(R"j({"workbench.sideBar.location": "right"})j")->side_bar_location,
+              SideBarLocation::right);
+    EXPECT_EQ(read(R"j({"workbench.sideBar.location": "left"})j")->side_bar_location,
+              SideBarLocation::left);
+    EXPECT_EQ(read(R"j({"workbench.activityBar.location": "hidden"})j")->activity_bar_location,
+              ActivityBarLocation::hidden);
+    EXPECT_EQ(read(R"j({"workbench.activityBar.location": "top"})j")->activity_bar_location,
+              ActivityBarLocation::top);
+    EXPECT_EQ(read(R"j({"workbench.activityBar.location": "bottom"})j")->activity_bar_location,
+              ActivityBarLocation::bottom);
+    EXPECT_EQ(read(R"j({"workbench.activityBar.location": "default"})j")->activity_bar_location,
+              ActivityBarLocation::standard);
+}
+
+TEST(EditorSettings, APartSettingOfTheWrongKindIsReportedByName) {
+    for (const char* json : {R"j({"workbench.statusBar.visible": "no"})j",
+                             R"j({"workbench.sideBar.location": "top"})j",
+                             R"j({"workbench.activityBar.location": "side"})j"}) {
+        const auto result = read(json);
+        ASSERT_FALSE(result.has_value()) << json;
+        EXPECT_NE(result.error().message.find("workbench."), std::string::npos) << json;
+    }
+}
+
 TEST(EditorSettings, AutoSaveIsOffWithADelayOfASecondUnlessTheSettingsSayOtherwise) {
     using anvil::core::AutoSave;
     EXPECT_EQ(read("{}")->auto_save, AutoSave::off);
