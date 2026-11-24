@@ -24,6 +24,8 @@ namespace {
 constexpr int text_padding = 6;
 constexpr int gutter_padding = 8;
 const QColor match_highlight(255, 190, 0, 90);
+// VS Code draws a control character in white on this red, whatever the theme.
+const QColor control_background(150, 0, 0);
 
 // Marks clipboard text that was copied from a lone caret and stands for its line, so that a paste
 // inserts it above the line of the caret. It travels with the text and is gone as soon as anything
@@ -120,6 +122,8 @@ std::vector<std::string> copied_pieces(const QMimeData* data) {
 struct EditorView::LineLayout {
     QString text;
     QTextLayout layout;
+    // The UTF-16 columns of the control characters, which `text` shows as symbols.
+    std::vector<int> control_columns;
 
     // The number of UTF-16 code units shown.
     std::size_t size() const {
@@ -179,6 +183,8 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
 
     tab_size_ = static_cast<std::size_t>(settings.tab_size);
     insert_spaces_ = settings.insert_spaces;
+    render_whitespace_ = settings.render_whitespace;
+    render_control_characters_ = settings.render_control_characters;
     const QFont wanted = font_for(settings.font_family, settings.font_size);
     if (wanted != font()) {
         setFont(wanted);
@@ -254,6 +260,17 @@ std::unique_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line
     result->text = to_qstring(document_->text().line(line));
     if (result->text.size() > max_line_characters) {
         result->text.truncate(max_line_characters);
+    }
+    if (render_control_characters_) {
+        for (int i = 0; i < result->text.size(); ++i) {
+            const char16_t c = result->text[i].unicode();
+            if ((c < 0x20 && c != u'\t') || c == 0x7f) {
+                // The Control Pictures block has one symbol for each, as many columns as the
+                // character.
+                result->text[i] = QChar(c == 0x7f ? 0x2421 : 0x2400 + c);
+                result->control_columns.push_back(i);
+            }
+        }
     }
     QTextOption option;
     option.setWrapMode(QTextOption::NoWrap);
@@ -757,6 +774,7 @@ struct EditorView::Colors {
     QColor gutter_background;
     QColor find_match;
     QColor find_highlight;
+    QColor whitespace;
 };
 
 void EditorView::set_colors(const WorkbenchColors* colors) {
@@ -782,7 +800,8 @@ EditorView::Colors EditorView::current_colors() const {
                 palette.color(QPalette::Text),
                 palette.color(QPalette::Window),
                 match_highlight,
-                match_highlight};
+                match_highlight,
+                palette.color(QPalette::PlaceholderText)};
     }
     const QColor foreground = colors_->color("editor.foreground");
     return {colors_->color("editor.background"),
@@ -797,7 +816,33 @@ EditorView::Colors EditorView::current_colors() const {
             colors_->color("editorCursor.foreground"),
             colors_->color("editorGutter.background"),
             colors_->color("editor.findMatchBackground"),
-            colors_->color("editor.findMatchHighlightBackground")};
+            colors_->color("editor.findMatchHighlightBackground"),
+            colors_->color("editorWhitespace.foreground")};
+}
+
+void EditorView::draw_whitespace(QPainter& painter, const LineLayout& layout,
+                                 std::span<const core::ColumnRange> selected, int origin_x, int y,
+                                 const QColor& color) const {
+    const std::u16string_view line(reinterpret_cast<const char16_t*>(layout.text.utf16()),
+                                   static_cast<std::size_t>(layout.text.size()));
+    const std::vector<std::size_t> columns =
+        core::whitespace_columns(line, render_whitespace_, selected);
+    // The columns are in the order of their x, so the first visible one is found by bisection and
+    // the cost does not depend on how far the line is scrolled.
+    const int left = gutter_width();
+    const auto first =
+        std::lower_bound(columns.begin(), columns.end(), left, [&](std::size_t column, int edge) {
+            return origin_x + static_cast<int>(layout.x_of(column + 1)) <= edge;
+        });
+    painter.setPen(color);
+    for (auto column = first; column != columns.end(); ++column) {
+        const int x = origin_x + static_cast<int>(layout.x_of(*column));
+        if (x >= viewport()->width()) {
+            break;
+        }
+        const QChar mark = line[*column] == u'\t' ? QChar(0x2192) : QChar(0xB7);
+        painter.drawText(QRect(x, y, char_width_, line_height_), Qt::AlignCenter, QString(mark));
+    }
 }
 
 void EditorView::paintEvent(QPaintEvent*) {
@@ -836,6 +881,12 @@ void EditorView::paintEvent(QPaintEvent*) {
         const std::size_t line_units = text.utf16_offset(line_begin);
 
         QList<QTextLayout::FormatRange> formats;
+        for (const int column : layout->control_columns) {
+            QTextCharFormat format;
+            format.setBackground(control_background);
+            format.setForeground(Qt::white);
+            formats.push_back({column, 1, format});
+        }
         // Highlights go first so that a selection over a highlighted match is drawn on top.
         auto highlight = std::lower_bound(
             highlights_.begin(), highlights_.end(), line_begin,
@@ -882,6 +933,20 @@ void EditorView::paintEvent(QPaintEvent*) {
 
         painter.setPen(colors.foreground);
         layout->layout.draw(&painter, QPointF(origin_x, y), formats);
+        if (render_whitespace_ != core::RenderWhitespace::none) {
+            std::vector<core::ColumnRange> selected;
+            if (render_whitespace_ == core::RenderWhitespace::selection) {
+                for (const core::Selection& selection : selections) {
+                    const std::size_t from = std::max(selection.start(), line_begin);
+                    const std::size_t to = std::min(selection.end(), line_end);
+                    if (from < to) {
+                        selected.push_back({text.utf16_offset(from) - line_units,
+                                            text.utf16_offset(to) - line_units});
+                    }
+                }
+            }
+            draw_whitespace(painter, *layout, selected, origin_x, y, colors.whitespace);
+        }
         widest = std::max(widest, static_cast<int>(layout->x_of(layout->size())) + char_width_);
 
         if (caret_visible_ && hasFocus()) {

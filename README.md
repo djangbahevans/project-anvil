@@ -59,6 +59,8 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `editor.fontSize` | Font size in pixels, clamped to 6-100 | 14 (12 on macOS) |
 | `editor.tabSize` | Columns per tab stop, an integer of at least 1 (values above 1024 are treated as 1024) | 4 |
 | `editor.insertSpaces` | Tab inserts spaces up to the next tab stop when `true`, a tab character when `false` | `true` |
+| `editor.renderWhitespace` | Which spaces and tabs get a mark (a dot for a space, an arrow for a tab, in `editorWhitespace.foreground`): `"none"`, `"boundary"` (all but a single space between words), `"selection"` (inside selections), `"trailing"` (at the end of the line) or `"all"` | `"selection"` |
+| `editor.renderControlCharacters` | Control characters are drawn as symbols (white on red) when `true` | `true` |
 | `workbench.colorTheme` | The color theme, by id or label: one of the ten that ship with the editor, or one that an extension contributes in `contributes.themes` (the `uiTheme` of the manifest decides its kind) | `"Dark 2026"` |
 | `workbench.editor.focusRecentEditorAfterClose` | Closing the active tab shows the tab that was shown before it when `true`, its right neighbor (the left one for the last tab) when `false` | `true` |
 | `window.commandCenter` | Shows the box in the middle of the title bar that shows the workspace name and opens the command palette (custom title bar only) | `true` |

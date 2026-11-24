@@ -28,6 +28,9 @@ enum class TitleBarStyle { custom, native };
 // files.autoSave: when a document with a file and unsaved changes is saved without being asked.
 enum class AutoSave { off, after_delay, on_focus_change, on_window_change };
 
+// editor.renderWhitespace: which spaces and tabs the editor draws a mark for.
+enum class RenderWhitespace { none, boundary, selection, trailing, all };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
@@ -57,6 +60,11 @@ struct EditorSettings {
     // when `auto_save` is `after_delay`
     int auto_save_delay = 1000;
 
+    // editor.renderWhitespace
+    RenderWhitespace render_whitespace = RenderWhitespace::selection;
+    // editor.renderControlCharacters: control characters are drawn as symbols
+    bool render_control_characters = true;
+
     // window.titleBarStyle: read when the window is created, so a change applies after a restart
     TitleBarStyle title_bar_style = TitleBarStyle::custom;
 
@@ -71,7 +79,8 @@ struct EditorSettings {
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
     // 6-100, tab size to 1-1024: the upper bound keeps a typo from making Tab insert gigabytes;
     // the auto save delay to 0 ms-24 h). A value of the wrong type, a `files.eol` that is not one
-    // of "\n", "\r\n" and "auto", a `files.autoSave` that is not "off", "afterDelay",
+    // of "\n", "\r\n" and "auto", an `editor.renderWhitespace` that is not "none", "boundary",
+    // "selection", "trailing" or "all", a `files.autoSave` that is not "off", "afterDelay",
     // "onFocusChange" or "onWindowChange", or a `window.titleBarStyle` that is not "custom" or
     // "native", fails
     // with ErrorCode::invalid_argument and a message that names every offending key.
