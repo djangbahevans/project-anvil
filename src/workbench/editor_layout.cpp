@@ -688,6 +688,110 @@ bool EditorLayout::navigate_recent(bool older, bool in_group) {
     return true;
 }
 
+namespace {
+
+Orientation orthogonal(Orientation orientation) {
+    return orientation == Orientation::horizontal ? Orientation::vertical : Orientation::horizontal;
+}
+
+std::size_t group_count(const std::vector<LayoutShape>& shapes) {
+    std::size_t count = 0;
+    for (const LayoutShape& shape : shapes) {
+        count += shape.children.empty() ? 1 : group_count(shape.children);
+    }
+    return count;
+}
+
+LayoutNode build_node(const std::vector<LayoutShape>& shapes, Orientation orientation,
+                      const std::vector<GroupId>& groups, std::size_t& next) {
+    LayoutNode node;
+    node.orientation = orientation;
+    for (const LayoutShape& shape : shapes) {
+        node.children.push_back(
+            shape.children.empty()
+                ? group_node(groups[next++])
+                : build_node(shape.children, orthogonal(orientation), groups, next));
+        node.ratios.push_back(1.0 / static_cast<double>(shapes.size()));
+    }
+    return node;
+}
+
+void flip_node(LayoutNode& node) {
+    if (node.group) {
+        return;
+    }
+    node.orientation = orthogonal(node.orientation);
+    for (LayoutNode& child : node.children) {
+        flip_node(child);
+    }
+}
+
+} // namespace
+
+void EditorLayout::apply_layout(Orientation orientation, const std::vector<LayoutShape>& children) {
+    const std::size_t wanted = std::max<std::size_t>(group_count(children), 1);
+    const Snapshot before = snapshot();
+    const std::vector<GroupId> order = group_ids();
+
+    std::vector<GroupId> groups(
+        order.begin(), order.begin() + static_cast<std::ptrdiff_t>(std::min(wanted, order.size())));
+    if (order.size() > wanted) {
+        EditorGroup& target = *mutable_group(order[wanted - 1]);
+        std::optional<core::Uri> shown;
+        for (std::size_t i = wanted; i < order.size(); ++i) {
+            const EditorGroup& source = *group(order[i]);
+            for (const core::Uri& uri : source.tabs) {
+                if (!index_of(target, uri)) {
+                    target.tabs.push_back(uri);
+                    target.recent.push_back(uri);
+                }
+            }
+            if (order[i] == focused_ && source.active) {
+                shown = source.tabs[*source.active];
+            }
+        }
+        const bool focused_goes =
+            std::ranges::find(order.begin() + static_cast<std::ptrdiff_t>(wanted), order.end(),
+                              focused_) != order.end();
+        if (focused_goes) {
+            focused_ = target.id;
+            if (shown) {
+                activate_tab(target, *index_of(target, *shown));
+            }
+        }
+        if (!target.active && !target.tabs.empty()) {
+            activate_tab(target, 0);
+        }
+        std::erase_if(groups_, [&](const EditorGroup& g) {
+            return std::ranges::find(order.begin() + static_cast<std::ptrdiff_t>(wanted),
+                                     order.end(), g.id) != order.end();
+        });
+    }
+    while (groups.size() < wanted) {
+        const GroupId created{next_id_++};
+        groups_.push_back({.id = created, .tabs = {}, .active = std::nullopt, .recent = {}});
+        groups.push_back(created);
+    }
+
+    std::size_t next = 0;
+    root_ = build_node(children, orientation, groups, next);
+    if (root_.children.empty()) {
+        root_ = group_node(groups.front());
+    }
+    canonicalize(root_);
+    notify(before);
+}
+
+bool EditorLayout::flip() {
+    if (groups_.size() < 2) {
+        return false;
+    }
+    const Snapshot before = snapshot();
+    flip_node(root_);
+    notify(before);
+    return true;
+}
+
 bool EditorLayout::set_ratios(const std::vector<std::size_t>& path, std::vector<double> ratios) {
     LayoutNode* node = node_at(root_, path);
     if (!node || node->group || ratios.size() != node->children.size()) {
