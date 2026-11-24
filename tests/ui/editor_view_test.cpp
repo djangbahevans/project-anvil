@@ -1065,6 +1065,9 @@ TEST_F(RenderWhitespaceTest, EachModeMarksTheSpacesAndTabsThatVSCodeMarks) {
     EXPECT_EQ(marked_columns(7), Columns{});
     use(core::RenderWhitespace::all);
     EXPECT_EQ(marked_columns(7), (Columns{1, 3, 4, 6}));
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        view_.viewport()->grab().save(QString::fromUtf8(directory) + "/render_whitespace.png");
+    }
     use(core::RenderWhitespace::boundary);
     EXPECT_EQ(marked_columns(7), (Columns{3, 4, 6}));
     use(core::RenderWhitespace::trailing);
