@@ -62,6 +62,11 @@ public:
     void copy();
     void paste();
     void select_all();
+    // See core::EditController: the lines of the selections go up or down, are copied above or
+    // below, or the selections are copied after themselves.
+    void move_lines(bool down);
+    void copy_lines(bool down);
+    void duplicate_selection();
     // Moves every caret, or extends every selection when `extend` is set.
     void move(core::Motion motion, bool extend = false);
     // Deletes the selection, or the character before or after each caret.

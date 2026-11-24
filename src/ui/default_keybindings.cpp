@@ -71,6 +71,20 @@ const Row rows[] = {
      {"alt+enter"},
      {"alt+enter"}},
 
+    // Lines.
+    {"editor.action.copyLinesUpAction",
+     in_editor,
+     {"ctrl+alt+shift+up"},
+     {"alt+shift+up"},
+     {"alt+shift+up"}},
+    {"editor.action.copyLinesDownAction",
+     in_editor,
+     {"ctrl+alt+shift+down"},
+     {"alt+shift+down"},
+     {"alt+shift+down"}},
+    {"editor.action.moveLinesUpAction", in_editor, {"alt+up"}, {"alt+up"}, {"alt+up"}},
+    {"editor.action.moveLinesDownAction", in_editor, {"alt+down"}, {"alt+down"}, {"alt+down"}},
+
     // Find.
     {"actions.find", "", {"ctrl+f"}, {"ctrl+f"}, {"cmd+f"}},
     {"editor.action.startFindReplaceAction", "", {"ctrl+h"}, {"ctrl+h"}, {"cmd+alt+f"}},

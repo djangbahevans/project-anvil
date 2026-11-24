@@ -122,6 +122,22 @@ TEST(DefaultKeybindingsTest, SaveAllHasAChordOnWindowsAndAShortcutOnMacOSAndNoth
     EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), "saveAll"), chords({"cmd+alt+s"}));
 }
 
+TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
+    for (const KeyPlatform platform : platforms) {
+        const auto bindings = default_keybindings(platform);
+        EXPECT_EQ(keys_of(bindings, "editor.action.moveLinesUpAction"), chords({"alt+up"}));
+        EXPECT_EQ(keys_of(bindings, "editor.action.moveLinesDownAction"), chords({"alt+down"}));
+        EXPECT_TRUE(keys_of(bindings, "editor.action.duplicateSelection").empty());
+    }
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::linux), "editor.action.copyLinesUpAction"),
+              chords({"ctrl+alt+shift+up"}));
+    EXPECT_EQ(
+        keys_of(default_keybindings(KeyPlatform::windows), "editor.action.copyLinesDownAction"),
+        chords({"alt+shift+down"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), "editor.action.copyLinesUpAction"),
+              chords({"alt+shift+up"}));
+}
+
 TEST(DefaultKeybindingsTest, WindowsHasItsOwnSecondaryKeys) {
     const auto windows = default_keybindings(KeyPlatform::windows);
     EXPECT_EQ(keys_of(windows, "workbench.action.closeActiveEditor"),

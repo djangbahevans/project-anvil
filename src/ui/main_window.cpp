@@ -490,6 +490,16 @@ void MainWindow::register_commands() {
 
     add("undo", tr("Undo"), [this] { view()->undo(); });
     add("redo", tr("Redo"), [this] { view()->redo(); });
+    add("editor.action.copyLinesUpAction", tr("Copy Line Up"),
+        [this] { view()->copy_lines(false); });
+    add("editor.action.copyLinesDownAction", tr("Copy Line Down"),
+        [this] { view()->copy_lines(true); });
+    add("editor.action.moveLinesUpAction", tr("Move Line Up"),
+        [this] { view()->move_lines(false); });
+    add("editor.action.moveLinesDownAction", tr("Move Line Down"),
+        [this] { view()->move_lines(true); });
+    add("editor.action.duplicateSelection", tr("Duplicate Selection"),
+        [this] { view()->duplicate_selection(); });
     add("cursorLeft", tr("Move Cursor Left"), [this] { view()->move(Motion::left); });
     add("cursorRight", tr("Move Cursor Right"), [this] { view()->move(Motion::right); });
     add("cursorUp", tr("Move Cursor Up"), [this] { view()->move(Motion::up); });
