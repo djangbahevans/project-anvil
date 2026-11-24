@@ -184,6 +184,7 @@ const Row rows[] = {
      {"ctrl+shift+t"},
      {"ctrl+shift+t"},
      {"cmd+shift+t"}},
+    {"workbench.action.selectTheme", "", {"ctrl+k ctrl+t"}, {"ctrl+k ctrl+t"}, {"cmd+k cmd+t"}},
     // Navigation history.
     {"workbench.action.navigateBack",
      "",

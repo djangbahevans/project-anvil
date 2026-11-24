@@ -134,6 +134,8 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));
     connect(palette_, &QuickPick::accepted, this, [this](std::size_t item) {
+        pick_highlighted_ = nullptr;
+        pick_dismissed_ = nullptr;
         if (pick_action_) {
             const auto action = std::exchange(pick_action_, nullptr);
             action(item);
@@ -141,7 +143,18 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             run_palette_command(palette_ids_[item]);
         }
     });
-    connect(palette_, &QuickPick::cancelled, this, [this] { pick_action_ = nullptr; });
+    connect(palette_, &QuickPick::active_changed, this, [this](std::size_t item) {
+        if (pick_highlighted_) {
+            pick_highlighted_(item);
+        }
+    });
+    connect(palette_, &QuickPick::cancelled, this, [this] {
+        pick_action_ = nullptr;
+        pick_highlighted_ = nullptr;
+        if (const auto dismissed = std::exchange(pick_dismissed_, nullptr)) {
+            dismissed();
+        }
+    });
     go_to_line_ = new QuickPick(this, colors_);
     go_to_line_->set_ignored_prefix(":");
     go_to_line_->set_placeholder(tr("Type a line number, then : and a column"));
@@ -616,17 +629,90 @@ void MainWindow::forget_document_language(const core::Uri& uri) {
 }
 
 void MainWindow::pick_from(const QString& placeholder, std::vector<QuickPickItem> items,
-                           std::function<void(std::size_t)> chosen) {
+                           std::function<void(std::size_t)> chosen, PickHooks hooks) {
     if (QApplication::activeModalWidget()) {
         return;
     }
     pick_action_ = std::move(chosen);
+    pick_highlighted_ = nullptr;
+    pick_dismissed_ = std::move(hooks.dismissed);
     palette_->set_ignored_prefix({});
     palette_->set_placeholder(placeholder);
     palette_->set_empty_message(tr("No matching results"));
     palette_->set_items(std::move(items));
     palette_->set_top_offset(has_custom_title_bar() ? title_bar_->height() : menu_bar_->height());
     palette_->open();
+    if (hooks.active) {
+        palette_->set_active_item(*hooks.active);
+    }
+    pick_highlighted_ = std::move(hooks.highlighted);
+}
+
+void MainWindow::select_color_theme() {
+    const auto groups = themes_->picker_groups();
+    if (groups.empty()) {
+        status_bar_->show_message(tr("There are no color themes to choose from"), 5000);
+        return;
+    }
+    const std::string previous = themes_->current();
+    std::vector<QuickPickItem> items;
+    auto ids = std::make_shared<std::vector<std::string>>();
+    std::optional<std::size_t> active;
+    for (const auto& group : groups) {
+        QString heading;
+        switch (group.front()->kind) {
+        case core::ThemeKind::dark:
+            heading = tr("dark themes");
+            break;
+        case core::ThemeKind::light:
+            heading = tr("light themes");
+            break;
+        default:
+            heading = tr("high contrast themes");
+            break;
+        }
+        items.push_back({heading, {}, {}, {}, false, true});
+        ids->emplace_back();
+        for (const ThemeStore::Entry* entry : group) {
+            const std::string& name = entry->id.empty() ? entry->label : entry->id;
+            const QString label = QString::fromStdString(entry->label);
+            const QString id = QString::fromStdString(name);
+            if (name == previous) {
+                active = items.size();
+            }
+            items.push_back({label, label == id ? QString() : id, {}, {}, !entry->available});
+            ids->push_back(name);
+        }
+    }
+    const auto usable = [this, ids](std::size_t item) {
+        if (item >= ids->size() || ids->at(item).empty()) {
+            return false;
+        }
+        const auto& all = themes_->themes();
+        const auto found = std::ranges::find_if(all, [&](const ThemeStore::Entry& entry) {
+            return (entry.id.empty() ? entry.label : entry.id) == ids->at(item);
+        });
+        return found != all.end() && found->available;
+    };
+    pick_from(tr("Select Color Theme (Up/Down Keys to Preview)"), std::move(items),
+              [this, ids, previous, usable](std::size_t item) {
+                  if (!usable(item)) {
+                      return;
+                  }
+                  const auto result =
+                      change_setting("workbench.colorTheme", ids->at(item), tr("Color Theme"));
+                  if (result.outcome == SettingsStore::ChangeResult::Outcome::rejected) {
+                      themes_->select(previous);
+                  }
+              },
+              {.active = active,
+               .highlighted =
+                   [this, ids, usable](std::size_t item) {
+                       if (usable(item)) {
+                           themes_->select(ids->at(item));
+                       }
+                   },
+               .dismissed = [this, previous] { themes_->select(previous); }});
 }
 
 std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current,
@@ -1018,6 +1104,8 @@ void MainWindow::register_commands() {
         [this] { navigate(history_.go_to_last_edit(), true); });
     add("workbench.action.gotoLine", tr("Go to Line/Column..."), [this] { show_go_to_line(); });
     add("editor.action.jumpToBracket", tr("Go to Bracket"), [this] { view()->jump_to_bracket(); });
+    add("workbench.action.selectTheme", tr("Preferences: Color Theme"),
+        [this] { select_color_theme(); });
     add("workbench.action.reopenClosedEditor", tr("Reopen Closed Editor"),
         [this] { reopen_closed_editor(); });
     add("workbench.action.showCommands", tr("Show All Commands"),
@@ -1922,6 +2010,8 @@ void MainWindow::show_command_palette() {
     }
 
     pick_action_ = nullptr;
+    pick_highlighted_ = nullptr;
+    pick_dismissed_ = nullptr;
     palette_->set_ignored_prefix(">");
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));

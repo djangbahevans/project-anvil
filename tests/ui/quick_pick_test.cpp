@@ -565,3 +565,57 @@ TEST_F(QuickPickTest, RepaintsWithTheColorsOfTheWorkbench) {
     EXPECT_EQ(after.pixelColor(x, second_row_y), QColor("#102030"));
     EXPECT_EQ(after.pixelColor(0, border_y), QColor("#00cc00"));
 }
+
+TEST_F(QuickPickTest, AnItemCanBeMadeTheChosenRowByItsPosition) {
+    pick_->set_items({separator("First"),
+                      {"One", {}, {}, {}},
+                      {"Two", {}, {}, {}},
+                      separator("Second"),
+                      {"Three", {}, {}, {}}});
+    pick_->open();
+    pick_->set_active_item(4);
+    EXPECT_EQ(current_row(), 2);
+    pick_->set_active_item(2);
+    EXPECT_EQ(current_row(), 1);
+
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    press(Qt::Key_Return);
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.takeFirst().at(0).toULongLong(), 2U);
+}
+
+TEST_F(QuickPickTest, AnItemThatIsAPartOfNoRowLeavesTheChosenRowAlone) {
+    pick_->set_items({separator("First"), {"One", {}, {}, {}}, {"Two", {}, {}, {}}});
+    pick_->open();
+    pick_->set_active_item(2);
+    ASSERT_EQ(current_row(), 1);
+    pick_->set_active_item(0);
+    pick_->set_active_item(9);
+    EXPECT_EQ(current_row(), 1);
+}
+
+TEST_F(QuickPickTest, MovingTheChosenRowTellsWhichItemItIsOn) {
+    pick_->set_items({separator("First"),
+                      {"One", {}, {}, {}},
+                      {"Two", {}, {}, {}},
+                      separator("Second"),
+                      {"Three", {}, {}, {}}});
+    pick_->open();
+    QSignalSpy active(pick_, &QuickPick::active_changed);
+    press(Qt::Key_Down);
+    press(Qt::Key_Down);
+    press(Qt::Key_Down);
+    ASSERT_EQ(active.count(), 3);
+    EXPECT_EQ(active.at(0).at(0).toULongLong(), 2U);
+    EXPECT_EQ(active.at(1).at(0).toULongLong(), 4U);
+    EXPECT_EQ(active.at(2).at(0).toULongLong(), 1U);
+}
+
+TEST_F(QuickPickTest, TypingTellsWhichItemTheFilterLeavesChosen) {
+    pick_->set_items(items_of({"Alpha", "Beta", "Gamma"}));
+    pick_->open();
+    QSignalSpy active(pick_, &QuickPick::active_changed);
+    type("gam");
+    ASSERT_GE(active.count(), 1);
+    EXPECT_EQ(active.last().at(0).toULongLong(), 2U);
+}

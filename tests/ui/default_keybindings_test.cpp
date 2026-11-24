@@ -188,6 +188,14 @@ TEST(DefaultKeybindingsTest, ReopenClosedEditorIsCtrlShiftT) {
         chords({"cmd+shift+t"}));
 }
 
+TEST(DefaultKeybindingsTest, ColorThemeIsACtrlKChordOnEveryPlatform) {
+    const char* command = "workbench.action.selectTheme";
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::linux), command), chords({"ctrl+k ctrl+t"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::windows), command),
+              chords({"ctrl+k ctrl+t"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), command), chords({"cmd+k cmd+t"}));
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);
