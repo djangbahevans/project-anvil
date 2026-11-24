@@ -144,6 +144,23 @@ public:
     // Selects the whole line containing `offset`, including its line break.
     EditOutcome select_line_at(std::size_t offset);
 
+    // --- lines ---
+
+    // Moves the lines that each selection touches one line up or down, over the line above or
+    // below them. A selection that ends at the start of a line does not touch that line. The
+    // selections move with their text, and the text of the block above or below goes the other
+    // way. A selection at the first line (up) or on the last line (down) stays where it is. When
+    // the lines that two selections would swap overlap, the one later in the document is dropped.
+    EditOutcome move_lines(bool down);
+    // Copies the lines that each selection touches above or below themselves. The selections stay
+    // with the text where they were: the copy is under them when going up, and above them when
+    // going down, so the selections end up on the lower copy then. Selections that touch the same
+    // line copy it once, for the first of them.
+    EditOutcome copy_lines(bool down);
+    // Copies the text of each selection after itself and selects the copy; a caret copies its
+    // line below it, like copy_lines(true).
+    EditOutcome duplicate_selection();
+
     // --- occurrences ---
 
     // What to search for from the primary selection. A lone caret takes the word at it, which
@@ -202,6 +219,10 @@ private:
     };
     EditOutcome delete_with(DeleteMode mode);
     EditOutcome adopt(SelectionSet selections);
+    // Applies the edits as one undo step that never joins typing, and makes `selections` the
+    // selections with the one at index `primary` primary. Without edits only the selections change.
+    EditOutcome apply_line_edit(std::vector<Edit> edits, std::vector<Selection> selections,
+                                std::size_t primary);
     EditOutcome after_history(std::expected<std::optional<DocumentChange>, Error> result);
 
     Document& document_;

@@ -10,6 +10,7 @@ add_library(anvil_core STATIC
   jsonc.cpp
   jsonc_edit.cpp
   key_chord.cpp
+  line_operations.cpp
   key_dispatcher.cpp
   keybindings.cpp
   log.cpp
