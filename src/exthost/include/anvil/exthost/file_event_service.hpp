@@ -2,6 +2,7 @@
 
 #include "anvil/core/log.hpp"
 #include "anvil/core/workspace.hpp"
+#include "anvil/exthost/file_system_providers.hpp"
 #include "anvil/exthost/request_router.hpp"
 #include "anvil/exthost/session.hpp"
 #include "anvil/platform/file_watcher.hpp"
@@ -29,14 +30,17 @@ namespace anvil::exthost {
 // what the earlier watch excludes is not reported to it. A watch that asks for
 // correlated events gets a watcher and a session of its own, and its events carry the session.
 // The extension host filters every event with the pattern of each of its watchers, so a watcher
-// that reports more than a watch asked for does no harm. Only `file:` resources are watched; a
+// that reports more than a watch asked for does no harm. A `file:` resource is watched by the
+// editor; a resource of a scheme with a file system provider is watched by the provider, which is
+// asked to, and the changes it reports are sent on as events. Another scheme is not watched. A
 // watch that cannot start is logged and leaves the others alone.
 //
 // The session, the router and the logger must outlive the service. Events are collected by the
 // watchers' worker threads and sent when poll() is called.
 class FileEventService {
 public:
-    FileEventService(Session& session, RequestRouter& router, std::shared_ptr<core::Logger> logger,
+    FileEventService(Session& session, RequestRouter& router, FileSystemProviders& providers,
+                     std::shared_ptr<core::Logger> logger,
                      const std::optional<core::Workspace>& workspace);
     ~FileEventService();
 
@@ -67,14 +71,20 @@ private:
     std::optional<HandlerResult> watch(const nlohmann::json& args);
     std::optional<HandlerResult> unwatch(const nlohmann::json& args);
     void send(const Watch& watch, const std::vector<platform::FileEvent>& events);
+    void send_batch(nlohmann::json created, nlohmann::json changed, nlohmann::json deleted,
+                    std::optional<double> session);
+    void send_provider_changes(const std::vector<ProviderChange>& changes);
 
     Session& session_;
+    FileSystemProviders& providers_;
     std::shared_ptr<core::Logger> logger_;
     std::vector<std::shared_ptr<Watch>> watches_;
     // The watcher of the workspace folder, which stays whatever the extensions do.
     std::shared_ptr<Watch> workspace_watch_;
     // The watcher that each `$watch` session uses.
     std::map<double, std::shared_ptr<Watch>> sessions_;
+    // The scheme of the provider that watches for each session that asked for one.
+    std::map<double, std::string> provider_sessions_;
 };
 
 } // namespace anvil::exthost

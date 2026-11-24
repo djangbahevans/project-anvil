@@ -130,41 +130,40 @@ std::expected<void, Error> Session::handle_payload(const Bytes& payload) {
 }
 
 void Session::handle_rpc(RpcMessage message) {
-    std::visit(
-        Overloaded{
-            [&](Request& request) {
-                send_rpc(Acknowledged{request.req});
-                std::optional<HandlerResult> result = request_handler_
-                                                          ? request_handler_(request)
-                                                          : std::optional<HandlerResult>(Ok{});
-                if (result) {
-                    send_rpc(to_reply_message(request.req, std::move(*result)));
-                }
-            },
-            [&](Acknowledged&) {},
-            [&](Cancel&) {},
-            [&](auto& reply) {
-                auto found = pending_calls_.find(reply.req);
-                if (found == pending_calls_.end()) {
-                    return;
-                }
-                ReplyHandler on_reply = std::move(found->second);
-                pending_calls_.erase(found);
-                using T = std::decay_t<decltype(reply)>;
-                if constexpr (std::is_same_v<T, EmptyReply>) {
-                    on_reply(std::optional<std::string>{});
-                } else if constexpr (std::is_same_v<T, JsonReply>) {
-                    on_reply(std::optional<std::string>{std::move(reply.json)});
-                } else if constexpr (std::is_same_v<T, JsonWithBuffersReply>) {
-                    on_reply(std::optional<std::string>{std::move(reply.json)});
-                } else if constexpr (std::is_same_v<T, BufferReply>) {
-                    on_reply(std::unexpected(std::string("buffer replies are not supported")));
-                } else {
-                    on_reply(std::unexpected(std::move(reply.json)));
-                }
-            },
-        },
-        message);
+    std::visit(Overloaded{
+                   [&](Request& request) {
+                       send_rpc(Acknowledged{request.req});
+                       std::optional<HandlerResult> result =
+                           request_handler_ ? request_handler_(request)
+                                            : std::optional<HandlerResult>(Ok{});
+                       if (result) {
+                           send_rpc(to_reply_message(request.req, std::move(*result)));
+                       }
+                   },
+                   [&](Acknowledged&) {},
+                   [&](Cancel&) {},
+                   [&](auto& reply) {
+                       auto found = pending_calls_.find(reply.req);
+                       if (found == pending_calls_.end()) {
+                           return;
+                       }
+                       BinaryReplyHandler on_reply = std::move(found->second);
+                       pending_calls_.erase(found);
+                       using T = std::decay_t<decltype(reply)>;
+                       if constexpr (std::is_same_v<T, EmptyReply>) {
+                           on_reply(BinaryReply{});
+                       } else if constexpr (std::is_same_v<T, JsonReply>) {
+                           on_reply(BinaryReply{std::move(reply.json), std::nullopt});
+                       } else if constexpr (std::is_same_v<T, JsonWithBuffersReply>) {
+                           on_reply(BinaryReply{std::move(reply.json), std::nullopt});
+                       } else if constexpr (std::is_same_v<T, BufferReply>) {
+                           on_reply(BinaryReply{std::nullopt, std::move(reply.data)});
+                       } else {
+                           on_reply(std::unexpected(std::move(reply.json)));
+                       }
+                   },
+               },
+               message);
 }
 
 Bytes Session::take_output() {
@@ -173,13 +172,32 @@ Bytes Session::take_output() {
 
 void Session::call(ProxyId target, std::string method, std::string args_json,
                    ReplyHandler on_reply) {
+    send_call(target, std::move(method), JsonArgs{std::move(args_json)},
+              [on_reply = std::move(on_reply)](BinaryResult result) {
+                  if (!result) {
+                      on_reply(std::unexpected(std::move(result.error())));
+                  } else if (result->buffer) {
+                      on_reply(std::unexpected(std::string("buffer replies are not supported")));
+                  } else {
+                      on_reply(std::move(result->json));
+                  }
+              });
+}
+
+void Session::call_binary(ProxyId target, std::string method, MixedArgs args,
+                          BinaryReplyHandler on_reply) {
+    send_call(target, std::move(method), std::move(args), std::move(on_reply));
+}
+
+void Session::send_call(ProxyId target, std::string method, std::variant<JsonArgs, MixedArgs> args,
+                        BinaryReplyHandler on_reply) {
     if (state_ != SessionState::running) {
         on_reply(std::unexpected(std::string("the extension host session is not running")));
         return;
     }
     const std::uint32_t req = next_request_++;
-    auto encoded = encode_rpc_message(Request{req, static_cast<std::uint8_t>(target),
-                                              std::move(method), JsonArgs{std::move(args_json)}});
+    Request request{req, static_cast<std::uint8_t>(target), std::move(method), std::move(args)};
+    auto encoded = encode_rpc_message(request);
     if (!encoded) {
         on_reply(std::unexpected(encoded.error().message));
         return;
@@ -189,7 +207,7 @@ void Session::call(ProxyId target, std::string method, std::string args_json,
 }
 
 void Session::fail_pending_calls(const std::string& reason) {
-    std::unordered_map<std::uint32_t, ReplyHandler> pending = std::move(pending_calls_);
+    std::unordered_map<std::uint32_t, BinaryReplyHandler> pending = std::move(pending_calls_);
     pending_calls_.clear();
     for (auto& [req, on_reply] : pending) {
         on_reply(std::unexpected(reason));

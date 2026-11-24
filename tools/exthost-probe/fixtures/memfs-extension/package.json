@@ -1,0 +1,21 @@
+{
+  "name": "memfs",
+  "publisher": "anvil-fixtures",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onFileSystem:memfs", "onFileSystem:memro"],
+  "contributes": {
+    "commands": [
+      { "command": "anvil.memfs.read", "title": "Anvil: Read" },
+      { "command": "anvil.memfs.write", "title": "Anvil: Write" },
+      { "command": "anvil.memfs.rename", "title": "Anvil: Rename" },
+      { "command": "anvil.memfs.copy", "title": "Anvil: Copy" },
+      { "command": "anvil.memfs.delete", "title": "Anvil: Delete" },
+      { "command": "anvil.memfs.fire", "title": "Anvil: Fire Change" },
+      { "command": "anvil.memfs.watch", "title": "Anvil: Watch" },
+      { "command": "anvil.memfs.events", "title": "Anvil: Events" },
+      { "command": "anvil.memfs.watches", "title": "Anvil: Provider Watches" }
+    ]
+  }
+}

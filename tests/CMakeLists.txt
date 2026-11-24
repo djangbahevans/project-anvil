@@ -58,6 +58,7 @@ add_executable(anvil_exthost_tests
   exthost/contributions_test.cpp
   exthost/documents_service_test.cpp
   exthost/file_event_service_test.cpp
+  exthost/file_system_providers_test.cpp
   exthost/file_system_service_test.cpp
   exthost/frame_test.cpp
   exthost/init_data_test.cpp
@@ -92,6 +93,7 @@ add_executable(anvil_exthost_integration_tests
   exthost/extension_host_test.cpp
   exthost/file_event_integration_test.cpp
   exthost/file_system_integration_test.cpp
+  exthost/file_system_providers_integration_test.cpp
   exthost/host_process_test.cpp
   exthost/launch_integration_test.cpp
   exthost/logging_integration_test.cpp
@@ -111,7 +113,8 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_WATCHER_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/watcher-extension"
   ANVIL_ACTIVATION_FS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-fs-extension"
   ANVIL_ACTIVATION_STARTUP_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-startup-extension"
-  ANVIL_ACTIVATION_CONTAINS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-contains-extension")
+  ANVIL_ACTIVATION_CONTAINS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-contains-extension"
+  ANVIL_MEMFS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/memfs-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
 
 if(TARGET anvil_ui)

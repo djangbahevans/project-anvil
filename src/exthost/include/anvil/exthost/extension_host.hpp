@@ -6,6 +6,7 @@
 #include "anvil/exthost/commands_service.hpp"
 #include "anvil/exthost/documents_service.hpp"
 #include "anvil/exthost/file_event_service.hpp"
+#include "anvil/exthost/file_system_providers.hpp"
 #include "anvil/exthost/file_system_service.hpp"
 #include "anvil/exthost/host_process.hpp"
 #include "anvil/exthost/logging_service.hpp"
@@ -81,6 +82,11 @@ public:
         return documents_;
     }
 
+    // The file systems that extensions provide, which the editor reads and writes through.
+    FileSystemProviders& file_system_providers() {
+        return providers_;
+    }
+
     // Registers handlers for further services before pumping starts.
     RequestRouter& router() {
         return router_;
@@ -127,6 +133,7 @@ private:
     CommandsService commands_;
     DocumentsService documents_;
     LoggingService logging_;
+    FileSystemProviders providers_;
     FileSystemService file_system_;
     FileEventService file_events_;
     std::optional<core::Workspace> workspace_;

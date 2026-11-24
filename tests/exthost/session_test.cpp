@@ -158,6 +158,45 @@ TEST(Session, PendingCallsCanBeFailedAndTheirLateRepliesAreDropped) {
     EXPECT_EQ(results.size(), 2u);
 }
 
+TEST(Session, BinaryCallsSendBuffersAndReceiveABufferReply) {
+    Session session("{}");
+    FakeHost host(session);
+    host.complete_handshake();
+
+    std::optional<BinaryResult> result;
+    session.call_binary(ProxyId::ExtHostFileSystem, "$writeFile",
+                        {JsonArg{"3"}, BufferArg{to_bytes("bytes")}, UndefinedArg{}},
+                        [&](BinaryResult r) { result = std::move(r); });
+    const auto out = host.drain_rpc();
+    ASSERT_EQ(out.size(), 1u);
+    const auto& request = std::get<Request>(out[0]);
+    EXPECT_EQ(request.proxy_id, static_cast<std::uint8_t>(ProxyId::ExtHostFileSystem));
+    const auto& args = std::get<MixedArgs>(request.args);
+    ASSERT_EQ(args.size(), 3u);
+    EXPECT_EQ(std::get<BufferArg>(args[1]).data, to_bytes("bytes"));
+
+    ASSERT_TRUE(host.send_rpc(BufferReply{request.req, to_bytes("answer")}).has_value());
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->has_value());
+    EXPECT_EQ((*result)->buffer, to_bytes("answer"));
+    EXPECT_FALSE((*result)->json.has_value());
+}
+
+TEST(Session, ACallThatCannotTakeABufferReplyFailsItAsBefore) {
+    Session session("{}");
+    FakeHost host(session);
+    host.complete_handshake();
+
+    std::optional<CallResult> result;
+    session.call(ProxyId::ExtHostCommands, "$x", "[]",
+                 [&](CallResult r) { result = std::move(r); });
+    const auto out = host.drain_rpc();
+    ASSERT_TRUE(
+        host.send_rpc(BufferReply{std::get<Request>(out.at(0)).req, to_bytes("x")}).has_value());
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->has_value());
+}
+
 TEST(Session, CallBeforeTheSessionRunsFailsImmediately) {
     Session session("{}");
     std::optional<CallResult> result;
