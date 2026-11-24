@@ -100,6 +100,28 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
                 "workbench.editor.focusRecentEditorAfterClose must be true or false");
         }
     }
+    if (settings.contains("files.autoSave")) {
+        const auto mode = settings.get<std::string>("files.autoSave");
+        if (mode == "off") {
+            result.auto_save = AutoSave::off;
+        } else if (mode == "afterDelay") {
+            result.auto_save = AutoSave::after_delay;
+        } else if (mode == "onFocusChange") {
+            result.auto_save = AutoSave::on_focus_change;
+        } else if (mode == "onWindowChange") {
+            result.auto_save = AutoSave::on_window_change;
+        } else {
+            problems.emplace_back(
+                R"(files.autoSave must be "off", "afterDelay", "onFocusChange" or "onWindowChange")");
+        }
+    }
+    if (settings.contains("files.autoSaveDelay")) {
+        if (const auto delay = settings.get<double>("files.autoSaveDelay")) {
+            result.auto_save_delay = clamped(*delay, 0, max_auto_save_delay);
+        } else {
+            problems.emplace_back("files.autoSaveDelay must be a number");
+        }
+    }
     if (settings.contains("files.eol")) {
         const auto eol = settings.get<std::string>("files.eol");
         if (eol == "\n") {

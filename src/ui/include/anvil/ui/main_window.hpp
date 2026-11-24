@@ -27,6 +27,7 @@
 #include "anvil/workbench/menu_model.hpp"
 
 #include <QMainWindow>
+#include <QTimer>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -282,7 +283,18 @@ private:
     // extension changes the tabs.
     bool save_document(const core::Uri& uri);
     bool save_document_as(const core::Uri& uri, const QString& path);
-    bool write_document(const core::Uri& uri, const std::filesystem::path& path);
+    // Writes the document to `path`. A failure is shown in a dialog, or in the status bar when
+    // `automatic`, which is for a save that nobody asked for.
+    bool write_document(const core::Uri& uri, const std::filesystem::path& path,
+                        bool automatic = false);
+    // Restarts the countdown of the auto save after a delay for the document shown by `uri`.
+    void schedule_auto_save(const core::Uri& uri);
+    // Saves the document when it has a file and unsaved changes; an untitled one is never saved.
+    void auto_save(const std::shared_ptr<core::Document>& document);
+    void auto_save_all();
+    void cancel_scheduled_auto_saves();
+    // Saves the document of an editor that loses the focus to a widget outside its group.
+    void on_focus_changed(QWidget* old_widget, QWidget* now);
     // Shows the document and, when it has unsaved changes, asks whether to save them. False means
     // the user cancelled or saving failed.
     bool confirm_close(const std::shared_ptr<core::Document>& document);
@@ -328,6 +340,14 @@ private:
     // The extension themes given to the theme store: an identifier and a file for each.
     std::set<std::string> offered_themes_;
     std::size_t next_untitled_ = 1;
+    // The auto save settings in force, and the documents whose save after a delay is pending.
+    core::AutoSave auto_save_ = core::AutoSave::off;
+    int auto_save_delay_ = 1000;
+    struct ScheduledAutoSave {
+        std::weak_ptr<core::Document> document;
+        std::unique_ptr<QTimer> timer;
+    };
+    std::map<const core::Document*, ScheduledAutoSave> scheduled_auto_saves_;
     StatusBar* status_bar_ = nullptr;
     KeybindingService* keys_ = nullptr;
     QString chord_text_;

@@ -296,6 +296,177 @@ TEST_F(MainWindowTest, TypingMarksTheWindowModifiedAndSaveWritesTheFile) {
     EXPECT_EQ(*platform::read_file(path), "Xabc");
 }
 
+class AutoSaveTest : public MainWindowTest {
+protected:
+    // A window with the settings, showing a file that holds "abc" and has the focus.
+    void open_with(std::string_view settings) {
+        settings_file_ = write("settings.json", settings);
+        create_window();
+        path_ = write("a.txt", "abc");
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(path_.string())));
+        window_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+        window_->view()->setFocus();
+        QApplication::processEvents();
+    }
+    std::string on_disk() const {
+        return *platform::read_file(path_);
+    }
+    // Moves the focus to a widget of the window that is not an editor.
+    QLineEdit* focus_another_widget() {
+        auto* edit = new QLineEdit(window_.get());
+        edit->show();
+        edit->setFocus();
+        QApplication::processEvents();
+        return edit;
+    }
+    // Makes another window the active one, which the window under test is told about.
+    void deactivate_window() {
+        other_ = std::make_unique<QWidget>();
+        other_->show();
+        other_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(other_.get()));
+        QApplication::processEvents();
+    }
+
+    std::filesystem::path path_;
+    std::unique_ptr<QWidget> other_;
+};
+
+TEST_F(AutoSaveTest, NothingIsSavedByItselfWhileAutoSaveIsOff) {
+    open_with(R"j({"files.autoSaveDelay": 20})j");
+    type("X");
+    QTest::qWait(150);
+    focus_another_widget();
+    ASSERT_NO_FATAL_FAILURE(deactivate_window());
+    EXPECT_EQ(on_disk(), "abc");
+    EXPECT_TRUE(window_->isWindowModified());
+}
+
+TEST_F(AutoSaveTest, AfterDelaySavesTheDocumentThatLongAfterItsLastChange) {
+    open_with(R"j({"files.autoSave": "afterDelay", "files.autoSaveDelay": 50})j");
+    type("X");
+    EXPECT_EQ(on_disk(), "abc") << "not at once";
+    EXPECT_TRUE(wait_until([&] { return on_disk() == "Xabc"; }));
+    EXPECT_FALSE(window_->isWindowModified());
+}
+
+TEST_F(AutoSaveTest, EachChangePushesTheSaveAfterDelayOut) {
+    open_with(R"j({"files.autoSave": "afterDelay", "files.autoSaveDelay": 400})j");
+    type("X");
+    QTest::qWait(250);
+    type("Y");
+    QTest::qWait(250);
+    EXPECT_EQ(on_disk(), "abc") << "500 ms after the first change, 250 ms after the second";
+    EXPECT_TRUE(wait_until([&] { return on_disk() == "XYabc"; }));
+}
+
+TEST_F(AutoSaveTest, AnUntitledDocumentIsNeverSavedAutomatically) {
+    settings_file_ = write("settings.json", R"j({"files.autoSave": "afterDelay",
+                                                "files.autoSaveDelay": 20})j");
+    create_window();
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    type("X");
+    QTest::qWait(150);
+    EXPECT_TRUE(window_->isWindowModified());
+    EXPECT_EQ(window_->current_document()->text().to_string(), "X");
+}
+
+TEST_F(AutoSaveTest, ADocumentClosedBeforeItsSaveIsNotWritten) {
+    open_with(R"j({"files.autoSave": "afterDelay", "files.autoSaveDelay": 50})j");
+    type("X");
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    QTest::qWait(200);
+    EXPECT_EQ(on_disk(), "abc");
+}
+
+TEST_F(AutoSaveTest, AFailedSaveIsShownInTheStatusBarAndLeavesTheChangesUnsaved) {
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "root can write to a read-only directory";
+    }
+    open_with(R"j({"files.autoSave": "afterDelay", "files.autoSaveDelay": 20})j");
+    std::filesystem::permissions(path_, std::filesystem::perms::owner_read);
+    std::filesystem::permissions(scratch_, std::filesystem::perms::owner_read |
+                                               std::filesystem::perms::owner_exec);
+    type("X");
+    EXPECT_TRUE(
+        wait_until([&] { return window_->status_bar().message().startsWith("Auto save failed"); }));
+    EXPECT_TRUE(window_->isWindowModified());
+    std::filesystem::permissions(scratch_, std::filesystem::perms::owner_all);
+}
+
+TEST_F(AutoSaveTest, OnFocusChangeSavesWhenTheEditorLosesTheFocus) {
+    open_with(R"j({"files.autoSave": "onFocusChange"})j");
+    type("X");
+    QTest::qWait(150);
+    EXPECT_EQ(on_disk(), "abc") << "typing does not save";
+    focus_another_widget();
+    EXPECT_EQ(on_disk(), "Xabc");
+    EXPECT_FALSE(window_->isWindowModified());
+}
+
+TEST_F(AutoSaveTest, OnFocusChangeSavesTheDocumentThatAnotherTabReplaces) {
+    open_with(R"j({"files.autoSave": "onFocusChange"})j");
+    type("X");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "b").string())));
+    EXPECT_EQ(on_disk(), "Xabc");
+}
+
+TEST_F(AutoSaveTest, OnFocusChangeSavesWhenTheWindowLosesTheFocusToo) {
+    open_with(R"j({"files.autoSave": "onFocusChange"})j");
+    type("X");
+    ASSERT_NO_FATAL_FAILURE(deactivate_window());
+    EXPECT_EQ(on_disk(), "Xabc");
+}
+
+TEST_F(AutoSaveTest, TheFindBarOfTheGroupIsPartOfTheEditor) {
+    open_with(R"j({"files.autoSave": "onFocusChange"})j");
+    type("X");
+    window_->commands().execute("actions.find");
+    QApplication::processEvents();
+    ASSERT_NE(window_->view(), QApplication::focusWidget());
+    EXPECT_EQ(on_disk(), "abc");
+}
+
+TEST_F(AutoSaveTest, OnWindowChangeSavesOnlyWhenTheWindowLosesTheFocus) {
+    open_with(R"j({"files.autoSave": "onWindowChange"})j");
+    type("X");
+    focus_another_widget();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "b").string())));
+    EXPECT_EQ(on_disk(), "abc");
+    window_->open_file(QString::fromStdString(path_.string()));
+    ASSERT_NO_FATAL_FAILURE(deactivate_window());
+    EXPECT_EQ(on_disk(), "Xabc");
+}
+
+TEST_F(AutoSaveTest, TurningAutoSaveOnSavesTheDocumentsWithUnsavedChanges) {
+    open_with("{}");
+    type("X");
+    ASSERT_EQ(on_disk(), "abc");
+    window_->change_setting("files.autoSave", "onWindowChange");
+    EXPECT_EQ(on_disk(), "Xabc");
+}
+
+TEST_F(AutoSaveTest, TheToggleCommandSwitchesBetweenOffAndAfterDelay) {
+    open_with(R"j({"files.autoSave": "off"})j");
+    window_->commands().execute("workbench.action.toggleAutoSave");
+    EXPECT_EQ(window_->settings().editor().auto_save, core::AutoSave::after_delay);
+    EXPECT_NE(platform::read_file(settings_file_)->find("\"afterDelay\""), std::string::npos);
+    window_->commands().execute("workbench.action.toggleAutoSave");
+    EXPECT_EQ(window_->settings().editor().auto_save, core::AutoSave::off);
+}
+
+TEST_F(AutoSaveTest, TheToggleCommandTurnsEveryOtherModeOff) {
+    for (const char* mode : {"afterDelay", "onFocusChange", "onWindowChange"}) {
+        settings_file_ =
+            write("settings.json", std::string(R"j({"files.autoSave": ")j") + mode + R"j("})j");
+        create_window();
+        ASSERT_NE(window_->settings().editor().auto_save, core::AutoSave::off) << mode;
+        window_->commands().execute("workbench.action.toggleAutoSave");
+        EXPECT_EQ(window_->settings().editor().auto_save, core::AutoSave::off) << mode;
+    }
+}
+
 TEST_F(MainWindowTest, UndoBackToTheSavedStateIsClean) {
     create_window();
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc").string())));
@@ -2192,6 +2363,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.save",
                                           "workbench.action.files.saveAs",
                                           "workbench.action.files.openFile",
+                                          "workbench.action.toggleAutoSave",
                                           "workbench.action.closeActiveEditor",
                                           "actions.find",
                                           "editor.action.nextMatchFindAction",
@@ -2325,6 +2497,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.files.openFile",
         "workbench.action.files.save",
         "workbench.action.files.saveAs",
+        "workbench.action.toggleAutoSave",
         "workbench.action.closeActiveEditor",
         "workbench.action.closeWindow",
         "workbench.action.quit",
@@ -2919,6 +3092,17 @@ TEST_F(MainWindowMenuBarTest, AnItemWithAToggledConditionShowsTheSettingAsACheck
     window_->change_setting("files.autoSave", "off");
     EXPECT_FALSE(opened_action(menu(3), "editor.action.toggleMinimap")->isChecked());
     EXPECT_FALSE(opened_action(menu(0), "workbench.action.toggleAutoSave")->isChecked());
+}
+
+TEST_F(MainWindowMenuBarTest, TheAutoSaveItemIsEnabledAndItsCheckMarkFollowsTheCommand) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    QAction* item = opened_action(menu(0), "workbench.action.toggleAutoSave");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_FALSE(item->isChecked());
+    item->trigger();
+    EXPECT_TRUE(opened_action(menu(0), "workbench.action.toggleAutoSave")->isChecked());
 }
 
 TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {

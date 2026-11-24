@@ -126,6 +126,26 @@ TEST(EditorSettings, TheCommandCenterAndTheLayoutControlsAreOnUnlessTheSettingsT
     EXPECT_TRUE(read(R"j({"window.commandCenter": true})j")->command_center);
 }
 
+TEST(EditorSettings, AutoSaveIsOffWithADelayOfASecondUnlessTheSettingsSayOtherwise) {
+    using anvil::core::AutoSave;
+    EXPECT_EQ(read("{}")->auto_save, AutoSave::off);
+    EXPECT_EQ(read("{}")->auto_save_delay, 1000);
+    EXPECT_EQ(read(R"j({"files.autoSave": "off"})j")->auto_save, AutoSave::off);
+    EXPECT_EQ(read(R"j({"files.autoSave": "afterDelay"})j")->auto_save, AutoSave::after_delay);
+    EXPECT_EQ(read(R"j({"files.autoSave": "onFocusChange"})j")->auto_save,
+              AutoSave::on_focus_change);
+    EXPECT_EQ(read(R"j({"files": {"autoSave": "onWindowChange"}})j")->auto_save,
+              AutoSave::on_window_change);
+    EXPECT_EQ(read(R"j({"files.autoSaveDelay": 250})j")->auto_save_delay, 250);
+    EXPECT_EQ(read(R"j({"files.autoSaveDelay": 0})j")->auto_save_delay, 0);
+}
+
+TEST(EditorSettings, TheAutoSaveDelayIsClamped) {
+    EXPECT_EQ(read(R"j({"files.autoSaveDelay": -5})j")->auto_save_delay, 0);
+    EXPECT_EQ(read(R"j({"files.autoSaveDelay": 1e12})j")->auto_save_delay,
+              anvil::core::EditorSettings::max_auto_save_delay);
+}
+
 TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
     for (const auto& [text, key] : std::vector<std::pair<std::string, std::string>>{
              {R"j({"editor.fontFamily": 3})j", "editor.fontFamily"},
@@ -137,6 +157,9 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"workbench.editor.focusRecentEditorAfterClose": "no"})j",
               "workbench.editor.focusRecentEditorAfterClose"},
              {R"j({"files.eol": 1})j", "files.eol"},
+             {R"j({"files.autoSave": true})j", "files.autoSave"},
+             {R"j({"files.autoSave": "afterdelay"})j", "files.autoSave"},
+             {R"j({"files.autoSaveDelay": "1s"})j", "files.autoSaveDelay"},
              {R"j({"window.titleBarStyle": 1})j", "window.titleBarStyle"},
              {R"j({"window.commandCenter": "no"})j", "window.commandCenter"},
              {R"j({"workbench.layoutControl.enabled": 0})j", "workbench.layoutControl.enabled"},
