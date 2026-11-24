@@ -118,6 +118,36 @@ EditOutcome EditController::add_next_occurrence(const Search& search) {
     return add_selection(Selection{next->begin, next->end});
 }
 
+EditOutcome EditController::add_previous_occurrence(const Search& search) {
+    const Text& text = document_.text();
+    const auto& selections = document_.selections().all();
+    const std::size_t origin = document_.selections().primary().start();
+
+    // The last match that begins in [lower, before) and overlaps no selection.
+    const auto scan = [&](std::size_t before, std::size_t lower) -> std::optional<Match> {
+        while (before > lower) {
+            const auto hit = search.find_previous(text, before);
+            if (!hit || !*hit || (*hit)->match.begin < lower) {
+                return std::nullopt;
+            }
+            const Match match = (*hit)->match;
+            if (!overlaps_any(selections, match)) {
+                return match;
+            }
+            before = match.begin;
+        }
+        return std::nullopt;
+    };
+    std::optional<Match> previous = scan(origin, 0);
+    if (!previous) {
+        previous = scan(text.size() + 1, origin);
+    }
+    if (!previous) {
+        return {};
+    }
+    return add_selection(Selection{previous->begin, previous->end});
+}
+
 EditController::AllOccurrences EditController::select_all_occurrences(const Search& search,
                                                                       std::size_t limit) {
     const Text& text = document_.text();
