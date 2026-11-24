@@ -1427,40 +1427,40 @@ TEST_F(SyntaxHighlightingTest, OnlyTheLinesInViewAreAskedForSpans) {
 }
 
 TEST_F(SyntaxHighlightingTest,
-       HighlightingALargeDocumentOrALongLineCostsLittleBeyondThePlainPaint) {
-    const auto paint_time = [&](bool with) {
-        view_.set_highlighter(with ? highlighter_ : nullptr);
-        auto best = std::numeric_limits<std::clock_t>::max();
-        for (int round = 0; round < 5; ++round) {
-            const std::clock_t start = std::clock();
-            view_.viewport()->grab();
-            best = std::min(best, std::clock() - start);
+       APaintAsksForTheSpansOfEachLineInViewAtMostTwiceWhateverTheDocument) {
+    // The cost of highlighting is the spans of the lines in view, so what is counted is the lines
+    // that are asked for, not the time, which depends on the machine.
+    const auto asked_while_painting = [&](const std::string& text) {
+        open(text);
+        highlight({{"let", "keyword.control.fake"}});
+        highlighter_->clear_asked();
+        view_.viewport()->grab();
+        std::map<std::size_t, int> times;
+        for (const std::size_t line : highlighter_->asked_) {
+            ++times[line];
         }
-        return static_cast<double>(best) / CLOCKS_PER_SEC;
+        return times;
     };
-    std::string text;
-    for (int line = 0; line < 50000; ++line) {
-        text += "let x = 1;\n";
-    }
-    open(text);
-    highlighter_ = std::make_shared<FakeHighlighter>(
-        document_, std::map<std::string, std::string>{{"let", "keyword.control.fake"}});
-    const double plain = paint_time(false);
-    const double many_lines = paint_time(true);
-    EXPECT_LT(many_lines, plain * 3 + 0.01)
-        << "plain " << plain << " s, highlighted " << many_lines << " s";
 
-    std::string row;
-    for (int word = 0; word < 12000; ++word) {
-        row += "let x ";
+    std::string many_lines;
+    for (int line = 0; line < 50000; ++line) {
+        many_lines += "let x = 1;\n";
     }
-    open(row);
-    highlighter_ = std::make_shared<FakeHighlighter>(
-        document_, std::map<std::string, std::string>{{"let", "keyword.control.fake"}});
-    const double plain_long = paint_time(false);
-    const double long_line = paint_time(true);
-    EXPECT_LT(long_line, plain_long * 4 + 0.02)
-        << "plain " << plain_long << " s, highlighted " << long_line << " s";
+    const auto lines = asked_while_painting(many_lines);
+    const std::size_t visible =
+        static_cast<std::size_t>(view_.viewport()->height() / view_.line_height()) + 2;
+    EXPECT_LE(lines.size(), visible);
+    for (const auto& [line, times] : lines) {
+        EXPECT_LE(times, 2) << "line " << line;
+    }
+
+    std::string one_long_line;
+    for (int word = 0; word < 12000; ++word) {
+        one_long_line += "let x ";
+    }
+    const auto long_line = asked_while_painting(one_long_line);
+    EXPECT_EQ(long_line.size(), 1U);
+    EXPECT_LE(long_line.at(0), 2);
 }
 
 namespace {
