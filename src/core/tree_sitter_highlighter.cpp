@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -11,6 +12,7 @@
 #include <span>
 #include <string>
 #include <tree_sitter/api.h>
+#include <unordered_map>
 
 extern "C" const TSLanguage* tree_sitter_json(void);
 
@@ -105,6 +107,16 @@ TSPoint point_at(const Text& text, std::size_t offset) {
             static_cast<std::uint32_t>(offset - text.line_start(row))};
 }
 
+bool parse_cancelled(TSParseState* state) {
+    return static_cast<const std::atomic<bool>*>(state->payload)->load();
+}
+
+TSTree* parse(TSParser& parser, const TSTree* old_tree, const TSInput& input,
+              std::atomic<bool>& cancel) {
+    return ts_parser_parse_with_options(&parser, old_tree, input,
+                                        TSParseOptions{&cancel, parse_cancelled});
+}
+
 struct Capture {
     std::size_t begin = 0;
     std::size_t end = 0;
@@ -162,123 +174,45 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
     return out;
 }
 
-} // namespace
-
-struct TreeSitterHighlighter::Impl {
-    Text text;
-    const Grammar* grammar = nullptr;
-    std::unique_ptr<TSParser, ParserDeleter> parser;
-    std::unique_ptr<TSTree, TreeDeleter> tree;
+// What the query of a grammar says about its captures, shared by the highlighter that parses and
+// the snapshots that the editor reads, which run it concurrently.
+struct QueryData {
     std::unique_ptr<TSQuery, QueryDeleter> query;
     // The scope of each capture of the query, by capture index; empty for a capture the table does
     // not map.
     std::vector<std::string_view> capture_scopes;
-    // The spans of each line once asked for, kept until an edit or a change of the tree reaches
-    // the line. One slot per line of `text`.
-    mutable std::vector<std::optional<std::vector<HighlightSpan>>> cache;
-    std::uint64_t version = 1;
-    std::size_t bytes_read = 0;
-    mutable std::size_t line_queries = 0;
-
-    std::vector<HighlightSpan> compute_spans(std::size_t line) const;
 };
 
-bool TreeSitterHighlighter::supports(std::string_view language_id) {
-    return find_grammar(language_id) != nullptr;
-}
+constexpr std::size_t no_line_limit = std::numeric_limits<std::size_t>::max();
 
-std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
-TreeSitterHighlighter::create(std::string_view language_id, Text text) {
-    const Grammar* grammar = find_grammar(language_id);
-    if (!grammar) {
-        return std::unexpected(Error{ErrorCode::unsupported,
-                                     "no tree-sitter grammar for " + std::string(language_id)});
-    }
-    if (text.size() > std::numeric_limits<std::uint32_t>::max()) {
-        return std::unexpected(
-            Error{ErrorCode::limit_exceeded, "text is too large for tree-sitter"});
-    }
-
-    const TSLanguage* language = grammar->language();
-    std::unique_ptr<TSParser, ParserDeleter> parser(ts_parser_new());
-    if (!ts_parser_set_language(parser.get(), language)) {
-        return std::unexpected(Error{ErrorCode::environment_unavailable,
-                                     "the " + std::string(language_id) +
-                                         " grammar does not fit the tree-sitter runtime"});
-    }
-
-    std::uint32_t error_offset = 0;
-    TSQueryError error_type = TSQueryErrorNone;
-    std::unique_ptr<TSQuery, QueryDeleter> query(ts_query_new(
-        language, grammar->highlights.data(),
-        static_cast<std::uint32_t>(grammar->highlights.size()), &error_offset, &error_type));
-    if (!query) {
-        return std::unexpected(Error{ErrorCode::environment_unavailable,
-                                     "the highlights query of " + std::string(language_id) +
-                                         " is invalid at byte " + std::to_string(error_offset)});
-    }
-
-    auto impl = std::make_unique<Impl>();
-    impl->text = std::move(text);
-    impl->grammar = grammar;
-    ReadState state{&impl->text, &impl->bytes_read};
-    const TSInput input{&state, read_chunk, TSInputEncodingUTF8, nullptr};
-    impl->tree.reset(ts_parser_parse(parser.get(), nullptr, input));
-    if (!impl->tree) {
-        return std::unexpected(Error{ErrorCode::environment_unavailable, "parsing failed"});
-    }
-    impl->parser = std::move(parser);
-    impl->query = std::move(query);
-    impl->cache.resize(impl->text.line_count());
-
-    const std::span<const CaptureScope> table = grammar->scopes();
-    const std::uint32_t captures = ts_query_capture_count(impl->query.get());
-    impl->capture_scopes.reserve(captures);
-    for (std::uint32_t i = 0; i < captures; ++i) {
-        std::uint32_t length = 0;
-        const char* name = ts_query_capture_name_for_id(impl->query.get(), i, &length);
-        impl->capture_scopes.push_back(scope_for_capture(table, std::string_view(name, length)));
-    }
-    return std::unique_ptr<TreeSitterHighlighter>(new TreeSitterHighlighter(std::move(impl)));
-}
-
-TreeSitterHighlighter::TreeSitterHighlighter(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
-
-TreeSitterHighlighter::~TreeSitterHighlighter() = default;
-
-std::vector<HighlightSpan> TreeSitterHighlighter::spans(std::size_t line) const {
-    if (line >= impl_->cache.size()) {
+// The spans of `line`, from the query run on its byte range. A line of more than `max_units`
+// UTF-16 units has none.
+std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, const QueryData& data,
+                                      std::size_t line, std::size_t max_units) {
+    if (line >= text.line_count()) {
         return {};
     }
-    auto& slot = impl_->cache[line];
-    if (!slot) {
-        slot = impl_->compute_spans(line);
-    }
-    return *slot;
-}
-
-std::vector<HighlightSpan> TreeSitterHighlighter::Impl::compute_spans(std::size_t line) const {
-    if (!tree) {
-        return {};
-    }
-    ++line_queries;
     const std::size_t line_begin = text.line_start(line);
     const std::size_t line_end = text.line_end(line);
     if (line_begin == line_end) {
+        return {};
+    }
+    if (line_end - line_begin > max_units &&
+        text.utf16_offset(line_end) - text.utf16_offset(line_begin) > max_units) {
         return {};
     }
 
     std::unique_ptr<TSQueryCursor, CursorDeleter> cursor(ts_query_cursor_new());
     ts_query_cursor_set_byte_range(cursor.get(), static_cast<std::uint32_t>(line_begin),
                                    static_cast<std::uint32_t>(line_end));
-    ts_query_cursor_exec(cursor.get(), query.get(), ts_tree_root_node(tree.get()));
+    ts_query_cursor_exec(cursor.get(), data.query.get(), ts_tree_root_node(&tree));
 
     std::vector<Capture> captures;
     TSQueryMatch match;
     std::uint32_t index = 0;
     while (ts_query_cursor_next_capture(cursor.get(), &match, &index)) {
         const TSQueryCapture& capture = match.captures[index];
-        const std::string_view scope = capture_scopes[capture.index];
+        const std::string_view scope = data.capture_scopes[capture.index];
         if (scope.empty()) {
             continue;
         }
@@ -309,6 +243,154 @@ std::vector<HighlightSpan> TreeSitterHighlighter::Impl::compute_spans(std::size_
         spans.push_back({begin, column_of(capture.end), capture.scope});
     }
     return spans;
+}
+
+// A parsed text that the editor reads on its own thread while the highlighter that made it goes
+// on parsing on another: it has a copy of the tree, which shares its nodes and is safe to use
+// concurrently with the original, and the query data, which only reads.
+class FrozenHighlighter final : public Highlighter {
+public:
+    FrozenHighlighter(Text text, std::unique_ptr<TSTree, TreeDeleter> tree,
+                      std::shared_ptr<const QueryData> data, std::string_view root_scope)
+        : text_(std::move(text)), tree_(std::move(tree)), data_(std::move(data)),
+          root_scope_(root_scope) {}
+
+    std::vector<HighlightSpan> spans(std::size_t line) const override {
+        const auto found = cache_.find(line);
+        if (found != cache_.end()) {
+            return found->second;
+        }
+        return cache_
+            .emplace(line, line_spans(text_, *tree_, *data_, line, max_highlighted_line_units))
+            .first->second;
+    }
+    std::string_view root_scope() const override {
+        return root_scope_;
+    }
+    std::uint64_t version() const override {
+        return 1;
+    }
+
+private:
+    Text text_;
+    std::unique_ptr<TSTree, TreeDeleter> tree_;
+    std::shared_ptr<const QueryData> data_;
+    std::string_view root_scope_;
+    mutable std::unordered_map<std::size_t, std::vector<HighlightSpan>> cache_;
+};
+
+} // namespace
+
+struct TreeSitterHighlighter::Impl {
+    Text text;
+    const Grammar* grammar = nullptr;
+    std::unique_ptr<TSParser, ParserDeleter> parser;
+    std::unique_ptr<TSTree, TreeDeleter> tree;
+    std::shared_ptr<const QueryData> data;
+    // The parser polls it while it parses and stops when it is set; a `std::stop_callback` sets it
+    // from the thread that asks for the stop.
+    std::atomic<bool> cancel{false};
+    // The spans of each line once asked for, kept until an edit or a change of the tree reaches
+    // the line. One slot per line of `text`.
+    mutable std::vector<std::optional<std::vector<HighlightSpan>>> cache;
+    std::uint64_t version = 1;
+    std::size_t bytes_read = 0;
+    mutable std::size_t line_queries = 0;
+};
+
+bool TreeSitterHighlighter::supports(std::string_view language_id) {
+    return find_grammar(language_id) != nullptr;
+}
+
+std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
+TreeSitterHighlighter::create(std::string_view language_id, Text text, std::stop_token stop) {
+    const Grammar* grammar = find_grammar(language_id);
+    if (!grammar) {
+        return std::unexpected(Error{ErrorCode::unsupported,
+                                     "no tree-sitter grammar for " + std::string(language_id)});
+    }
+    if (text.size() > std::numeric_limits<std::uint32_t>::max()) {
+        return std::unexpected(
+            Error{ErrorCode::limit_exceeded, "text is too large for tree-sitter"});
+    }
+
+    const TSLanguage* language = grammar->language();
+    std::unique_ptr<TSParser, ParserDeleter> parser(ts_parser_new());
+    if (!ts_parser_set_language(parser.get(), language)) {
+        return std::unexpected(Error{ErrorCode::environment_unavailable,
+                                     "the " + std::string(language_id) +
+                                         " grammar does not fit the tree-sitter runtime"});
+    }
+
+    std::uint32_t error_offset = 0;
+    TSQueryError error_type = TSQueryErrorNone;
+    std::unique_ptr<TSQuery, QueryDeleter> query(ts_query_new(
+        language, grammar->highlights.data(),
+        static_cast<std::uint32_t>(grammar->highlights.size()), &error_offset, &error_type));
+    if (!query) {
+        return std::unexpected(Error{ErrorCode::environment_unavailable,
+                                     "the highlights query of " + std::string(language_id) +
+                                         " is invalid at byte " + std::to_string(error_offset)});
+    }
+
+    auto data = std::make_shared<QueryData>();
+    data->query = std::move(query);
+    const std::span<const CaptureScope> table = grammar->scopes();
+    const std::uint32_t captures = ts_query_capture_count(data->query.get());
+    data->capture_scopes.reserve(captures);
+    for (std::uint32_t i = 0; i < captures; ++i) {
+        std::uint32_t length = 0;
+        const char* name = ts_query_capture_name_for_id(data->query.get(), i, &length);
+        data->capture_scopes.push_back(scope_for_capture(table, std::string_view(name, length)));
+    }
+
+    auto impl = std::make_unique<Impl>();
+    impl->text = std::move(text);
+    impl->grammar = grammar;
+    impl->data = std::move(data);
+    impl->parser = std::move(parser);
+    const std::stop_callback cancel_on_stop(stop, [flag = &impl->cancel] { flag->store(true); });
+    ReadState state{&impl->text, &impl->bytes_read};
+    const TSInput input{&state, read_chunk, TSInputEncodingUTF8, nullptr};
+    impl->tree.reset(parse(*impl->parser, nullptr, input, impl->cancel));
+    if (!impl->tree) {
+        return std::unexpected(Error{ErrorCode::environment_unavailable,
+                                     impl->cancel.load() ? "cancelled" : "parsing failed"});
+    }
+    impl->cache.resize(impl->text.line_count());
+    return std::unique_ptr<TreeSitterHighlighter>(new TreeSitterHighlighter(std::move(impl)));
+}
+
+TreeSitterHighlighter::TreeSitterHighlighter(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+
+TreeSitterHighlighter::~TreeSitterHighlighter() = default;
+
+std::vector<HighlightSpan> TreeSitterHighlighter::spans(std::size_t line) const {
+    if (line >= impl_->cache.size()) {
+        return {};
+    }
+    auto& slot = impl_->cache[line];
+    if (!slot) {
+        ++impl_->line_queries;
+        slot = impl_->tree
+                   ? line_spans(impl_->text, *impl_->tree, *impl_->data, line, no_line_limit)
+                   : std::vector<HighlightSpan>{};
+    }
+    return *slot;
+}
+
+std::shared_ptr<const Highlighter> TreeSitterHighlighter::snapshot() const {
+    std::unique_ptr<TSTree, TreeDeleter> tree;
+    if (impl_->tree) {
+        tree.reset(ts_tree_copy(impl_->tree.get()));
+    }
+    return std::make_shared<FrozenHighlighter>(impl_->text, std::move(tree), impl_->data,
+                                               impl_->grammar->root_scope);
+}
+
+std::string_view TreeSitterHighlighter::root_scope_of(std::string_view language_id) {
+    const Grammar* grammar = find_grammar(language_id);
+    return grammar ? grammar->root_scope : std::string_view{};
 }
 
 std::string_view TreeSitterHighlighter::root_scope() const {
@@ -346,7 +428,8 @@ std::expected<void, Error> TreeSitterHighlighter::apply(const DocumentChange& ch
 }
 
 std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChange> changes,
-                                                        const Text& new_text) {
+                                                        const Text& new_text,
+                                                        std::stop_token stop) {
     if (!impl_->tree) {
         return std::unexpected(Error{ErrorCode::environment_unavailable, "the text is not parsed"});
     }
@@ -406,15 +489,17 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
     }
 
     impl_->text = new_text;
+    const std::stop_callback cancel_on_stop(stop, [flag = &impl_->cancel] { flag->store(true); });
     ReadState state{&impl_->text, &impl_->bytes_read};
     const TSInput input{&state, read_chunk, TSInputEncodingUTF8, nullptr};
     std::unique_ptr<TSTree, TreeDeleter> tree(
-        ts_parser_parse(impl_->parser.get(), impl_->tree.get(), input));
+        parse(*impl_->parser, impl_->tree.get(), input, impl_->cancel));
     if (!tree) {
         impl_->tree.reset();
         impl_->cache.assign(impl_->text.line_count(), std::nullopt);
         ++impl_->version;
-        return std::unexpected(Error{ErrorCode::environment_unavailable, "parsing failed"});
+        return std::unexpected(Error{ErrorCode::environment_unavailable,
+                                     impl_->cancel.load() ? "cancelled" : "parsing failed"});
     }
 
     std::uint32_t range_count = 0;

@@ -7,6 +7,11 @@
 
 namespace anvil::core {
 
+// A document larger than this many bytes is not highlighted, and neither is a line of more than
+// this many UTF-16 units: parsing and styling them would cost more than the colors are worth.
+inline constexpr std::size_t max_highlighted_bytes = 5 * 1024 * 1024;
+inline constexpr std::size_t max_highlighted_line_units = 10000;
+
 // A stretch of one line with a scope.
 struct HighlightSpan {
     // UTF-16 columns of the line, `begin` included and `end` not.
