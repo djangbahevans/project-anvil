@@ -5794,16 +5794,21 @@ TEST_F(PartPositionsTest, TheSideBarButtonOfTheTitleBarShowsTheSideTheSideBarIsO
     custom_title_bar_ = true;
     start_with("{}");
     ASSERT_NE(window_->title_bar(), nullptr);
+    ASSERT_TRUE(window_->title_bar()->sidebar_button()->isVisible());
     const auto icon_pixels = [&] {
         return window_->title_bar()->sidebar_button()->grab().toImage();
     };
-    const QImage left = icon_pixels();
-    window_->commands().execute("workbench.action.toggleSidebarPosition");
-    QApplication::processEvents();
-    EXPECT_NE(icon_pixels(), left);
-    window_->commands().execute("workbench.action.toggleSidebarPosition");
-    QApplication::processEvents();
-    EXPECT_EQ(icon_pixels(), left);
+    for (const bool shown : {false, true}) {
+        window_->workbench()->set_visible(ui::Part::sidebar, shown);
+        QApplication::processEvents();
+        const QImage left = icon_pixels();
+        window_->commands().execute("workbench.action.toggleSidebarPosition");
+        QApplication::processEvents();
+        EXPECT_NE(icon_pixels(), left) << shown;
+        window_->commands().execute("workbench.action.toggleSidebarPosition");
+        QApplication::processEvents();
+        EXPECT_EQ(icon_pixels(), left) << shown;
+    }
 }
 
 TEST_F(PartPositionsTest, RendersTheWindowWithTheSideBarAndThePanelOnTheRight) {

@@ -640,7 +640,12 @@ TEST_F(WorkbenchTest, ADraggedSashOfASidebarOnTheRightResizesIt) {
     QTest::mouseMove(sash, sash->rect().center() + QPoint(-60, 0));
     QTest::mouseRelease(sash, Qt::LeftButton, {}, sash->rect().center() + QPoint(-60, 0));
     QApplication::processEvents();
-    EXPECT_NEAR(workbench_->sidebar()->width(), before + 60, 3);
+    const int dragged = workbench_->sidebar()->width();
+    EXPECT_NEAR(dragged, before + 60, 3);
+
+    workbench_->set_sidebar_side(Side::left);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), dragged, 1);
 }
 
 TEST_F(WorkbenchTest, EveryPanelPositionKeepsItsOwnSize) {
@@ -694,11 +699,14 @@ TEST_F(WorkbenchTest, ThePanelBesideTheEditorHasAMinimumWidthAndNoMinimumHeight)
     QApplication::processEvents();
     EXPECT_EQ(workbench_->panel()->width(), Workbench::panel_minimum_width);
     EXPECT_EQ(workbench_->panel()->height(), editor_height());
+    EXPECT_EQ(workbench_->panel()->minimumWidth(), Workbench::panel_minimum_width);
+    EXPECT_EQ(workbench_->panel()->minimumHeight(), 0);
 
     workbench_->set_panel_position(PanelPosition::top);
     workbench_->set_size(Part::panel, 10);
     QApplication::processEvents();
     EXPECT_EQ(workbench_->panel()->height(), Workbench::panel_minimum_height);
+    EXPECT_EQ(workbench_->panel()->minimumHeight(), Workbench::panel_minimum_height);
     EXPECT_EQ(workbench_->panel()->minimumWidth(), 0);
 }
 
@@ -784,20 +792,25 @@ TEST_F(WorkbenchTest, MovingThePartsTellsWhoIsListeningOnlyWhenSomethingChanges)
 TEST(WorkbenchFocusTest, MovingThePartsKeepsTheKeyboardFocusInTheEditorArea) {
     WorkbenchColors colors{QApplication::palette()};
     Workbench workbench(colors);
-    auto* input = new QLineEdit;
-    workbench.set_editor_area(input);
+    auto* editor = new QLineEdit;
+    workbench.set_editor_area(editor);
+    auto* in_sidebar = new QLineEdit(workbench.sidebar());
+    auto* in_panel = new QLineEdit(workbench.panel());
     workbench.resize(1000, 700);
     workbench.show();
     workbench.set_visible(Part::sidebar, true);
     workbench.set_visible(Part::panel, true);
-    input->setFocus();
     QApplication::processEvents();
-    ASSERT_TRUE(input->hasFocus());
 
-    workbench.set_sidebar_side(Side::right);
-    EXPECT_TRUE(input->hasFocus());
-    for (const PanelPosition position : all_positions) {
-        workbench.set_panel_position(position);
-        EXPECT_TRUE(input->hasFocus()) << anvil::ui::panel_position_name(position);
+    for (QLineEdit* focused : {editor, in_sidebar, in_panel}) {
+        focused->setFocus();
+        ASSERT_TRUE(focused->hasFocus());
+        workbench.set_sidebar_side(workbench.sidebar_side() == Side::left ? Side::right
+                                                                          : Side::left);
+        EXPECT_TRUE(focused->hasFocus());
+        for (const PanelPosition position : all_positions) {
+            workbench.set_panel_position(position);
+            EXPECT_TRUE(focused->hasFocus()) << anvil::ui::panel_position_name(position);
+        }
     }
 }

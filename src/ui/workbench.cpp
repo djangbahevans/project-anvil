@@ -2,7 +2,6 @@
 
 #include "anvil/ui/splitter.hpp"
 
-#include <QApplication>
 #include <QEnterEvent>
 #include <QHBoxLayout>
 #include <QPainter>
@@ -321,13 +320,7 @@ int Workbench::panel_size() const {
     return panel_sizes_[static_cast<std::size_t>(panel_position_)];
 }
 
-// Moving a widget inside its splitter takes the keyboard focus from the widgets in it.
 void Workbench::arrange() {
-    QWidget* focused = QApplication::focusWidget();
-    if (focused && !isAncestorOf(focused)) {
-        focused = nullptr;
-    }
-
     const bool sidebar_last = sidebar_side_ == Side::right;
     across_->insertWidget(sidebar_last ? 1 : 0, sidebar_);
     across_->setStretchFactor(across_->indexOf(sidebar_), 0);
@@ -345,9 +338,6 @@ void Workbench::arrange() {
     panel_->setMinimumSize(beside ? panel_minimum_width : 0, beside ? 0 : panel_minimum_height);
 
     apply_sizes();
-    if (focused && !focused->hasFocus()) {
-        focused->setFocus();
-    }
 }
 
 void Workbench::apply_sizes() {
