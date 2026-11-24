@@ -1,6 +1,6 @@
 # 0010. tree-sitter for syntax highlighting
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-17
 
 ## Context
