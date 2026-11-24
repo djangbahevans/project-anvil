@@ -1,3 +1,4 @@
+#include "anvil/core/brackets.hpp"
 #include "anvil/core/editing.hpp"
 
 #include <algorithm>
@@ -87,6 +88,15 @@ EditOutcome EditController::add_cursors_to_line_ends() {
         return {};
     }
     return adopt(SelectionSet::from(std::move(carets), 0));
+}
+
+EditOutcome EditController::jump_to_bracket() {
+    const std::string text = document_.text().to_string();
+    std::vector<Selection> carets;
+    for (const Selection& selection : document_.selections().all()) {
+        carets.push_back(Selection::caret(anvil::core::jump_to_bracket(text, selection.start())));
+    }
+    return adopt(SelectionSet::from(std::move(carets), document_.selections().primary_index()));
 }
 
 } // namespace anvil::core

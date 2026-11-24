@@ -152,6 +152,19 @@ TEST(DefaultKeybindingsTest, ChangeLanguageModeIsACtrlKChordOnEveryPlatform) {
     EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), command), chords({"cmd+k m"}));
 }
 
+TEST(DefaultKeybindingsTest, GoToLineAndGoToBracketHaveVSCodesKeys) {
+    for (const KeyPlatform platform : platforms) {
+        EXPECT_EQ(keys_of(default_keybindings(platform), "workbench.action.gotoLine"),
+                  chords({"ctrl+g"}));
+    }
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::linux), "editor.action.jumpToBracket"),
+              chords({"ctrl+shift+\\"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::windows), "editor.action.jumpToBracket"),
+              chords({"ctrl+shift+\\"}));
+    EXPECT_EQ(keys_of(default_keybindings(KeyPlatform::macos), "editor.action.jumpToBracket"),
+              chords({"cmd+shift+\\"}));
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);
@@ -299,9 +312,11 @@ TEST(DefaultKeybindingsTest, ABindingOnMacNeverUsesTheWindowsKeyAndControlIsOnly
             if (binding.command != "workbench.action.toggleFullScreen") {
                 EXPECT_FALSE(step.modifiers.meta && step.modifiers.ctrl) << binding.command;
             }
-            // VS Code binds Back and Forward to Control and the minus key.
+            // VS Code binds Back and Forward to Control and the minus key, and Go to Line to
+            // Control and G.
             const bool history = binding.command == "workbench.action.navigateBack" ||
-                                 binding.command == "workbench.action.navigateForward";
+                                 binding.command == "workbench.action.navigateForward" ||
+                                 binding.command == "workbench.action.gotoLine";
             if (step.modifiers.ctrl && !history) {
                 EXPECT_TRUE(step.key == Key::key_b || step.key == Key::key_f ||
                             step.key == Key::key_p || step.key == Key::key_n ||

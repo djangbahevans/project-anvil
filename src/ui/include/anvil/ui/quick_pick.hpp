@@ -55,6 +55,9 @@ public:
     void set_empty_message(const QString& text);
     // A prefix of the filter text that is not matched, such as the `>` of the command palette.
     void set_ignored_prefix(const QString& prefix);
+    // Whether the filter text selects and ranks the items. Without it every item shows in the
+    // order it was given, for a list that the caller makes from the text itself. On by default.
+    void set_filtering(bool enabled);
     // The distance of the popup from the top of the window, so that it sits below the menu bar.
     void set_top_offset(int pixels);
 
@@ -117,6 +120,7 @@ private:
     QString ignored_prefix_;
     int top_offset_ = 0;
     bool has_detail_ = false;
+    bool filtering_ = true;
     QPointer<QWidget> previous_focus_;
 };
 

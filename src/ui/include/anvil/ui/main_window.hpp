@@ -185,6 +185,9 @@ public:
     QuickPick* command_palette() {
         return palette_;
     }
+    QuickPick* go_to_line_pick() {
+        return go_to_line_;
+    }
     SettingsStore& settings() {
         return *settings_;
     }
@@ -344,6 +347,11 @@ private:
     void open_dialog();
     // Shows the command palette, unless a dialog is open.
     void show_command_palette();
+    // Opens Go to Line/Column over the shown document: the caret follows the text typed, Enter
+    // keeps it and Escape puts the caret and the scroll position back.
+    void show_go_to_line();
+    void preview_go_to_line();
+    void finish_go_to_line(bool keep);
     // Runs the command the user chose in the palette, found by the id captured when it was chosen.
     void run_palette_command(const std::string& id);
     // Runs a command by id, in the extension host when it is running, with a message when it fails.
@@ -390,6 +398,15 @@ private:
     Sidebar* sidebar_ = nullptr;
     Panel* panel_ = nullptr;
     QuickPick* palette_ = nullptr;
+    QuickPick* go_to_line_ = nullptr;
+    // What Go to Line/Column puts back when it is cancelled. `document` is empty while it is
+    // closed.
+    struct GoToLineState {
+        std::shared_ptr<core::Document> document;
+        core::SelectionSet selections;
+        int scroll_x = 0;
+        int scroll_y = 0;
+    } go_to_line_state_;
     // The commands shown in the palette, by position in its list.
     std::vector<std::string> palette_ids_;
     // The commands run from the palette, the latest first.

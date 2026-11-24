@@ -341,3 +341,36 @@ TEST(AddPreviousOccurrence, AgreesWithANaiveSearchOnRandomTexts) {
 }
 
 } // namespace
+
+TEST(JumpToBracket, MovesTheCaretToThePartnerOfTheBracketAtIt) {
+    Editor editor("f(a, [b])", {Selection::caret(1)});
+    EXPECT_TRUE(editor.controller.jump_to_bracket().changed_anything());
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(8)}));
+    editor.controller.jump_to_bracket();
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(1)}));
+}
+
+TEST(JumpToBracket, StartsFromTheStartOfASelectionAndLeavesACaret) {
+    Editor editor("f(a, [b])", {Selection{4, 1}});
+    editor.controller.jump_to_bracket();
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(8)}));
+}
+
+TEST(JumpToBracket, EveryCursorJumpsAndCursorsThatMeetBecomeOne) {
+    Editor editor("(a) (b) x", {Selection::caret(0), Selection::caret(4), Selection::caret(8)}, 1);
+    editor.controller.jump_to_bracket();
+    EXPECT_EQ(editor.selections(),
+              (Carets{Selection::caret(2), Selection::caret(6), Selection::caret(8)}));
+    EXPECT_EQ(editor.document.selections().primary(), Selection::caret(6));
+
+    Editor same("(a) b", {Selection::caret(0), Selection::caret(1)});
+    same.controller.jump_to_bracket();
+    EXPECT_EQ(same.selections(), (Carets{Selection::caret(2)}));
+}
+
+TEST(JumpToBracket, ChangesNothingWhereThereIsNoBracketAhead) {
+    Editor editor("plain text", {Selection::caret(3)});
+    EXPECT_FALSE(editor.controller.jump_to_bracket().changed_anything());
+    EXPECT_EQ(editor.selections(), (Carets{Selection::caret(3)}));
+    EXPECT_EQ(editor.document.text().to_string(), "plain text");
+}

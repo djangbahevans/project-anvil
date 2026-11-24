@@ -93,6 +93,8 @@ public:
     // Adds a cursor above or below each selection (see core::EditController).
     void add_cursors_vertically(bool down);
     void add_cursors_to_line_ends();
+    // Moves every caret as Go to Bracket does (see core::jump_to_bracket).
+    void jump_to_bracket();
     // "Select all occurrences of find match" (Ctrl+Shift+L). Returns true when more than `limit`
     // matches exist and only `limit` were selected.
     bool select_all_occurrences(const OccurrenceSource& source, std::size_t limit);
@@ -105,6 +107,8 @@ public:
 
     // Makes `range` the only selection and scrolls to show it.
     void select_range(core::Selection range);
+    // Replaces the selections; `primary` indexes `ranges`.
+    void select_ranges(std::vector<core::Selection> ranges, std::size_t primary);
     // Applies the edits as one undo step, as the user's own change: the window is told through
     // `text_changed`. See EditController::replace_ranges.
     void replace_ranges(std::vector<core::Edit> edits,

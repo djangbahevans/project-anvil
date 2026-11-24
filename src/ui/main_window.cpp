@@ -1,6 +1,7 @@
 #include "anvil/ui/main_window.hpp"
 
 #include "anvil/core/editor_settings.hpp"
+#include "anvil/core/go_to_line.hpp"
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
@@ -20,12 +21,14 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScrollBar>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <algorithm>
 #include <functional>
 #include <set>
+#include <utility>
 
 namespace anvil::ui {
 namespace {
@@ -119,6 +122,14 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         }
     });
     connect(palette_, &QuickPick::cancelled, this, [this] { pick_action_ = nullptr; });
+    go_to_line_ = new QuickPick(this, colors_);
+    go_to_line_->set_ignored_prefix(":");
+    go_to_line_->set_placeholder(tr("Type a line number, then : and a column"));
+    go_to_line_->set_filtering(false);
+    connect(go_to_line_->filter_field(), &QLineEdit::textChanged, this,
+            [this] { preview_go_to_line(); });
+    connect(go_to_line_, &QuickPick::accepted, this, [this] { finish_go_to_line(true); });
+    connect(go_to_line_, &QuickPick::cancelled, this, [this] { finish_go_to_line(false); });
     area_ = new EditorArea(
         layout_, colors_, [this](const core::Uri& uri) { return tab_info(uri); },
         [this](const core::Uri& uri) {
@@ -327,6 +338,10 @@ MainWindow::~MainWindow() {
     palette_->disconnect(this);
     // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
     disconnect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
+    // The widgets are deleted after the members, and the quick pick reports a cancellation when
+    // it loses the focus.
+    go_to_line_->disconnect(this);
+    go_to_line_->filter_field()->disconnect(this);
     // The area observes the layout, which is destroyed before the child widgets are.
     delete area_;
 }
@@ -950,6 +965,8 @@ void MainWindow::register_commands() {
         [this] { navigate(history_.go_forward(), false); });
     add("workbench.action.navigateToLastEditLocation", tr("Go to Last Edit Location"),
         [this] { navigate(history_.go_to_last_edit(), true); });
+    add("workbench.action.gotoLine", tr("Go to Line/Column..."), [this] { show_go_to_line(); });
+    add("editor.action.jumpToBracket", tr("Go to Bracket"), [this] { view()->jump_to_bracket(); });
     add("workbench.action.showCommands", tr("Show All Commands"),
         [this] { show_command_palette(); });
     add("workbench.action.toggleSidebarVisibility", tr("Toggle Primary Side Bar Visibility"),
@@ -1733,6 +1750,72 @@ void MainWindow::show_command_palette() {
     palette_->open(">");
 }
 
+void MainWindow::show_go_to_line() {
+    const core::Uri* current = current_uri_ptr();
+    if (!current || go_to_line_state_.document) {
+        return;
+    }
+    go_to_line_state_ = {documents_.at(*current), view()->document()->selections(),
+                         view()->horizontalScrollBar()->value(),
+                         view()->verticalScrollBar()->value()};
+    go_to_line_->set_top_offset(has_custom_title_bar() ? title_bar_->height()
+                                                       : menu_bar_->height());
+    go_to_line_->open(":");
+    preview_go_to_line();
+}
+
+void MainWindow::preview_go_to_line() {
+    const auto& document = go_to_line_state_.document;
+    if (!document || view()->document() != document) {
+        return;
+    }
+    QString input = go_to_line_->filter_field()->text();
+    if (input.startsWith(QLatin1Char(':'))) {
+        input.remove(0, 1);
+    }
+    const core::GoToLine parsed = core::parse_go_to_line(
+        document->text(), static_cast<std::size_t>(settings_->editor().tab_size),
+        input.toStdString());
+
+    QString label;
+    if (!parsed.has_line) {
+        label = tr("Type a line number to go to (from 1 to %1).").arg(parsed.line_count);
+    } else if (!parsed.has_separator) {
+        label = tr("Press 'Enter' to go to line %1 or enter colon : to add a column number.")
+                    .arg(parsed.line + 1);
+    } else if (!parsed.has_column) {
+        label = tr("Press 'Enter' to go to line %1 or enter a column number (from 1 to %2).")
+                    .arg(parsed.line + 1)
+                    .arg(parsed.max_column);
+    } else {
+        label = tr("Press 'Enter' to go to line %1 at column %2.")
+                    .arg(parsed.line + 1)
+                    .arg(parsed.column);
+    }
+    go_to_line_->set_items({{label, {}, {}, {}, !parsed.has_line}});
+
+    if (parsed.has_line) {
+        view()->select_range(core::Selection::caret(document->text().offset_at(parsed.target)));
+    } else {
+        view()->select_ranges(go_to_line_state_.selections.all(),
+                              go_to_line_state_.selections.primary_index());
+    }
+}
+
+void MainWindow::finish_go_to_line(bool keep) {
+    GoToLineState state = std::exchange(go_to_line_state_, {});
+    if (!state.document || view()->document() != state.document) {
+        return;
+    }
+    if (keep) {
+        record_selection(layout_.focused(), workbench::SelectionReason::navigation);
+        return;
+    }
+    view()->select_ranges(state.selections.all(), state.selections.primary_index());
+    view()->horizontalScrollBar()->setValue(state.scroll_x);
+    view()->verticalScrollBar()->setValue(state.scroll_y);
+}
+
 bool MainWindow::command_enabled(const std::string& id) const {
     if (!bridge_.running() || commands_.find(id)) {
         return true;
@@ -1814,7 +1897,7 @@ std::optional<workbench::NavigationSelection> MainWindow::selection_of(const cor
 
 void MainWindow::record_activation() {
     const core::Uri* uri = current_uri_ptr();
-    if (walking_history_ || !uri) {
+    if (walking_history_ || go_to_line_state_.document || !uri) {
         return;
     }
     if (const auto selection = selection_of(*uri)) {
@@ -1824,7 +1907,7 @@ void MainWindow::record_activation() {
 
 void MainWindow::record_selection(workbench::GroupId group, workbench::SelectionReason reason) {
     const workbench::EditorGroup* state = layout_.group(group);
-    if (walking_history_ || !state || !state->active) {
+    if (walking_history_ || go_to_line_state_.document || !state || !state->active) {
         return;
     }
     const core::Uri& uri = state->tabs[*state->active];

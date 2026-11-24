@@ -2642,6 +2642,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.navigateBack",
                                           "workbench.action.navigateForward",
                                           "workbench.action.navigateToLastEditLocation",
+                                          "workbench.action.gotoLine",
+                                          "editor.action.jumpToBracket",
                                           "workbench.action.activityBarLocation.default",
                                           "workbench.action.activityBarLocation.hide",
                                           "workbench.action.toggleStatusbarVisibility",
@@ -2839,6 +2841,8 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleSidebarVisibility",
         "workbench.action.toggleStatusbarVisibility",
         "workbench.action.toggleSidebarPosition",
+        "workbench.action.gotoLine",
+        "editor.action.jumpToBracket",
         "workbench.action.activityBarLocation.default",
         "workbench.action.activityBarLocation.hide",
         "workbench.action.positionPanelTop",
@@ -6557,4 +6561,235 @@ TEST_F(ChangeLanguageModeTest, TheCommandIsInTheCommandPalette) {
     const auto& items = window_->command_palette()->items();
     EXPECT_NE(std::ranges::find(items, QString("Change Language Mode"), &ui::QuickPickItem::label),
               items.end());
+}
+
+class GoToTest : public MainWindowTest {
+protected:
+    static std::string numbered_lines(int count) {
+        std::string text;
+        for (int i = 0; i < count; ++i) {
+            text += "line " + std::to_string(i) + "\n";
+        }
+        return text;
+    }
+
+    void open(const std::string& text) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", text).string())));
+        window_->resize(900, 600);
+        window_->show();
+        QApplication::processEvents();
+    }
+
+    ui::QuickPick* pick() {
+        return window_->go_to_line_pick();
+    }
+    QString label() {
+        return pick()->list()->model()->index(0, 0).data().toString();
+    }
+    void type_in_pick(const char* text) {
+        QTest::keyClicks(pick()->filter_field(), text);
+    }
+    core::Position caret() const {
+        const core::Document& document = *window_->current_document();
+        return document.text().position_at(document.selections().primary().active);
+    }
+    std::size_t history_size() const {
+        return window_->navigation_history().selections().entries().size();
+    }
+};
+
+TEST_F(GoToTest, TheGoMenuItemsAreEnabledAndShowTheirKeys) {
+    create_window();
+    QAction* line = menu_action("workbench.action.gotoLine");
+    ASSERT_NE(line, nullptr);
+    EXPECT_TRUE(line->isEnabled());
+    EXPECT_TRUE(line->text().endsWith("\tCtrl+G")) << line->text().toStdString();
+    QAction* bracket = menu_action("editor.action.jumpToBracket");
+    ASSERT_NE(bracket, nullptr);
+    EXPECT_TRUE(bracket->isEnabled());
+    EXPECT_TRUE(bracket->text().endsWith("\tCtrl+Shift+\\")) << bracket->text().toStdString();
+}
+
+TEST_F(GoToTest, TheCommandOpensTheQuickPickWithAPrompt) {
+    create_window();
+    open(numbered_lines(40));
+    EXPECT_TRUE(pick()->isHidden());
+    menu_action("workbench.action.gotoLine")->trigger();
+    ASSERT_TRUE(pick()->isVisible());
+    EXPECT_EQ(pick()->filter_field()->text(), ":");
+    EXPECT_EQ(pick()->filter_field()->placeholderText(), "Type a line number, then : and a column");
+    EXPECT_EQ(label(), "Type a line number to go to (from 1 to 41).");
+}
+
+TEST_F(GoToTest, TheCaretFollowsTheTextAsItIsTypedAndTheLabelSaysWhatEnterDoes) {
+    create_window();
+    open(numbered_lines(40));
+    window_->commands().execute("workbench.action.gotoLine");
+
+    type_in_pick("12");
+    EXPECT_EQ(caret(), (core::Position{11, 0}));
+    EXPECT_EQ(label(), "Press 'Enter' to go to line 12 or enter colon : to add a column number.");
+    type_in_pick(":");
+    EXPECT_EQ(caret(), (core::Position{11, 0}));
+    EXPECT_EQ(label(), "Press 'Enter' to go to line 12 or enter a column number (from 1 to 8).");
+    type_in_pick("4");
+    EXPECT_EQ(caret(), (core::Position{11, 3}));
+    EXPECT_EQ(label(), "Press 'Enter' to go to line 12 at column 4.");
+
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Backspace);
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Backspace);
+    EXPECT_EQ(caret(), (core::Position{11, 0}));
+    EXPECT_EQ(label(), "Press 'Enter' to go to line 12 or enter colon : to add a column number.");
+}
+
+TEST_F(GoToTest, TheLineAndTheColumnAreKeptWithinTheDocumentAndNegativeNumbersCountFromTheEnd) {
+    create_window();
+    open(numbered_lines(40));
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("999:999");
+    EXPECT_EQ(caret(), (core::Position{40, 0}));
+    for (int i = 0; i < 7; ++i) {
+        QTest::keyClick(pick()->filter_field(), Qt::Key_Backspace);
+    }
+    type_in_pick("-2");
+    EXPECT_EQ(caret(), (core::Position{39, 0}));
+    type_in_pick(":-1");
+    EXPECT_EQ(caret(), (core::Position{39, 6}));
+}
+
+TEST_F(GoToTest, EnterKeepsTheCaretAndClosesAndTheNewPlaceIsInTheHistory) {
+    create_window();
+    open(numbered_lines(40));
+    const std::size_t before = history_size();
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("5:3");
+    EXPECT_EQ(history_size(), before);
+
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Return);
+    EXPECT_TRUE(pick()->isHidden());
+    EXPECT_EQ(caret(), (core::Position{4, 2}));
+    EXPECT_EQ(history_size(), before + 1);
+    EXPECT_TRUE(window_->view()->hasFocus());
+
+    menu_action("workbench.action.navigateBack")->trigger();
+    EXPECT_EQ(caret(), (core::Position{0, 0}));
+}
+
+TEST_F(GoToTest, EscapePutsTheCaretAndTheScrollBack) {
+    create_window();
+    open(numbered_lines(400));
+    window_->view()->select_range(
+        core::Selection::caret(window_->current_document()->text().offset_at({30, 2})));
+    window_->view()->verticalScrollBar()->setValue(window_->view()->line_height() * 20);
+    const int scroll = window_->view()->verticalScrollBar()->value();
+    const std::size_t before = history_size();
+
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("350");
+    EXPECT_EQ(caret().line, 349U);
+    EXPECT_NE(window_->view()->verticalScrollBar()->value(), scroll);
+
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+    EXPECT_TRUE(pick()->isHidden());
+    EXPECT_EQ(caret(), (core::Position{30, 2}));
+    EXPECT_EQ(window_->view()->verticalScrollBar()->value(), scroll);
+    EXPECT_EQ(history_size(), before);
+}
+
+TEST_F(GoToTest, EscapeBringsBackEveryCursor) {
+    create_window();
+    open(numbered_lines(40));
+    const auto& text = window_->current_document()->text();
+    window_->view()->select_ranges({core::Selection{text.offset_at({2, 1}), text.offset_at({2, 4})},
+                                    core::Selection::caret(text.offset_at({9, 0}))},
+                                   1);
+    const auto before = window_->current_document()->selections();
+
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("30");
+    EXPECT_EQ(window_->current_document()->selections().all().size(), 1U);
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+    EXPECT_EQ(window_->current_document()->selections().all(), before.all());
+    EXPECT_EQ(window_->current_document()->selections().primary_index(), before.primary_index());
+}
+
+TEST_F(GoToTest, EnterWithoutALineDoesNothingAndTheQuickPickStaysOpen) {
+    create_window();
+    open(numbered_lines(40));
+    window_->view()->select_range(
+        core::Selection::caret(window_->current_document()->text().offset_at({7, 0})));
+    window_->commands().execute("workbench.action.gotoLine");
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Return);
+    EXPECT_TRUE(pick()->isVisible());
+    type_in_pick("x");
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Return);
+    EXPECT_TRUE(pick()->isVisible());
+    EXPECT_EQ(caret(), (core::Position{7, 0}));
+}
+
+TEST_F(GoToTest, ClearingTheNumberBringsTheCaretBackWhileTheQuickPickIsOpen) {
+    create_window();
+    open(numbered_lines(40));
+    window_->view()->select_range(
+        core::Selection::caret(window_->current_document()->text().offset_at({7, 0})));
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("20");
+    ASSERT_EQ(caret().line, 19U);
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Backspace);
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Backspace);
+    EXPECT_EQ(caret(), (core::Position{7, 0}));
+}
+
+TEST_F(GoToTest, ThePreviewMakesNoPlaceOfItsOwnWhenItWasCancelled) {
+    create_window();
+    open(numbered_lines(400));
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("300");
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+    for (const auto& entry : window_->navigation_history().selections().entries()) {
+        EXPECT_LT(entry.selection.line(), 299U);
+    }
+}
+
+TEST_F(GoToTest, AColumnCountsTabsAsFarAsTheNextTabStop) {
+    create_window();
+    open("\tindented\nplain\n");
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("1:5");
+    EXPECT_EQ(caret(), (core::Position{0, 1}));
+    EXPECT_EQ(label(), "Press 'Enter' to go to line 1 at column 5.");
+}
+
+TEST_F(GoToTest, TheShortcutOpensTheQuickPickFromTheEditor) {
+    create_window();
+    open(numbered_lines(40));
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_G, Qt::ControlModifier);
+    EXPECT_TRUE(pick()->isVisible());
+}
+
+TEST_F(GoToTest, GoToBracketMovesTheCaretToThePartner) {
+    create_window();
+    open("f(a, [b])\n");
+    window_->view()->select_range(core::Selection::caret(1));
+    menu_action("editor.action.jumpToBracket")->trigger();
+    EXPECT_EQ(caret(), (core::Position{0, 8}));
+    window_->commands().execute("editor.action.jumpToBracket");
+    EXPECT_EQ(caret(), (core::Position{0, 1}));
+}
+
+TEST_F(GoToTest, GoToBracketOnEveryCursorAndTheShortcut) {
+    create_window();
+    open("(a) [b]\n");
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    window_->view()->select_ranges({core::Selection::caret(0), core::Selection::caret(4)}, 0);
+    QTest::keyClick(window_->view(), Qt::Key_Backslash, Qt::ControlModifier | Qt::ShiftModifier);
+    const auto carets = window_->current_document()->selections().all();
+    ASSERT_EQ(carets.size(), 2U);
+    EXPECT_EQ(carets[0], core::Selection::caret(2));
+    EXPECT_EQ(carets[1], core::Selection::caret(6));
 }
