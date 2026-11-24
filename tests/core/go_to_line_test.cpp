@@ -99,6 +99,13 @@ TEST(GoToLine, AColumnCountsATabAsFarAsTheNextTabStop) {
     EXPECT_EQ(parse_go_to_line(sample, 4, "3:999").max_column, 13U);
 }
 
+TEST(GoToLine, ATabAfterTextEndsAtTheNextTabStopOfTheColumnItIsAt) {
+    const Text text = text_of("ab\tx");
+    EXPECT_EQ(parse_go_to_line(text, 4, "1:5").target, (Position{0, 3}));
+    EXPECT_EQ(parse_go_to_line(text, 4, "1:5").max_column, 6U);
+    EXPECT_EQ(parse_go_to_line(text, 8, "1:9").target, (Position{0, 3}));
+}
+
 TEST(GoToLine, AColumnInsideATabFallsOnTheNearerEdge) {
     EXPECT_EQ(parse_go_to_line(sample, 4, "3:2").target, (Position{2, 0}));
     EXPECT_EQ(parse_go_to_line(sample, 4, "3:3").target, (Position{2, 0}));

@@ -351,9 +351,13 @@ TEST(JumpToBracket, MovesTheCaretToThePartnerOfTheBracketAtIt) {
 }
 
 TEST(JumpToBracket, StartsFromTheStartOfASelectionAndLeavesACaret) {
-    Editor editor("f(a, [b])", {Selection{4, 1}});
+    Editor editor("f(a, [b])", {Selection{6, 1}});
     editor.controller.jump_to_bracket();
     EXPECT_EQ(editor.selections(), (Carets{Selection::caret(8)}));
+
+    Editor reversed("f(a, [b])", {Selection{1, 6}});
+    reversed.controller.jump_to_bracket();
+    EXPECT_EQ(reversed.selections(), (Carets{Selection::caret(8)}));
 }
 
 TEST(JumpToBracket, EveryCursorJumpsAndCursorsThatMeetBecomeOne) {
