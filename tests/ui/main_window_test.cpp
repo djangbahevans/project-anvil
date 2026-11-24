@@ -2582,6 +2582,26 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.revert",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
+                                          "workbench.action.nextEditor",
+                                          "workbench.action.previousEditor",
+                                          "workbench.action.nextEditorInGroup",
+                                          "workbench.action.previousEditorInGroup",
+                                          "workbench.action.openNextRecentlyUsedEditor",
+                                          "workbench.action.openPreviousRecentlyUsedEditor",
+                                          "workbench.action.openNextRecentlyUsedEditorInGroup",
+                                          "workbench.action.openPreviousRecentlyUsedEditorInGroup",
+                                          "workbench.action.focusFirstEditorGroup",
+                                          "workbench.action.focusSecondEditorGroup",
+                                          "workbench.action.focusThirdEditorGroup",
+                                          "workbench.action.focusFourthEditorGroup",
+                                          "workbench.action.focusFifthEditorGroup",
+                                          "workbench.action.focusSixthEditorGroup",
+                                          "workbench.action.focusSeventhEditorGroup",
+                                          "workbench.action.focusEighthEditorGroup",
+                                          "workbench.action.focusLeftGroup",
+                                          "workbench.action.focusRightGroup",
+                                          "workbench.action.focusAboveGroup",
+                                          "workbench.action.focusBelowGroup",
                                           "editor.action.insertCursorAbove",
                                           "editor.action.insertCursorBelow",
                                           "editor.action.insertCursorAtEndOfEachLineSelected",
@@ -2738,6 +2758,23 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "saveAll",
         "workbench.action.files.revert",
         "workbench.action.toggleAutoSave",
+        "workbench.action.nextEditor",
+        "workbench.action.previousEditor",
+        "workbench.action.nextEditorInGroup",
+        "workbench.action.previousEditorInGroup",
+        "workbench.action.openNextRecentlyUsedEditor",
+        "workbench.action.openPreviousRecentlyUsedEditor",
+        "workbench.action.openNextRecentlyUsedEditorInGroup",
+        "workbench.action.openPreviousRecentlyUsedEditorInGroup",
+        "workbench.action.focusFirstEditorGroup",
+        "workbench.action.focusSecondEditorGroup",
+        "workbench.action.focusThirdEditorGroup",
+        "workbench.action.focusFourthEditorGroup",
+        "workbench.action.focusFifthEditorGroup",
+        "workbench.action.focusLeftGroup",
+        "workbench.action.focusRightGroup",
+        "workbench.action.focusAboveGroup",
+        "workbench.action.focusBelowGroup",
         "editor.action.insertCursorAbove",
         "editor.action.insertCursorBelow",
         "editor.action.insertCursorAtEndOfEachLineSelected",
@@ -3476,6 +3513,28 @@ TEST_F(MainWindowMenuBarTest, SaveAllWaitsForUnsavedChangesAndRevertForAFile) {
 
     ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
     EXPECT_TRUE(opened_action(menu(0), "workbench.action.files.revert")->isEnabled());
+}
+
+TEST_F(MainWindowMenuBarTest, TheGoMenuSwitchesEditorsAndGroupsAndTheThirdGroupWaitsForGroups) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    for (const char* id :
+         {"workbench.action.nextEditor", "workbench.action.previousEditor",
+          "workbench.action.openNextRecentlyUsedEditor",
+          "workbench.action.openPreviousRecentlyUsedEditorInGroup",
+          "workbench.action.focusFirstEditorGroup", "workbench.action.focusSecondEditorGroup"}) {
+        QAction* item = opened_action(menu(4), id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_TRUE(item->isEnabled()) << id;
+    }
+    EXPECT_FALSE(opened_action(menu(4), "workbench.action.focusThirdEditorGroup")->isEnabled());
+    EXPECT_FALSE(opened_action(menu(4), "workbench.action.focusLeftGroup")->isEnabled());
+    window_->commands().execute("workbench.action.splitEditorRight");
+    window_->commands().execute("workbench.action.splitEditorRight");
+    for (const char* id : {"workbench.action.focusThirdEditorGroup",
+                           "workbench.action.focusLeftGroup", "workbench.action.focusBelowGroup"}) {
+        EXPECT_TRUE(opened_action(menu(4), id)->isEnabled()) << id;
+    }
 }
 
 TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {
@@ -4284,6 +4343,111 @@ protected:
         ASSERT_TRUE(window_->view()->hasFocus());
     }
 };
+
+class MainWindowGroupKeysTest : public MainWindowKeysTest {
+protected:
+    // Three files open in the first group, and the focus on it.
+    void open_files() {
+        create_active_window();
+        for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+            ASSERT_TRUE(window_->open_file(QString::fromStdString(write(name, name).string())));
+        }
+    }
+    std::string shown() const {
+        return window_->current_uri().path.substr(window_->current_uri().path.rfind('/') + 1);
+    }
+    std::size_t group_count() const {
+        return window_->editor_layout().group_ids().size();
+    }
+    void key(Qt::Key key, Qt::KeyboardModifiers modifiers) {
+        QTest::keyClick(window_->view(), key, modifiers);
+    }
+    void chord(Qt::Key second) {
+        QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+        QTest::keyClick(window_->view(), second, Qt::ControlModifier);
+    }
+};
+
+TEST_F(MainWindowGroupKeysTest, ControlPageDownAndUpMoveThroughTheTabsAndWrap) {
+    open_files();
+    ASSERT_EQ(shown(), "c.txt");
+    key(Qt::Key_PageDown, Qt::ControlModifier);
+    EXPECT_NE(shown(), "c.txt");
+    key(Qt::Key_PageUp, Qt::ControlModifier);
+    EXPECT_EQ(shown(), "c.txt");
+    key(Qt::Key_PageUp, Qt::ControlModifier);
+    EXPECT_EQ(shown(), "b.txt");
+}
+
+TEST_F(MainWindowGroupKeysTest, TheNextEditorCrossesIntoTheNextGroupAndTheInGroupChordDoesNot) {
+    open_files();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    ASSERT_EQ(group_count(), 2u);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("d.txt", "d").string())));
+    window_->commands().execute("workbench.action.focusFirstEditorGroup");
+    window_->commands().execute("workbench.action.nextEditorInGroup");
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[0]);
+    window_->commands().execute("workbench.action.previousEditorInGroup");
+    // The last tab of the first group, then the next editor is in the second group.
+    ASSERT_EQ(shown(), "c.txt");
+    window_->commands().execute("workbench.action.nextEditor");
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[1]);
+    EXPECT_EQ(shown(), "d.txt");
+    window_->commands().execute("workbench.action.nextEditor");
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[0]);
+    EXPECT_EQ(shown(), "Untitled-1") << "the first tab of the first group, after the last tab";
+}
+
+TEST_F(MainWindowGroupKeysTest, ControlTwoMakesTheSecondGroupAndControlOneGoesBack) {
+    open_files();
+    ASSERT_EQ(group_count(), 1u);
+    key(Qt::Key_2, Qt::ControlModifier);
+    EXPECT_EQ(group_count(), 2u);
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[1]);
+    key(Qt::Key_1, Qt::ControlModifier);
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[0]);
+    key(Qt::Key_5, Qt::ControlModifier);
+    EXPECT_EQ(group_count(), 2u) << "only the group after the last one is made";
+    key(Qt::Key_3, Qt::ControlModifier);
+    EXPECT_EQ(group_count(), 3u);
+    key(Qt::Key_2, Qt::ControlModifier);
+    EXPECT_EQ(group_count(), 3u);
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids()[1]);
+}
+
+TEST_F(MainWindowGroupKeysTest, TheChordsMoveTheFocusToTheGroupBesideTheFocusedOne) {
+    open_files();
+    key(Qt::Key_2, Qt::ControlModifier);
+    const auto ids = window_->editor_layout().group_ids();
+    ASSERT_EQ(ids.size(), 2u);
+    chord(Qt::Key_Left);
+    EXPECT_EQ(window_->editor_layout().focused(), ids[0]);
+    chord(Qt::Key_Right);
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]);
+    chord(Qt::Key_Up);
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]) << "no group above";
+    window_->commands().execute("workbench.action.splitEditorDown");
+    const auto three = window_->editor_layout().group_ids();
+    ASSERT_EQ(three.size(), 3u);
+    chord(Qt::Key_Up);
+    EXPECT_EQ(window_->editor_layout().focused(), ids[1]);
+    chord(Qt::Key_Down);
+    EXPECT_EQ(window_->editor_layout().focused(), three[2]);
+}
+
+TEST_F(MainWindowGroupKeysTest, TheRecentlyUsedCommandsWalkBackThroughTheTabsInTheOrderOfUse) {
+    open_files();
+    window_->commands().execute("workbench.action.openPreviousRecentlyUsedEditor");
+    EXPECT_EQ(shown(), "b.txt");
+    window_->commands().execute("workbench.action.openPreviousRecentlyUsedEditor");
+    EXPECT_EQ(shown(), "a.txt");
+    window_->commands().execute("workbench.action.openNextRecentlyUsedEditor");
+    EXPECT_EQ(shown(), "b.txt");
+    window_->commands().execute("workbench.action.openNextRecentlyUsedEditorInGroup");
+    EXPECT_EQ(shown(), "b.txt") << "a history of the group starts at the tab that is shown";
+    window_->commands().execute("workbench.action.openPreviousRecentlyUsedEditorInGroup");
+    EXPECT_NE(shown(), "b.txt");
+}
 
 TEST_F(MainWindowKeysTest, TypedCharactersAreNotTakenByTheBindings) {
     create_active_window();

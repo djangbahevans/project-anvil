@@ -156,6 +156,30 @@ TEST(DefaultKeybindingsTest, TheAddCursorKeysAreVSCodesWithLinuxsOwn) {
     }
 }
 
+TEST(DefaultKeybindingsTest, TheTabAndGroupKeysAreVSCodes) {
+    const auto linux = default_keybindings(KeyPlatform::linux);
+    EXPECT_EQ(keys_of(linux, "workbench.action.nextEditor"), chords({"ctrl+pagedown"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.previousEditor"), chords({"ctrl+pageup"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.nextEditorInGroup"),
+              chords({"ctrl+k ctrl+pagedown"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.focusFirstEditorGroup"), chords({"ctrl+1"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.focusEighthEditorGroup"), chords({"ctrl+8"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.focusLeftGroup"), chords({"ctrl+k ctrl+left"}));
+    EXPECT_EQ(keys_of(linux, "workbench.action.focusBelowGroup"), chords({"ctrl+k ctrl+down"}));
+    const auto macos = default_keybindings(KeyPlatform::macos);
+    EXPECT_EQ(keys_of(macos, "workbench.action.nextEditor"),
+              chords({"cmd+alt+right", "cmd+shift+]"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.previousEditorInGroup"),
+              chords({"cmd+k cmd+alt+left"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.focusThirdEditorGroup"), chords({"cmd+3"}));
+    for (const KeyPlatform platform : platforms) {
+        const auto bindings = default_keybindings(platform);
+        EXPECT_TRUE(keys_of(bindings, "workbench.action.openNextRecentlyUsedEditor").empty());
+        EXPECT_TRUE(
+            keys_of(bindings, "workbench.action.openPreviousRecentlyUsedEditorInGroup").empty());
+    }
+}
+
 TEST(DefaultKeybindingsTest, WindowsHasItsOwnSecondaryKeys) {
     const auto windows = default_keybindings(KeyPlatform::windows);
     EXPECT_EQ(keys_of(windows, "workbench.action.closeActiveEditor"),

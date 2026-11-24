@@ -134,6 +134,46 @@ std::optional<std::size_t> index_of(const EditorGroup& group, const core::Uri& u
     return static_cast<std::size_t>(found - group.tabs.begin());
 }
 
+// The part of the editor area a group takes, as fractions of its width and height.
+struct Box {
+    double left = 0;
+    double top = 0;
+    double right = 1;
+    double bottom = 1;
+};
+
+void collect_boxes(const LayoutNode& node, const Box& box,
+                   std::vector<std::pair<GroupId, Box>>& out) {
+    if (node.group) {
+        out.push_back({*node.group, box});
+        return;
+    }
+    double offset = 0;
+    for (std::size_t i = 0; i < node.children.size(); ++i) {
+        Box child = box;
+        if (node.orientation == Orientation::horizontal) {
+            const double width = box.right - box.left;
+            child.left = box.left + offset * width;
+            child.right = box.left + (offset + node.ratios[i]) * width;
+        } else {
+            const double height = box.bottom - box.top;
+            child.top = box.top + offset * height;
+            child.bottom = box.top + (offset + node.ratios[i]) * height;
+        }
+        offset += node.ratios[i];
+        collect_boxes(node.children[i], child, out);
+    }
+}
+
+bool near(double a, double b) {
+    return std::abs(a - b) < ratio_tolerance;
+}
+
+// Whether the two ranges share more than a point.
+bool overlap(double first_begin, double first_end, double second_begin, double second_end) {
+    return std::min(first_end, second_end) - std::max(first_begin, second_begin) > ratio_tolerance;
+}
+
 } // namespace
 
 struct EditorLayout::Snapshot {
@@ -147,6 +187,7 @@ EditorLayout::EditorLayout(EditorLayoutOptions options) : options_(options) {
     root_ = group_node(first);
     groups_.push_back({.id = first, .tabs = {}, .active = std::nullopt, .recent = {}});
     focused_ = first;
+    recent_groups_ = {first};
 }
 
 void EditorLayout::add_observer(Observer* observer) {
@@ -187,7 +228,22 @@ EditorLayout::Snapshot EditorLayout::snapshot() const {
     return {root_, groups_, focused_};
 }
 
-void EditorLayout::notify(const Snapshot& before) const {
+void EditorLayout::notify(const Snapshot& before) {
+    if (before.focused != focused_) {
+        std::erase(recent_groups_, focused_);
+        recent_groups_.insert(recent_groups_.begin(), focused_);
+    }
+    std::erase_if(recent_groups_, [&](GroupId id) { return !group(id); });
+    // The history of use that the calls of navigate_recent keep ends when the tabs or the focus
+    // change by anything else.
+    if (before.groups != groups_ || before.focused != focused_) {
+        if (!navigating_all_) {
+            recent_all_.reset();
+        }
+        if (!navigating_in_group_) {
+            recent_in_group_.reset();
+        }
+    }
     if (observers_.empty()) {
         return;
     }
@@ -472,6 +528,166 @@ void EditorLayout::focus_previous() {
     focus(order[(position + order.size() - 1) % order.size()]);
 }
 
+bool EditorLayout::focus_at(std::size_t index) {
+    const std::vector<GroupId> order = group_ids();
+    return index < order.size() && focus(order[index]);
+}
+
+std::vector<GroupId> EditorLayout::groups_by_recency() const {
+    std::vector<GroupId> result;
+    for (const GroupId id : recent_groups_) {
+        if (group(id)) {
+            result.push_back(id);
+        }
+    }
+    for (const GroupId id : group_ids()) {
+        if (std::ranges::find(result, id) == result.end()) {
+            result.push_back(id);
+        }
+    }
+    return result;
+}
+
+std::optional<GroupId> EditorLayout::neighbor(GroupId id, Direction direction) const {
+    std::vector<std::pair<GroupId, Box>> boxes;
+    collect_boxes(root_, Box{}, boxes);
+    const auto own = std::ranges::find(boxes, id, &std::pair<GroupId, Box>::first);
+    if (own == boxes.end()) {
+        return std::nullopt;
+    }
+    const Box mine = own->second;
+
+    // The edge that the neighbors touch: the edge of this group, or the opposite edge of the area
+    // when this group is at the edge.
+    double edge = 0;
+    switch (direction) {
+    case Direction::right:
+        edge = near(mine.right, 1) ? 0 : mine.right;
+        break;
+    case Direction::left:
+        edge = near(mine.left, 0) ? 1 : mine.left;
+        break;
+    case Direction::down:
+        edge = near(mine.bottom, 1) ? 0 : mine.bottom;
+        break;
+    case Direction::up:
+        edge = near(mine.top, 0) ? 1 : mine.top;
+        break;
+    }
+    const std::vector<GroupId> recency = groups_by_recency();
+    std::optional<GroupId> best;
+    std::size_t best_rank = 0;
+    for (const auto& [candidate, box] : boxes) {
+        bool touches = false;
+        switch (direction) {
+        case Direction::right:
+            touches = near(box.left, edge) && overlap(mine.top, mine.bottom, box.top, box.bottom);
+            break;
+        case Direction::left:
+            touches = near(box.right, edge) && overlap(mine.top, mine.bottom, box.top, box.bottom);
+            break;
+        case Direction::down:
+            touches = near(box.top, edge) && overlap(mine.left, mine.right, box.left, box.right);
+            break;
+        case Direction::up:
+            touches = near(box.bottom, edge) && overlap(mine.left, mine.right, box.left, box.right);
+            break;
+        }
+        if (!touches) {
+            continue;
+        }
+        const auto rank =
+            static_cast<std::size_t>(std::ranges::find(recency, candidate) - recency.begin());
+        if (!best || rank < best_rank) {
+            best = candidate;
+            best_rank = rank;
+        }
+    }
+    return best;
+}
+
+bool EditorLayout::focus_neighbor(Direction direction) {
+    const std::optional<GroupId> next = neighbor(focused_, direction);
+    return next && *next != focused_ && focus(*next);
+}
+
+bool EditorLayout::next_editor(bool forward) {
+    const std::vector<GroupId> order = group_ids();
+    const EditorGroup& current = *group(focused_);
+    const std::size_t count = current.tabs.size();
+    std::optional<TabLocation> target;
+    if (forward && current.active && *current.active + 1 < count) {
+        target = TabLocation{focused_, *current.active + 1};
+    } else if (!forward && current.active && *current.active > 0) {
+        target = TabLocation{focused_, *current.active - 1};
+    } else {
+        // The next group that has tabs, going around the groups and ending at this one.
+        const auto position =
+            static_cast<std::size_t>(std::ranges::find(order, focused_) - order.begin());
+        for (std::size_t step = 1; step <= order.size() && !target; ++step) {
+            const std::size_t at =
+                forward ? (position + step) % order.size()
+                        : (position + order.size() - step % order.size()) % order.size();
+            const EditorGroup& candidate = *group(order[at]);
+            if (!candidate.tabs.empty()) {
+                target = TabLocation{order[at], forward ? 0 : candidate.tabs.size() - 1};
+            }
+        }
+    }
+    if (!target) {
+        return false;
+    }
+    const Snapshot before = snapshot();
+    activate_tab(*mutable_group(target->group), target->index);
+    focused_ = target->group;
+    notify(before);
+    return true;
+}
+
+bool EditorLayout::next_editor_in_group(bool forward) {
+    EditorGroup& current = *mutable_group(focused_);
+    if (current.tabs.empty()) {
+        return false;
+    }
+    const std::size_t count = current.tabs.size();
+    const std::size_t at = current.active.value_or(0);
+    const std::size_t target = forward ? (current.active ? (at + 1) % count : 0)
+                                       : (current.active ? (at + count - 1) % count : count - 1);
+    const Snapshot before = snapshot();
+    activate_tab(current, target);
+    notify(before);
+    return true;
+}
+
+bool EditorLayout::navigate_recent(bool older, bool in_group) {
+    std::optional<RecentStack>& stack = in_group ? recent_in_group_ : recent_all_;
+    if (!stack) {
+        RecentStack fresh;
+        for (const GroupId id : in_group ? std::vector<GroupId>{focused_} : groups_by_recency()) {
+            for (const core::Uri& uri : group(id)->recent) {
+                fresh.tabs.push_back({id, uri});
+            }
+        }
+        stack = std::move(fresh);
+    }
+    if (stack->tabs.empty()) {
+        return false;
+    }
+    const std::size_t last = stack->tabs.size() - 1;
+    stack->index =
+        older ? std::min(stack->index + 1, last) : (stack->index > 0 ? stack->index - 1 : 0);
+    const RecentTab target = stack->tabs[stack->index];
+
+    const Snapshot before = snapshot();
+    (in_group ? navigating_in_group_ : navigating_all_) = true;
+    EditorGroup& owner = *mutable_group(target.group);
+    activate_tab(owner, *index_of(owner, target.uri));
+    focused_ = target.group;
+    notify(before);
+    (in_group ? navigating_in_group_ : navigating_all_) = false;
+    return true;
+}
+
 bool EditorLayout::set_ratios(const std::vector<std::size_t>& path, std::vector<double> ratios) {
     LayoutNode* node = node_at(root_, path);
     if (!node || node->group || ratios.size() != node->children.size()) {
@@ -673,6 +889,7 @@ std::expected<EditorLayout, Error> EditorLayout::from_json(const nlohmann::json&
         layout.groups_.clear();
         layout.next_id_ = id_field(json, "next_group_id");
         layout.focused_ = GroupId{id_field(json, "focused")};
+        layout.recent_groups_ = {layout.focused_};
 
         const auto read_node = [&](const auto& self, const nlohmann::json& node) -> LayoutNode {
             if (!node.is_object()) {
