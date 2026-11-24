@@ -2,6 +2,7 @@
 
 #include "anvil/core/key_chord.hpp"
 #include "anvil/core/keybindings.hpp"
+#include "anvil/core/language_registry.hpp"
 #include "anvil/core/log.hpp"
 
 #include <filesystem>
@@ -61,15 +62,23 @@ struct ContributedTheme {
     std::filesystem::path path;
 };
 
+// A language from `contributes.languages`. The `configuration` file is not read.
+struct ContributedLanguage {
+    std::string extension;
+    core::LanguageContribution language;
+};
+
 struct Contributions {
     std::vector<ContributedCommand> commands;
     std::vector<ContributedTheme> themes;
+    // In the order of the extensions and of their manifests, which is the order of registration.
+    std::vector<ContributedLanguage> languages;
     std::vector<ContributedKeybinding> keybindings;
     std::vector<PaletteRule> palette_rules;
 };
 
-// Reads the `contributes` sections (commands, key bindings, palette rules and themes) of the
-// manifests of the extensions in `directories`. A manifest that cannot be read is left to
+// Reads the `contributes` sections (commands, key bindings, palette rules, themes and languages) of
+// the manifests of the extensions in `directories`. A manifest that cannot be read is left to
 // `build_init_data` to report. A section that is not what VS Code documents, and an entry of a
 // section that cannot be used, is logged once, with the extension that declares it, and skipped;
 // the other sections and extensions are read as usual.

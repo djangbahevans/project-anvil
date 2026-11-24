@@ -191,8 +191,9 @@ std::string DocumentsService::initial_delta_args() {
 std::expected<void, Error>
 DocumentsService::add_document(core::Uri uri, std::shared_ptr<core::Document> document,
                                std::optional<std::string> requested_language) {
-    std::string language = requested_language   ? std::move(*requested_language)
-                           : language_resolver_ ? language_resolver_(uri)
+    const bool fixed = requested_language.has_value();
+    std::string language = fixed                ? std::move(*requested_language)
+                           : language_resolver_ ? language_resolver_(uri, document->text().line(0))
                                                 : default_language;
     const std::string key = uri.to_string();
     if (entries_.contains(key)) {
@@ -202,10 +203,32 @@ DocumentsService::add_document(core::Uri uri, std::shared_ptr<core::Document> do
         return std::unexpected(
             failure("the document is too large to share with extensions: " + key));
     }
-    const auto inserted =
-        entries_.emplace(key, Entry{std::move(uri), std::move(document), std::move(language)});
+    const auto inserted = entries_.emplace(
+        key, Entry{std::move(uri), std::move(document), std::move(language), fixed});
     send_delta({{"addedDocuments", json::array({model_added_data(inserted.first->second)})}});
     return {};
+}
+
+std::optional<std::string> DocumentsService::language_of(const core::Uri& uri) const {
+    const auto found = entries_.find(uri.to_string());
+    return found == entries_.end() ? std::nullopt : std::optional(found->second.language_id);
+}
+
+bool DocumentsService::language_is_fixed(const core::Uri& uri) const {
+    const auto found = entries_.find(uri.to_string());
+    return found != entries_.end() && found->second.language_fixed;
+}
+
+void DocumentsService::language_changed(const core::Uri& uri, std::string language_id) {
+    const auto found = entries_.find(uri.to_string());
+    if (found == entries_.end() || found->second.language_id == language_id) {
+        return;
+    }
+    found->second.language_id = std::move(language_id);
+    if (synchronized_) {
+        send(ProxyId::ExtHostDocuments, "$acceptModelLanguageChanged",
+             json::array({uri_to_json(uri), found->second.language_id}));
+    }
 }
 
 void DocumentsService::remove_document(const core::Uri& uri) {

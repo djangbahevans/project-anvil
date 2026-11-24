@@ -169,11 +169,65 @@ TEST_F(DocumentsServiceTest, DocumentsAddedLaterAreSentAsTheyHappen) {
     EXPECT_EQ(calls[0].second[0]["addedDocuments"][0]["uri"]["path"], uri.path);
 }
 
-TEST_F(DocumentsServiceTest, ALanguageResolverChoosesTheLanguageId) {
-    service_.set_language_resolver(
-        [](const core::Uri& uri) { return uri.path.ends_with(".md") ? "markdown" : "plaintext"; });
-    open("readme.md", "# hi");
-    EXPECT_EQ(synchronize()["addedDocuments"][0]["languageId"], "markdown");
+TEST_F(DocumentsServiceTest, ALanguageResolverChoosesTheLanguageIdFromTheResourceAndTheFirstLine) {
+    std::vector<std::string> first_lines;
+    service_.set_language_resolver([&](const core::Uri& uri, std::string_view first_line) {
+        first_lines.emplace_back(first_line);
+        return uri.path.ends_with(".md") ? "markdown" : "plaintext";
+    });
+    open("readme.md", "# hi\nsecond");
+    open("empty.txt", "");
+    open("crlf.txt", "first\r\nsecond");
+    EXPECT_EQ(first_lines, (std::vector<std::string>{"# hi", "", "first"}));
+    std::map<std::string, std::string> languages;
+    const json delta = synchronize();
+    for (const json& document : delta["addedDocuments"]) {
+        languages[document["uri"]["path"].get<std::string>()] = document["languageId"];
+    }
+    EXPECT_EQ(languages[core::Uri::file(scratch_ / "readme.md").path], "markdown");
+    EXPECT_EQ(languages[core::Uri::file(scratch_ / "empty.txt").path], "plaintext");
+}
+
+TEST_F(DocumentsServiceTest, ALanguageGivenAtRegistrationIsKeptAndNotAskedOfTheResolver) {
+    bool asked = false;
+    service_.set_language_resolver([&](const core::Uri&, std::string_view) {
+        asked = true;
+        return "markdown";
+    });
+    const core::Uri given = core::Uri::file(scratch_ / "given.txt");
+    ASSERT_TRUE(service_.add_document(given, make_document("x"), "python").has_value());
+    EXPECT_FALSE(asked);
+    EXPECT_EQ(service_.language_of(given), "python");
+    EXPECT_TRUE(service_.language_is_fixed(given));
+
+    const core::Uri resolved = open("resolved.txt", "x");
+    EXPECT_EQ(service_.language_of(resolved), "markdown");
+    EXPECT_FALSE(service_.language_is_fixed(resolved));
+    EXPECT_EQ(service_.language_of(core::Uri::file(scratch_ / "unknown.txt")), std::nullopt);
+    EXPECT_FALSE(service_.language_is_fixed(core::Uri::file(scratch_ / "unknown.txt")));
+}
+
+TEST_F(DocumentsServiceTest, ALanguageChangeIsReportedToTheExtensionHostOnce) {
+    const core::Uri uri = open("a.txt", "x");
+    synchronize();
+    service_.language_changed(uri, "python");
+    const auto calls = sent().calls();
+    ASSERT_EQ(calls.size(), 1u);
+    EXPECT_EQ(calls[0].first, "ExtHostDocuments.$acceptModelLanguageChanged");
+    EXPECT_EQ(calls[0].second[0]["path"], uri.path);
+    EXPECT_EQ(calls[0].second[1], "python");
+    EXPECT_EQ(service_.language_of(uri), "python");
+
+    service_.language_changed(uri, "python");
+    service_.language_changed(core::Uri::file(scratch_ / "unknown.txt"), "python");
+    EXPECT_TRUE(sent().calls().empty());
+}
+
+TEST_F(DocumentsServiceTest, ALanguageChangeBeforeTheInitialDeltaIsInTheDelta) {
+    const core::Uri uri = open("a.txt", "x");
+    service_.language_changed(uri, "python");
+    EXPECT_TRUE(sent().calls().empty());
+    EXPECT_EQ(synchronize()["addedDocuments"][0]["languageId"], "python");
 }
 
 TEST_F(DocumentsServiceTest, RejectsDuplicateAndOversizedDocuments) {

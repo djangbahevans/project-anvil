@@ -321,3 +321,87 @@ TEST_F(ContributionsTest, ThemesThatCannotBeUsedAreSkippedAndLogged) {
     EXPECT_TRUE(logger_->contains(LogLevel::warning, "contributes.themes[4].path is outside",
                                   "extensions"));
 }
+
+TEST_F(ContributionsTest, LanguagesCarryEveryRuleOfTheirEntry) {
+    const auto dir = extension("a", "one",
+                               {{"languages",
+                                 {{{"id", "alpha"},
+                                   {"aliases", {"Alpha", "a"}},
+                                   {"extensions", {".al", ".alp"}},
+                                   {"filenames", {"Alphafile"}},
+                                   {"filenamePatterns", {"alpha-*.cfg"}},
+                                   {"firstLine", "^#!alpha"},
+                                   {"mimetypes", {"text/x-alpha"}},
+                                   {"configuration", "./language-configuration.json"}},
+                                  {{"id", "beta"}}}}});
+    const Contributions contributions = read({dir});
+    ASSERT_EQ(contributions.languages.size(), 2U);
+    const auto& alpha = contributions.languages[0];
+    EXPECT_EQ(alpha.extension, "acme.one");
+    EXPECT_EQ(alpha.language.id, "alpha");
+    EXPECT_EQ(alpha.language.aliases, (std::vector<std::string>{"Alpha", "a"}));
+    EXPECT_EQ(alpha.language.extensions, (std::vector<std::string>{".al", ".alp"}));
+    EXPECT_EQ(alpha.language.filenames, (std::vector<std::string>{"Alphafile"}));
+    EXPECT_EQ(alpha.language.filename_patterns, (std::vector<std::string>{"alpha-*.cfg"}));
+    EXPECT_EQ(alpha.language.first_line, "^#!alpha");
+    EXPECT_EQ(alpha.language.mime_types, (std::vector<std::string>{"text/x-alpha"}));
+    const auto& beta = contributions.languages[1];
+    EXPECT_EQ(beta.language.id, "beta");
+    EXPECT_FALSE(beta.language.aliases.has_value());
+    EXPECT_TRUE(beta.language.extensions.empty());
+    EXPECT_TRUE(logger_->entries().empty());
+}
+
+TEST_F(ContributionsTest, AnEmptyListOfAliasesIsKeptApartFromNoAliases) {
+    const auto dir =
+        extension("a", "one", {{"languages", {{{"id", "quiet"}, {"aliases", json::array()}}}}});
+    const Contributions contributions = read({dir});
+    ASSERT_EQ(contributions.languages.size(), 1U);
+    ASSERT_TRUE(contributions.languages[0].language.aliases.has_value());
+    EXPECT_TRUE(contributions.languages[0].language.aliases->empty());
+}
+
+TEST_F(ContributionsTest, LanguagesAreInTheOrderOfTheExtensionsAndOfTheirManifests) {
+    const auto first = extension("a", "one", {{"languages", {{{"id", "a1"}}, {{"id", "a2"}}}}});
+    const auto second = extension("b", "two", {{"languages", {{{"id", "b1"}}}}});
+    const Contributions contributions = read({first, second});
+    std::vector<std::string> ids;
+    for (const auto& language : contributions.languages) {
+        ids.push_back(language.language.id);
+    }
+    EXPECT_EQ(ids, (std::vector<std::string>{"a1", "a2", "b1"}));
+    const Contributions reversed = read({second, first});
+    EXPECT_EQ(reversed.languages.front().language.id, "b1");
+}
+
+TEST_F(ContributionsTest, ALanguageEntryThatCannotBeUsedIsSkippedAndLogged) {
+    const auto dir = extension("a", "one",
+                               {{"languages",
+                                 {{{"extensions", {".x"}}},
+                                  {{"id", ""}},
+                                  {{"id", 3}},
+                                  {{"id", "bad1"}, {"extensions", ".x"}},
+                                  {{"id", "bad2"}, {"filenames", {1}}},
+                                  {{"id", "bad3"}, {"firstLine", 4}},
+                                  {{"id", "bad4"}, {"aliases", {{"a"}}}},
+                                  "text",
+                                  {{"id", "good"}, {"extensions", {".ok"}}}}}});
+    const Contributions contributions = read({dir});
+    ASSERT_EQ(contributions.languages.size(), 1U);
+    EXPECT_EQ(contributions.languages[0].language.id, "good");
+    for (const char* fragment :
+         {"languages[0] has no id", "languages[1] has no id", "languages[2].id is not a string",
+          "languages[3].extensions is not an array of strings",
+          "languages[4].filenames is not an array of strings",
+          "languages[5].firstLine is not a string",
+          "languages[6].aliases is not an array of strings", "languages[7] is not an object"}) {
+        EXPECT_TRUE(logger_->contains(LogLevel::warning, fragment, "extensions")) << fragment;
+    }
+}
+
+TEST_F(ContributionsTest, ALanguagesSectionThatIsNotAnArrayIsLogged) {
+    const auto dir = extension("a", "one", {{"languages", {{"id", "x"}}}});
+    EXPECT_TRUE(read({dir}).languages.empty());
+    EXPECT_TRUE(logger_->contains(LogLevel::warning, "contributes.languages is not an array",
+                                  "extensions"));
+}

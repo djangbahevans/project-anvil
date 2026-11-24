@@ -270,6 +270,74 @@ void read_themes(const json& contributes, const SectionReader& reader,
     }
 }
 
+// The strings of an array at `key` of an entry: empty when it is absent; nullopt, with a problem
+// logged, when it is there and not an array of strings.
+std::optional<std::vector<std::string>> text_list(const json& entry, const std::string& key,
+                                                  const SectionReader& reader, std::size_t index) {
+    const auto found = entry.find(key);
+    if (found == entry.end() || found->is_null()) {
+        return std::vector<std::string>();
+    }
+    std::vector<std::string> values;
+    if (found->is_array()) {
+        for (const json& item : *found) {
+            if (!item.is_string()) {
+                values.clear();
+                break;
+            }
+            values.push_back(item.get<std::string>());
+        }
+        if (values.size() == found->size()) {
+            return values;
+        }
+    }
+    reader.problem("contributes.languages[" + std::to_string(index) + "]." + key +
+                   " is not an array of strings");
+    return std::nullopt;
+}
+
+void read_languages(const json& contributes, const SectionReader& reader,
+                    const std::string& extension, Contributions& out) {
+    const json* section = reader.array(contributes, "languages");
+    if (!section) {
+        return;
+    }
+    std::size_t index = 0;
+    for (const json& entry : *section) {
+        const std::size_t at = index++;
+        if (!reader.object(entry, "languages", at)) {
+            continue;
+        }
+        const auto id = reader.text(entry, "id", "languages", at);
+        const auto first_line = reader.text(entry, "firstLine", "languages", at);
+        const auto aliases = text_list(entry, "aliases", reader, at);
+        const auto extensions = text_list(entry, "extensions", reader, at);
+        const auto filenames = text_list(entry, "filenames", reader, at);
+        const auto patterns = text_list(entry, "filenamePatterns", reader, at);
+        const auto mime_types = text_list(entry, "mimetypes", reader, at);
+        if (!id || !first_line || !aliases || !extensions || !filenames || !patterns ||
+            !mime_types) {
+            continue;
+        }
+        if (id->empty()) {
+            reader.problem("contributes.languages[" + std::to_string(at) + "] has no id");
+            continue;
+        }
+        core::LanguageContribution language{.id = *id,
+                                            .aliases = std::nullopt,
+                                            .extensions = *extensions,
+                                            .filenames = *filenames,
+                                            .filename_patterns = *patterns,
+                                            .first_line = *first_line,
+                                            .mime_types = *mime_types};
+        // An absent list and an empty one differ: the first names the language by its id.
+        if (entry.contains("aliases") && !entry["aliases"].is_null()) {
+            language.aliases = *aliases;
+        }
+        out.languages.push_back({extension, std::move(language)});
+    }
+}
+
 } // namespace
 
 std::string ContributedCommand::label() const {
@@ -302,6 +370,7 @@ Contributions read_contributions(std::span<const std::filesystem::path> director
         read_keybindings(*found, reader, extension, contributions);
         read_palette_rules(*found, reader, extension, contributions);
         read_themes(*found, reader, translations, directory, extension, contributions);
+        read_languages(*found, reader, extension, contributions);
     }
     return contributions;
 }

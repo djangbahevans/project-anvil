@@ -26,7 +26,8 @@ namespace anvil::exthost {
 // The session and router must outlive the service.
 class DocumentsService {
 public:
-    using LanguageResolver = std::function<std::string(const core::Uri&)>;
+    // The language id of a document from its resource and the first line of its text.
+    using LanguageResolver = std::function<std::string(const core::Uri&, std::string_view)>;
 
     // Documents above this size are not shared with extensions.
     static constexpr std::size_t max_shared_bytes = std::size_t{50} * 1024 * 1024;
@@ -63,7 +64,8 @@ public:
         return editor_options_;
     }
 
-    // Picks a language id for a resource; "plaintext" without a resolver.
+    // Picks the language id of a document that is registered without one; "plaintext" without a
+    // resolver.
     void set_language_resolver(LanguageResolver resolver) {
         language_resolver_ = std::move(resolver);
     }
@@ -76,6 +78,15 @@ public:
     std::expected<void, Error> add_document(core::Uri uri, std::shared_ptr<core::Document> document,
                                             std::optional<std::string> language = std::nullopt);
     void remove_document(const core::Uri& uri);
+
+    // The language id extensions see for the document, if it is registered.
+    std::optional<std::string> language_of(const core::Uri& uri) const;
+    // Whether the language was given when the document was registered, which is how an extension
+    // that creates a document with a language asks for it; the resolver does not choose it again.
+    bool language_is_fixed(const core::Uri& uri) const;
+    // Gives the document another language id and tells the extension host. Nothing happens when the
+    // document is not registered or already has the id.
+    void language_changed(const core::Uri& uri, std::string language_id);
     std::shared_ptr<core::Document> find(const core::Uri& uri) const;
 
     // Shows a registered document in an editor, whose selections are the document's selections.
@@ -105,6 +116,7 @@ private:
         core::Uri uri;
         std::shared_ptr<core::Document> document;
         std::string language_id;
+        bool language_fixed = false;
     };
     struct Editor {
         std::string id;
