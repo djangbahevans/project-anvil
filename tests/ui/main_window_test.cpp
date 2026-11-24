@@ -2211,6 +2211,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.focusPreviousGroup",
                                           "workbench.action.closeGroup",
                                           "workbench.action.files.newUntitledFile",
+                                          "workbench.action.files.openFolder",
+                                          "workbench.action.closeFolder",
                                           "workbench.action.quit",
                                           "workbench.action.closeWindow",
                                           "workbench.action.toggleFullScreen",
@@ -2874,9 +2876,9 @@ TEST_F(MainWindowMenuBarTest, ADisabledItemIsDimmerThanAnEnabledOne) {
         }
         return best;
     };
-    // Open File exists and Open Folder does not.
+    // Open File exists and Open Workspace from File does not.
     const int enabled = brightest("workbench.action.files.openFile");
-    const int disabled = brightest("workbench.action.files.openFolder");
+    const int disabled = brightest("workbench.action.openWorkspace");
     EXPECT_GT(enabled, 180);
     EXPECT_LT(disabled, enabled - 60);
     QTest::keyClick(popup(), Qt::Key_Escape);
