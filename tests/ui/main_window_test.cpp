@@ -2691,6 +2691,11 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.quit",
                                           "workbench.action.closeWindow",
                                           "workbench.action.toggleFullScreen",
+                                          "workbench.action.toggleZenMode",
+                                          "workbench.action.exitZenMode",
+                                          "workbench.action.toggleCenteredLayout",
+                                          "workbench.action.toggleZenMode",
+                                          "workbench.action.toggleCenteredLayout",
                                           "editor.action.addSelectionToNextFindMatch",
                                           "editor.action.selectHighlights",
                                           "editor.action.selectAllMatches",
@@ -7691,4 +7696,324 @@ TEST_F(SmartSelectTest, ExpandingKeepsTheSelectionInView) {
     EXPECT_EQ(window_->current_document()->selections().primary(),
               (core::Selection{0, text.size()}));
     EXPECT_GT(window_->view()->verticalScrollBar()->value(), 0);
+}
+
+class ZenModeTest : public PartPositionsTest {
+protected:
+    bool visible(ui::Part part) const {
+        return window_->workbench()->is_visible(part);
+    }
+    void run(const char* id) {
+        window_->commands().execute(id);
+        QApplication::processEvents();
+    }
+    // The sidebar, the panel and the activity bar are shown, with a file open.
+    void start_with_everything_shown(const std::string& settings = "{}") {
+        start_with(settings);
+        add_container();
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc\n").string())));
+        window_->workbench()->set_visible(ui::Part::sidebar, true);
+        window_->workbench()->set_visible(ui::Part::panel, true);
+        QApplication::processEvents();
+    }
+    void focus_the_editor() {
+        window_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+        window_->view()->setFocus();
+        ASSERT_TRUE(window_->view()->hasFocus());
+    }
+};
+
+TEST_F(ZenModeTest, TheViewMenuItemsAreEnabledAndZenModeShowsItsKey) {
+    start_with("{}");
+    QAction* zen = menu_action("workbench.action.toggleZenMode");
+    ASSERT_NE(zen, nullptr);
+    EXPECT_TRUE(zen->isEnabled());
+    EXPECT_TRUE(zen->text().endsWith("\tCtrl+K Z")) << zen->text().toStdString();
+    EXPECT_FALSE(zen->isChecked());
+    QAction* centered = menu_action("workbench.action.toggleCenteredLayout");
+    ASSERT_NE(centered, nullptr);
+    EXPECT_TRUE(centered->isEnabled());
+    EXPECT_FALSE(centered->isChecked());
+}
+
+TEST_F(ZenModeTest, EnteringHidesThePartsCentersAndEntersFullScreenAndLeavingBringsThemBack) {
+    start_with_everything_shown();
+    ASSERT_TRUE(visible(ui::Part::activity_bar));
+    ASSERT_TRUE(visible(ui::Part::status_bar));
+    const bool tabs_were_shown = window_->editor_area()->focused_group()->tabs()->isVisible();
+    ASSERT_FALSE(window_->isFullScreen());
+
+    menu_action("workbench.action.toggleZenMode")->trigger();
+    EXPECT_TRUE(window_->zen_mode_active());
+    EXPECT_FALSE(visible(ui::Part::sidebar));
+    EXPECT_FALSE(visible(ui::Part::panel));
+    EXPECT_FALSE(visible(ui::Part::activity_bar));
+    EXPECT_FALSE(visible(ui::Part::status_bar));
+    EXPECT_TRUE(visible(ui::Part::editor));
+    EXPECT_TRUE(window_->isFullScreen());
+    EXPECT_TRUE(window_->editor_area()->centered());
+    EXPECT_GT(window_->editor_area()->margin(), 0);
+    EXPECT_TRUE(menu_action("workbench.action.toggleZenMode")->isChecked());
+    EXPECT_TRUE(menu_action("workbench.action.toggleCenteredLayout")->isChecked());
+    EXPECT_EQ(window_->editor_area()->focused_group()->tabs()->isVisible(), tabs_were_shown);
+
+    menu_action("workbench.action.toggleZenMode")->trigger();
+    EXPECT_FALSE(window_->zen_mode_active());
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+    EXPECT_TRUE(visible(ui::Part::panel));
+    EXPECT_TRUE(visible(ui::Part::activity_bar));
+    EXPECT_TRUE(visible(ui::Part::status_bar));
+    EXPECT_FALSE(window_->isFullScreen());
+    EXPECT_FALSE(window_->editor_area()->centered());
+    EXPECT_EQ(window_->editor_area()->margin(), 0);
+    EXPECT_FALSE(menu_action("workbench.action.toggleZenMode")->isChecked());
+}
+
+TEST_F(ZenModeTest, APartThatWasHiddenBeforeStaysHiddenAfter) {
+    start_with_everything_shown(R"j({"workbench.statusBar.visible": false})j");
+    window_->workbench()->set_visible(ui::Part::sidebar, false);
+    ASSERT_TRUE(visible(ui::Part::activity_bar));
+    ASSERT_FALSE(visible(ui::Part::status_bar));
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(visible(ui::Part::sidebar));
+    EXPECT_FALSE(visible(ui::Part::status_bar));
+    EXPECT_TRUE(visible(ui::Part::panel));
+    EXPECT_TRUE(visible(ui::Part::activity_bar));
+}
+
+TEST_F(ZenModeTest, AnActivityBarThatTheSettingHidesStaysHidden) {
+    start_with_everything_shown(R"j({"workbench.activityBar.location": "hidden"})j");
+    ASSERT_FALSE(visible(ui::Part::activity_bar));
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(visible(ui::Part::activity_bar));
+}
+
+TEST_F(ZenModeTest, ThePanelAloneStaysHiddenWhenOnlyTheSidebarWasShown) {
+    start_with_everything_shown();
+    window_->workbench()->set_visible(ui::Part::panel, false);
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+    EXPECT_FALSE(visible(ui::Part::panel));
+}
+
+TEST_F(ZenModeTest, TheZenModeSettingsKeepWhatTheyAreTurnedOffFor) {
+    start_with_everything_shown(R"j({"zenMode.fullScreen": false, "zenMode.centerLayout": false,
+                                     "zenMode.hideStatusBar": false,
+                                     "zenMode.hideActivityBar": false})j");
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(window_->zen_mode_active());
+    EXPECT_FALSE(window_->isFullScreen());
+    EXPECT_FALSE(window_->editor_area()->centered());
+    EXPECT_TRUE(visible(ui::Part::status_bar));
+    EXPECT_TRUE(visible(ui::Part::activity_bar));
+    EXPECT_FALSE(visible(ui::Part::sidebar));
+    EXPECT_FALSE(visible(ui::Part::panel));
+}
+
+TEST_F(ZenModeTest, ACenteredLayoutAndFullScreenThatWereOnBeforeStayOnAfter) {
+    start_with_everything_shown();
+    run("workbench.action.toggleCenteredLayout");
+    run("workbench.action.toggleFullScreen");
+    ASSERT_TRUE(window_->isFullScreen());
+    ASSERT_TRUE(window_->editor_area()->centered());
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(window_->isFullScreen());
+    EXPECT_TRUE(window_->editor_area()->centered());
+}
+
+TEST_F(ZenModeTest, LeavingFullScreenByHandLeavesZenModeWhenZenModeEnteredIt) {
+    start_with_everything_shown();
+    run("workbench.action.toggleZenMode");
+    ASSERT_TRUE(window_->isFullScreen());
+    run("workbench.action.toggleFullScreen");
+    EXPECT_FALSE(window_->zen_mode_active());
+    EXPECT_FALSE(window_->isFullScreen());
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+    EXPECT_TRUE(visible(ui::Part::status_bar));
+    EXPECT_FALSE(window_->editor_area()->centered());
+}
+
+TEST_F(ZenModeTest, LeavingFullScreenDoesNotLeaveZenModeWhenTheWindowWasFullScreenBefore) {
+    start_with_everything_shown();
+    run("workbench.action.toggleFullScreen");
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.toggleFullScreen");
+    EXPECT_TRUE(window_->zen_mode_active());
+    EXPECT_FALSE(visible(ui::Part::sidebar));
+}
+
+TEST_F(ZenModeTest, ASettingChangedInZenModeDoesNotShowWhatZenModeHides) {
+    start_with_everything_shown();
+    run("workbench.action.toggleZenMode");
+    window_->change_setting("workbench.statusBar.visible", true);
+    window_->change_setting("workbench.activityBar.location", "default");
+    EXPECT_FALSE(visible(ui::Part::status_bar));
+    EXPECT_FALSE(visible(ui::Part::activity_bar));
+    window_->change_setting("workbench.statusBar.visible", false);
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(visible(ui::Part::status_bar));
+    EXPECT_TRUE(visible(ui::Part::activity_bar));
+}
+
+TEST_F(ZenModeTest, AToggleOfTheSidebarInZenModeStillWorks) {
+    start_with_everything_shown();
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.toggleSidebarVisibility");
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+}
+
+TEST_F(ZenModeTest, ExitZenModeDoesNothingOutsideZenMode) {
+    start_with_everything_shown();
+    run("workbench.action.exitZenMode");
+    EXPECT_FALSE(window_->zen_mode_active());
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.exitZenMode");
+    EXPECT_FALSE(window_->zen_mode_active());
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+}
+
+TEST_F(ZenModeTest, TheKeysToggleZenModeAndEscapeTwiceLeavesIt) {
+    start_with_everything_shown();
+    focus_the_editor();
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_Z);
+    EXPECT_TRUE(window_->zen_mode_active());
+    ASSERT_TRUE(window_->view()->hasFocus());
+
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->zen_mode_active());
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_FALSE(window_->zen_mode_active());
+    EXPECT_TRUE(visible(ui::Part::sidebar));
+
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_FALSE(window_->zen_mode_active());
+}
+
+TEST_F(ZenModeTest, AnEscapeThatDropsCursorsDoesNotCountTowardsLeaving) {
+    start_with_everything_shown();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "abc def\n").string())));
+    focus_the_editor();
+    run("workbench.action.toggleZenMode");
+    window_->view()->setFocus();
+    window_->view()->select_ranges({core::Selection::caret(1), core::Selection::caret(5)}, 0);
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->zen_mode_active());
+    EXPECT_EQ(window_->current_document()->selections().all().size(), 1U);
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_TRUE(window_->zen_mode_active());
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_FALSE(window_->zen_mode_active());
+}
+
+TEST_F(ZenModeTest, TheEditorKeepsTheKeyboardFocusWhenTheSidebarThatHadItIsHidden) {
+    start_with("{}");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc\n").string())));
+    QLineEdit* field = nullptr;
+    ui::ViewContainer container;
+    container.id = "workbench.view.explorer";
+    container.title = "Explorer";
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::black);
+    container.icon = QIcon(pixmap);
+    container.create = [&field] {
+        field = new QLineEdit;
+        return field;
+    };
+    window_->view_containers().add(std::move(container));
+    window_->sidebar()->activate("workbench.view.explorer");
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    ASSERT_NE(field, nullptr);
+    field->setFocus();
+    ASSERT_TRUE(field->hasFocus());
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(window_->view()->hasFocus());
+}
+
+class CenteredLayoutTest : public MainWindowTest {
+protected:
+    void start() {
+        create_window();
+        window_->resize(1000, 700);
+        window_->show();
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "abc\n").string())));
+        QApplication::processEvents();
+    }
+    void run(const char* id) {
+        window_->commands().execute(id);
+        QApplication::processEvents();
+    }
+    QRect group_rect() {
+        QWidget* widget = window_->editor_area()->focused_group();
+        return QRect(widget->mapTo(window_->editor_area(), QPoint(0, 0)), widget->size());
+    }
+};
+
+TEST_F(CenteredLayoutTest, ASingleGroupHasEqualMarginsAtBothSides) {
+    start();
+    const int width = window_->editor_area()->width();
+    ASSERT_EQ(group_rect().left(), 0);
+    ASSERT_EQ(group_rect().width(), width);
+
+    menu_action("workbench.action.toggleCenteredLayout")->trigger();
+    EXPECT_TRUE(window_->editor_area()->centered());
+    const int margin = window_->editor_area()->margin();
+    EXPECT_EQ(margin, static_cast<int>(width * ui::EditorArea::centered_margin_ratio));
+    EXPECT_GT(margin, 100);
+    EXPECT_EQ(group_rect().left(), margin);
+    EXPECT_EQ(width - group_rect().right() - 1, margin);
+    EXPECT_TRUE(menu_action("workbench.action.toggleCenteredLayout")->isChecked());
+
+    menu_action("workbench.action.toggleCenteredLayout")->trigger();
+    EXPECT_EQ(group_rect().left(), 0);
+    EXPECT_EQ(group_rect().width(), width);
+    EXPECT_FALSE(menu_action("workbench.action.toggleCenteredLayout")->isChecked());
+}
+
+TEST_F(CenteredLayoutTest, TheMarginsFollowTheWidthOfTheArea) {
+    start();
+    run("workbench.action.toggleCenteredLayout");
+    window_->resize(1400, 700);
+    QApplication::processEvents();
+    const int width = window_->editor_area()->width();
+    EXPECT_EQ(window_->editor_area()->margin(),
+              static_cast<int>(width * ui::EditorArea::centered_margin_ratio));
+    EXPECT_EQ(group_rect().left(), window_->editor_area()->margin());
+}
+
+TEST_F(CenteredLayoutTest, SeveralGroupsHaveNoMarginsAndTheyComeBackWithOneGroup) {
+    start();
+    run("workbench.action.toggleCenteredLayout");
+    ASSERT_GT(window_->editor_area()->margin(), 0);
+
+    run("workbench.action.splitEditor");
+    ASSERT_EQ(window_->editor_layout().group_ids().size(), 2U);
+    EXPECT_EQ(window_->editor_area()->margin(), 0);
+    EXPECT_TRUE(window_->editor_area()->centered());
+    EXPECT_TRUE(menu_action("workbench.action.toggleCenteredLayout")->isChecked());
+    EXPECT_EQ(window_->editor_area()->root_splitter()->width(), window_->editor_area()->width());
+
+    run("workbench.action.closeGroup");
+    ASSERT_EQ(window_->editor_layout().group_ids().size(), 1U);
+    EXPECT_GT(window_->editor_area()->margin(), 0);
+}
+
+TEST_F(CenteredLayoutTest, TheMarginsHaveTheBackgroundOfTheEditor) {
+    start();
+    window_->colors().set_colors({{"editor.background", QColor("#336699")}});
+    run("workbench.action.toggleCenteredLayout");
+    const QImage image = window_->editor_area()->grab().toImage();
+    ASSERT_GT(window_->editor_area()->margin(), 10);
+    EXPECT_EQ(image.pixelColor(5, image.height() / 2), QColor("#336699"));
+    EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() / 2), QColor("#336699"));
 }
