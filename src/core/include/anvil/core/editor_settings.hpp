@@ -1,11 +1,13 @@
 #pragma once
 
 #include "anvil/core/error.hpp"
+#include "anvil/core/language_registry.hpp"
 #include "anvil/core/settings.hpp"
 #include "anvil/core/text_file.hpp"
 
 #include <expected>
 #include <string>
+#include <vector>
 
 namespace anvil::core {
 
@@ -112,5 +114,15 @@ struct EditorSettings {
     static std::expected<EditorSettings, Error> from_settings(const Settings& settings,
                                                               const EditorDefaults& defaults);
 };
+
+// The user's `files.associations`: an object from a glob to a language id. An entry whose value is
+// not a non-empty string, and a setting that is not an object, is skipped with a problem that
+// names it, so that one mistake does not take the other associations away. The entries are in the
+// order of the keys of the parsed object, which is alphabetical.
+struct FileAssociations {
+    std::vector<FileAssociation> associations;
+    std::vector<std::string> problems;
+};
+FileAssociations read_file_associations(const Settings& settings);
 
 } // namespace anvil::core

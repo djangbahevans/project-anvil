@@ -43,6 +43,8 @@ struct Language {
 struct FileAssociation {
     std::string pattern;
     std::string language_id;
+
+    friend bool operator==(const FileAssociation&, const FileAssociation&) = default;
 };
 
 namespace detail {
