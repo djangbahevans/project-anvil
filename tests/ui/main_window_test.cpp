@@ -2637,6 +2637,14 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.toggleSidebarVisibility",
                                           "workbench.action.togglePanel",
                                           "workbench.action.toggleActivityBarVisibility",
+                                          "workbench.action.activityBarLocation.default",
+                                          "workbench.action.activityBarLocation.hide",
+                                          "workbench.action.toggleStatusbarVisibility",
+                                          "workbench.action.toggleSidebarPosition",
+                                          "workbench.action.positionPanelTop",
+                                          "workbench.action.positionPanelLeft",
+                                          "workbench.action.positionPanelRight",
+                                          "workbench.action.positionPanelBottom",
                                           "workbench.action.toggleMaximizedPanel",
                                           "workbench.action.splitEditor",
                                           "workbench.action.splitEditorRight",
@@ -2824,6 +2832,14 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "editor.action.startFindReplaceAction",
         "workbench.action.togglePanel",
         "workbench.action.toggleSidebarVisibility",
+        "workbench.action.toggleStatusbarVisibility",
+        "workbench.action.toggleSidebarPosition",
+        "workbench.action.activityBarLocation.default",
+        "workbench.action.activityBarLocation.hide",
+        "workbench.action.positionPanelTop",
+        "workbench.action.positionPanelLeft",
+        "workbench.action.positionPanelRight",
+        "workbench.action.positionPanelBottom",
         "workbench.action.splitEditorRight",
         "workbench.action.splitEditorDown",
         "workbench.action.splitEditorLeft",
@@ -4133,7 +4149,11 @@ TEST_F(MainWindowTest, TheShortcutsAndTheCommandsToggleTheParts) {
     EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
 
     window_->commands().execute("workbench.action.toggleActivityBarVisibility");
-    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_EQ(window_->settings().editor().activity_bar_location,
+              core::ActivityBarLocation::hidden);
+    window_->commands().execute("workbench.action.toggleActivityBarVisibility");
+    EXPECT_EQ(window_->settings().editor().activity_bar_location,
+              core::ActivityBarLocation::standard);
 }
 
 TEST_F(MainWindowTest, TheWorkbenchPartsFollowTheWorkbenchColors) {
@@ -5558,4 +5578,246 @@ TEST_F(MainWindowTest, ThemesOfExtensionsAreListedOnceAfterARestart) {
     EXPECT_EQ(window_->themes().themes().size(), count);
     EXPECT_EQ(window_->themes().current(), current);
     EXPECT_EQ(theme_warnings(), warnings);
+}
+
+class PartPositionsTest : public MainWindowTest {
+protected:
+    void start_with(const std::string& settings) {
+        settings_file_ = write("settings.json", settings);
+        create_window();
+        window_->resize(1000, 700);
+        window_->show();
+        QApplication::processEvents();
+    }
+
+    void add_container() {
+        QPixmap pixmap(24, 24);
+        pixmap.fill(Qt::black);
+        ui::ViewContainer container;
+        container.id = "workbench.view.explorer";
+        container.title = "Explorer";
+        container.icon = QIcon(pixmap);
+        container.create = [] { return new QLabel("files"); };
+        window_->view_containers().add(std::move(container));
+        QApplication::processEvents();
+    }
+
+    std::string settings_text() const {
+        return *platform::read_file(settings_file_);
+    }
+    QString title_of(const std::string& command) {
+        QAction* action = menu_action(command);
+        return action ? action->property("anvil.title").toString().remove(QLatin1Char('&'))
+                      : QString();
+    }
+};
+
+TEST_F(PartPositionsTest, TheStatusBarMenuItemShowsAndHidesTheStatusBarAndWritesTheSetting) {
+    start_with("{}");
+    QAction* item = menu_action("workbench.action.toggleStatusbarVisibility");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_TRUE(item->isChecked());
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::status_bar));
+
+    item->trigger();
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::status_bar));
+    EXPECT_NE(settings_text().find("\"workbench.statusBar.visible\": false"), std::string::npos);
+    EXPECT_FALSE(menu_action("workbench.action.toggleStatusbarVisibility")->isChecked());
+
+    menu_action("workbench.action.toggleStatusbarVisibility")->trigger();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::status_bar));
+    EXPECT_TRUE(menu_action("workbench.action.toggleStatusbarVisibility")->isChecked());
+}
+
+TEST_F(PartPositionsTest, TheWindowStartsWithThePartsWhereTheSettingsPutThem) {
+    start_with(R"j({"workbench.statusBar.visible": false,
+                    "workbench.sideBar.location": "right",
+                    "workbench.activityBar.location": "hidden"})j");
+    add_container();
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::status_bar));
+    EXPECT_EQ(window_->workbench()->sidebar_side(), ui::Side::right);
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_TRUE(menu_action("workbench.action.activityBarLocation.hide")->isChecked());
+    EXPECT_FALSE(menu_action("workbench.action.activityBarLocation.default")->isChecked());
+}
+
+TEST_F(PartPositionsTest, ASettingsFileEditedByHandMovesTheParts) {
+    start_with("{}");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(settings_file_.string())));
+    EXPECT_EQ(window_->workbench()->sidebar_side(), ui::Side::left);
+    window_->change_setting("workbench.sideBar.location", "right");
+    EXPECT_EQ(window_->workbench()->sidebar_side(), ui::Side::right);
+    window_->change_setting("workbench.sideBar.location", "left");
+    EXPECT_EQ(window_->workbench()->sidebar_side(), ui::Side::left);
+}
+
+TEST_F(PartPositionsTest, TheSideBarMenuItemNamesTheSideItMovesToAndMovesIt) {
+    start_with("{}");
+    add_container();
+    window_->sidebar()->activate("workbench.view.explorer");
+    QApplication::processEvents();
+    EXPECT_EQ(title_of("workbench.action.toggleSidebarPosition"), "Move Primary Side Bar Right");
+
+    menu_action("workbench.action.toggleSidebarPosition")->trigger();
+    QApplication::processEvents();
+    EXPECT_EQ(window_->workbench()->sidebar_side(), ui::Side::right);
+    EXPECT_NE(settings_text().find("\"workbench.sideBar.location\": \"right\""), std::string::npos);
+    EXPECT_EQ(title_of("workbench.action.toggleSidebarPosition"), "Move Primary Side Bar Left");
+    const QWidget* sidebar = window_->workbench()->sidebar();
+    const QWidget* activity = window_->workbench()->activity_bar();
+    EXPECT_EQ(activity->mapTo(window_->workbench(), QPoint(activity->width(), 0)).x(),
+              window_->workbench()->width());
+    EXPECT_LT(sidebar->mapTo(window_->workbench(), QPoint(0, 0)).x(),
+              activity->mapTo(window_->workbench(), QPoint(0, 0)).x());
+
+    menu_action("workbench.action.toggleSidebarPosition")->trigger();
+    EXPECT_EQ(window_->workbench()->sidebar_side(), ui::Side::left);
+    EXPECT_EQ(title_of("workbench.action.toggleSidebarPosition"), "Move Primary Side Bar Right");
+}
+
+TEST_F(PartPositionsTest, TheActivityBarPositionItemsHideAndShowTheActivityBar) {
+    start_with("{}");
+    add_container();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_TRUE(menu_action("workbench.action.activityBarLocation.default")->isChecked());
+    EXPECT_FALSE(menu_action("workbench.action.activityBarLocation.hide")->isChecked());
+
+    menu_action("workbench.action.activityBarLocation.hide")->trigger();
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_NE(settings_text().find("\"workbench.activityBar.location\": \"hidden\""),
+              std::string::npos);
+    EXPECT_TRUE(menu_action("workbench.action.activityBarLocation.hide")->isChecked());
+    EXPECT_FALSE(menu_action("workbench.action.activityBarLocation.default")->isChecked());
+
+    window_->sidebar()->activate("workbench.view.explorer");
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+
+    menu_action("workbench.action.activityBarLocation.default")->trigger();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_TRUE(menu_action("workbench.action.activityBarLocation.default")->isChecked());
+}
+
+TEST_F(PartPositionsTest, TheToggleCommandSwitchesTheActivityBarBetweenHiddenAndTheDefault) {
+    start_with("{}");
+    add_container();
+    window_->commands().execute("workbench.action.toggleActivityBarVisibility");
+    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    window_->commands().execute("workbench.action.toggleActivityBarVisibility");
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+}
+
+TEST_F(PartPositionsTest, TheTopAndBottomActivityBarItemsAreStillUnavailable) {
+    start_with("{}");
+    for (const char* id : {"workbench.action.activityBarLocation.top",
+                           "workbench.action.activityBarLocation.bottom"}) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_FALSE(item->isEnabled()) << id;
+    }
+}
+
+TEST_F(PartPositionsTest, ThePanelPositionItemsMoveThePanelAndTheirCheckMarkFollows) {
+    start_with("{}");
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    QApplication::processEvents();
+
+    struct Case {
+        const char* id;
+        ui::PanelPosition position;
+    };
+    const Case cases[] = {
+        {"workbench.action.positionPanelTop", ui::PanelPosition::top},
+        {"workbench.action.positionPanelLeft", ui::PanelPosition::left},
+        {"workbench.action.positionPanelRight", ui::PanelPosition::right},
+        {"workbench.action.positionPanelBottom", ui::PanelPosition::bottom},
+    };
+    EXPECT_TRUE(menu_action("workbench.action.positionPanelBottom")->isChecked());
+    for (const Case& moved : cases) {
+        QAction* item = menu_action(moved.id);
+        ASSERT_NE(item, nullptr) << moved.id;
+        EXPECT_TRUE(item->isEnabled()) << moved.id;
+        item->trigger();
+        QApplication::processEvents();
+        EXPECT_EQ(window_->workbench()->panel_position(), moved.position) << moved.id;
+        for (const Case& other : cases) {
+            EXPECT_EQ(menu_action(other.id)->isChecked(), other.position == moved.position)
+                << moved.id << " " << other.id;
+        }
+    }
+}
+
+TEST_F(PartPositionsTest, ThePanelCommandsPlaceThePanelAroundTheEditor) {
+    start_with("{}");
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    QApplication::processEvents();
+    const auto panel = [&] { return window_->workbench()->panel(); };
+    const auto editor = [&] { return window_->view(); };
+    const auto origin = [&](const QWidget* widget) {
+        return widget->mapTo(window_.get(), QPoint(0, 0));
+    };
+
+    window_->commands().execute("workbench.action.positionPanelTop");
+    QApplication::processEvents();
+    EXPECT_LT(origin(panel()).y(), origin(editor()).y());
+    window_->commands().execute("workbench.action.positionPanelLeft");
+    QApplication::processEvents();
+    EXPECT_LT(origin(panel()).x(), origin(editor()).x());
+    window_->commands().execute("workbench.action.positionPanelRight");
+    QApplication::processEvents();
+    EXPECT_GT(origin(panel()).x(), origin(editor()).x());
+    window_->commands().execute("workbench.action.positionPanelBottom");
+    QApplication::processEvents();
+    EXPECT_GT(origin(panel()).y(), origin(editor()).y());
+}
+
+TEST_F(PartPositionsTest, MovingThePartsKeepsTheFocusInTheEditor) {
+    start_with("{}");
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    window_->workbench()->set_visible(ui::Part::sidebar, true);
+    window_->view()->setFocus();
+    ASSERT_TRUE(window_->view()->hasFocus());
+
+    window_->commands().execute("workbench.action.toggleSidebarPosition");
+    EXPECT_TRUE(window_->view()->hasFocus());
+    window_->commands().execute("workbench.action.positionPanelLeft");
+    EXPECT_TRUE(window_->view()->hasFocus());
+    type("x");
+    EXPECT_EQ(current_text(), "x");
+}
+
+TEST_F(PartPositionsTest, TheSideBarButtonOfTheTitleBarShowsTheSideTheSideBarIsOn) {
+    custom_title_bar_ = true;
+    start_with("{}");
+    ASSERT_NE(window_->title_bar(), nullptr);
+    const auto icon_pixels = [&] {
+        return window_->title_bar()->sidebar_button()->grab().toImage();
+    };
+    const QImage left = icon_pixels();
+    window_->commands().execute("workbench.action.toggleSidebarPosition");
+    QApplication::processEvents();
+    EXPECT_NE(icon_pixels(), left);
+    window_->commands().execute("workbench.action.toggleSidebarPosition");
+    QApplication::processEvents();
+    EXPECT_EQ(icon_pixels(), left);
+}
+
+TEST_F(PartPositionsTest, RendersTheWindowWithTheSideBarAndThePanelOnTheRight) {
+    start_with(R"j({"workbench.sideBar.location": "right"})j");
+    ASSERT_TRUE(window_->open_file(
+        QString::fromStdString(write("sample.txt", "hello, world\nsecond line\n").string())));
+    add_container();
+    window_->sidebar()->activate("workbench.view.explorer");
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    window_->commands().execute("workbench.action.positionPanelRight");
+    QApplication::processEvents();
+    const QImage image = window_->grab().toImage();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/main_window_parts_on_the_right.png");
+    }
 }
