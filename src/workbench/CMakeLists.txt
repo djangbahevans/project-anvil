@@ -1,6 +1,8 @@
 find_package(nlohmann_json REQUIRED)
 
 add_library(anvil_workbench STATIC
+  closed_editors.cpp
+  include/anvil/workbench/closed_editors.hpp
   editor_layout.cpp
   include/anvil/workbench/editor_layout.hpp
   include/anvil/workbench/menu_model.hpp
