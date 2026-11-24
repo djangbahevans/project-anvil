@@ -7101,6 +7101,7 @@ TEST_F(ReopenTest, TheClosedEditorComesBackAtItsPlaceWithItsSelection) {
     window_->view()->select_range(core::Selection{5, 9});
     close(b);
     ASSERT_EQ(std::ranges::count(tabs(focused()), b), 0);
+    window_->editor_layout().activate(focused(), 0);
 
     reopen();
     const std::vector<core::Uri> now = tabs(focused());
@@ -7219,16 +7220,20 @@ TEST_F(ReopenTest, AFileThatIsGoneIsSkippedWithAMessageAndTheOneBeforeItComesBac
     EXPECT_FALSE(can_reopen());
 }
 
-TEST_F(ReopenTest, ADocumentThatIsOpenInItsGroupAgainIsNotOpenedTwice) {
+TEST_F(ReopenTest, ADocumentThatIsOpenInItsGroupAgainIsSkippedForTheOneBeforeIt) {
     create_window();
+    const core::Uri x = open("x.txt");
     const core::Uri a = open("a.txt");
     open("b.txt");
+    close(x);
     close(a);
     open("a.txt");
     ASSERT_EQ(std::ranges::count(tabs(focused()), a), 1);
 
     reopen();
     EXPECT_EQ(std::ranges::count(tabs(focused()), a), 1);
+    EXPECT_TRUE(has(focused(), x));
+    EXPECT_EQ(shown(), x);
     EXPECT_FALSE(can_reopen());
 }
 
