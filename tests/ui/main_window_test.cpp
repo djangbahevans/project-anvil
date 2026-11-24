@@ -2566,6 +2566,10 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.revert",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
+                                          "editor.action.insertCursorAbove",
+                                          "editor.action.insertCursorBelow",
+                                          "editor.action.insertCursorAtEndOfEachLineSelected",
+                                          "editor.action.addSelectionToPreviousFindMatch",
                                           "editor.action.copyLinesUpAction",
                                           "editor.action.copyLinesDownAction",
                                           "editor.action.moveLinesUpAction",
@@ -2718,6 +2722,10 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "saveAll",
         "workbench.action.files.revert",
         "workbench.action.toggleAutoSave",
+        "editor.action.insertCursorAbove",
+        "editor.action.insertCursorBelow",
+        "editor.action.insertCursorAtEndOfEachLineSelected",
+        "editor.action.addSelectionToPreviousFindMatch",
         "editor.action.copyLinesUpAction",
         "editor.action.copyLinesDownAction",
         "editor.action.moveLinesUpAction",
@@ -4627,6 +4635,52 @@ protected:
         window_->view()->setFocus();
     }
 };
+
+TEST_F(MainWindowLinesTest, ShiftAltDownAndUpAddCursorsAndTypingEditsEveryLine) {
+    open_lines("abc\ndef\nghi");
+    put_caret(1);
+    QTest::keyClick(window_->view(), Qt::Key_Down, Qt::ShiftModifier | Qt::AltModifier);
+    QTest::keyClick(window_->view(), Qt::Key_Down, Qt::ShiftModifier | Qt::AltModifier);
+    EXPECT_EQ(selections(),
+              (std::vector<core::Selection>{core::Selection::caret(1), core::Selection::caret(5),
+                                            core::Selection::caret(9)}));
+    type("-");
+    EXPECT_EQ(current_text(), "a-bc\nd-ef\ng-hi");
+}
+
+TEST_F(MainWindowLinesTest, CtrlShiftUpIsTheSecondKeyOfAddCursorAbove) {
+    open_lines("abc\ndef");
+    put_caret(5);
+    QTest::keyClick(window_->view(), Qt::Key_Up, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(selections(),
+              (std::vector<core::Selection>{core::Selection::caret(1), core::Selection::caret(5)}));
+}
+
+TEST_F(MainWindowLinesTest, ShiftAltIPutsACaretAtTheEndOfEachSelectedLine) {
+    open_lines("ab\ncd\nef");
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(core::SelectionSet::from({core::Selection{1, 7}}))
+                    .has_value());
+    window_->view()->document_changed_elsewhere();
+    QTest::keyClick(window_->view(), Qt::Key_I, Qt::ShiftModifier | Qt::AltModifier);
+    EXPECT_EQ(selections(),
+              (std::vector<core::Selection>{core::Selection::caret(2), core::Selection::caret(5),
+                                            core::Selection::caret(7)}));
+}
+
+TEST_F(MainWindowLinesTest, AddPreviousOccurrenceSelectsTheWordThenAddsTheMatchesBeforeIt) {
+    open_lines("foo bar foo baz foo");
+    put_caret(17);
+    window_->commands().execute("editor.action.addSelectionToPreviousFindMatch");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{16, 19}}));
+    window_->commands().execute("editor.action.addSelectionToPreviousFindMatch");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{8, 11}, {16, 19}}));
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{8, 11}));
+    window_->commands().execute("editor.action.addSelectionToPreviousFindMatch");
+    window_->commands().execute("editor.action.addSelectionToPreviousFindMatch");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{0, 3}, {8, 11}, {16, 19}}))
+        << "every match is taken";
+}
 
 TEST_F(MainWindowLinesTest, AltUpAndAltDownMoveTheLineAndEachMoveIsOneUndoStep) {
     open_lines("a\nb\nc\nd");

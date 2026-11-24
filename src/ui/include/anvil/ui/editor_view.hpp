@@ -87,6 +87,12 @@ public:
     // further call adds the next match of the same text. The search stays what the first call made
     // it, whole words and case included, until the selections change by other means.
     void add_next_occurrence(const OccurrenceSource& source);
+    // The same, towards the start of the text: the first press selects the word at a caret, the
+    // next ones add the match before the last one added, wrapping around from the end.
+    void add_previous_occurrence(const OccurrenceSource& source);
+    // Adds a cursor above or below each selection (see core::EditController).
+    void add_cursors_vertically(bool down);
+    void add_cursors_to_line_ends();
     // "Select all occurrences of find match" (Ctrl+Shift+L). Returns true when more than `limit`
     // matches exist and only `limit` were selected.
     bool select_all_occurrences(const OccurrenceSource& source, std::size_t limit);
@@ -190,6 +196,7 @@ private:
     };
     // The session if it still describes the selections and the find options, otherwise none.
     OccurrenceSession* occurrence_session(const OccurrenceSource& source);
+    void add_occurrence(const OccurrenceSource& source, bool next);
     std::optional<OccurrenceSession> begin_occurrence_session(const OccurrenceSource& source) const;
 
     const WorkbenchColors* colors_ = nullptr;

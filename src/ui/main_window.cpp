@@ -514,6 +514,14 @@ void MainWindow::register_commands() {
     add("editor.action.clipboardPasteAction", tr("Paste"), [this] { view()->paste(); });
     add("editor.action.addSelectionToNextFindMatch", tr("Add Selection to Next Find Match"),
         [this] { view()->add_next_occurrence(occurrence_source()); });
+    add("editor.action.addSelectionToPreviousFindMatch", tr("Add Selection to Previous Find Match"),
+        [this] { view()->add_previous_occurrence(occurrence_source()); });
+    add("editor.action.insertCursorAbove", tr("Add Cursor Above"),
+        [this] { view()->add_cursors_vertically(false); });
+    add("editor.action.insertCursorBelow", tr("Add Cursor Below"),
+        [this] { view()->add_cursors_vertically(true); });
+    add("editor.action.insertCursorAtEndOfEachLineSelected", tr("Add Cursors to Line Ends"),
+        [this] { view()->add_cursors_to_line_ends(); });
     add("editor.action.selectHighlights", tr("Select All Occurrences of Find Match"), [this] {
         report_truncated_selection(
             view()->select_all_occurrences(occurrence_source(), FindBar::match_limit));
