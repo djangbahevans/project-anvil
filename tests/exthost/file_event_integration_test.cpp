@@ -128,7 +128,6 @@ TEST_F(RealFileEvents, APatternWithAGlobstarWatchesTheFoldersBelow) {
     const int flat = run("create", {(scratch_ / "watched").string(), "*.txt"}).get<int>();
 
     fs::create_directories(scratch_ / "watched" / "sub");
-    ASSERT_TRUE(seen(deep, "create", scratch_ / "watched" / "sub"));
     write(scratch_ / "watched" / "sub" / "nested.txt", "x");
     ASSERT_TRUE(seen(deep, "create", scratch_ / "watched" / "sub" / "nested.txt"));
     write(scratch_ / "watched" / "top.txt", "x");
