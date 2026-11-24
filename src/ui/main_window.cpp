@@ -231,6 +231,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                 }
             });
     connect(area_, &EditorArea::text_changed, this, &MainWindow::on_text_changed);
+    connect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
     connect(area_, &EditorArea::selections_changed, this, &MainWindow::on_selections_changed);
     connect(area_, &EditorArea::tab_dropped_on_strip, this,
             [this](workbench::GroupId from, int index, workbench::GroupId to, int position) {
@@ -304,6 +305,8 @@ MainWindow::MainWindow(Options options, QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+    // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
+    disconnect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
     // The area observes the layout, which is destroyed before the child widgets are.
     delete area_;
 }
@@ -380,6 +383,16 @@ void MainWindow::apply_settings() {
         title_bar_->set_layout_controls_visible(editor.layout_controls);
     }
     layout_.set_focus_recent_after_close(editor.focus_recent_editor_after_close);
+    const bool auto_save_changed =
+        editor.auto_save != auto_save_ || editor.auto_save_delay != auto_save_delay_;
+    auto_save_ = editor.auto_save;
+    auto_save_delay_ = editor.auto_save_delay;
+    if (auto_save_changed) {
+        cancel_scheduled_auto_saves();
+        if (auto_save_ != core::AutoSave::off) {
+            auto_save_all();
+        }
+    }
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
                                 .insert_spaces = editor.insert_spaces});
@@ -464,6 +477,10 @@ void MainWindow::register_commands() {
         [this] { layout_.focus_previous(); });
     add("workbench.action.closeGroup", tr("Close Editor Group"),
         [this] { close_group(layout_.focused()); });
+    add("workbench.action.toggleAutoSave", tr("Toggle Auto Save"), [this] {
+        change_setting("files.autoSave", auto_save_ == core::AutoSave::off ? "afterDelay" : "off",
+                       tr("Auto Save"));
+    });
     add("workbench.action.showCommands", tr("Show All Commands"),
         [this] { show_command_palette(); });
     add("workbench.action.toggleSidebarVisibility", tr("Toggle Primary Side Bar Visibility"),
@@ -899,16 +916,94 @@ bool MainWindow::open_file(const QString& path) {
     return true;
 }
 
-bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path) {
+bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path,
+                                bool automatic) {
     const std::shared_ptr<core::Document> document = documents_.at(uri);
     if (auto written = platform::write_file(path, document->to_file_bytes()); !written) {
-        QMessageBox::critical(this, tr("Save"), QString::fromStdString(written.error().message));
+        const QString reason = QString::fromStdString(written.error().message);
+        if (automatic) {
+            status_bar_->show_message(tr("Auto save failed: %1").arg(reason), 5000);
+        } else {
+            QMessageBox::critical(this, tr("Save"), reason);
+        }
         return false;
     }
     document->mark_saved();
     bridge_.saved(uri);
     update_document(uri);
     return true;
+}
+
+void MainWindow::schedule_auto_save(const core::Uri& uri) {
+    if (!uri.file_path()) {
+        return;
+    }
+    const auto found = documents_.find(uri);
+    if (found == documents_.end()) {
+        return;
+    }
+    ScheduledAutoSave& scheduled = scheduled_auto_saves_[found->second.get()];
+    if (!scheduled.timer) {
+        scheduled.document = found->second;
+        scheduled.timer = std::make_unique<QTimer>();
+        scheduled.timer->setSingleShot(true);
+        connect(scheduled.timer.get(), &QTimer::timeout, this, [this, key = found->second.get()] {
+            auto node = scheduled_auto_saves_.extract(key);
+            if (node.empty()) {
+                return;
+            }
+            // The timer is the sender of this slot and cannot be deleted inside it.
+            node.mapped().timer.release()->deleteLater();
+            if (const auto document = node.mapped().document.lock()) {
+                auto_save(document);
+            }
+        });
+    }
+    scheduled.timer->start(auto_save_delay_);
+}
+
+void MainWindow::auto_save(const std::shared_ptr<core::Document>& document) {
+    if (!document->is_dirty()) {
+        return;
+    }
+    const auto uri = uri_of(document);
+    const auto path = uri ? uri->file_path() : std::nullopt;
+    if (path) {
+        write_document(*uri, *path, true);
+    }
+}
+
+void MainWindow::auto_save_all() {
+    std::vector<std::shared_ptr<core::Document>> dirty;
+    for (const auto& [uri, document] : documents_) {
+        if (document->is_dirty() && uri.file_path()) {
+            dirty.push_back(document);
+        }
+    }
+    for (const auto& document : dirty) {
+        auto_save(document);
+    }
+}
+
+void MainWindow::cancel_scheduled_auto_saves() {
+    for (auto& [key, scheduled] : scheduled_auto_saves_) {
+        scheduled.timer.release()->deleteLater();
+    }
+    scheduled_auto_saves_.clear();
+}
+
+void MainWindow::on_focus_changed(QWidget* old_widget, QWidget* now) {
+    const auto* view = qobject_cast<const EditorView*>(old_widget);
+    if (auto_save_ != core::AutoSave::on_focus_change || !view || !view->document() ||
+        !isAncestorOf(old_widget)) {
+        return;
+    }
+    for (EditorGroupWidget* group : area_->groups()) {
+        if (group->isAncestorOf(old_widget) && now && group->isAncestorOf(now)) {
+            return;
+        }
+    }
+    auto_save(view->document());
 }
 
 bool MainWindow::save() {
@@ -1069,6 +1164,9 @@ void MainWindow::on_text_changed(workbench::GroupId group, const core::DocumentC
         return;
     }
     bridge_.text_changed(state->tabs[*state->active], change);
+    if (auto_save_ == core::AutoSave::after_delay) {
+        schedule_auto_save(state->tabs[*state->active]);
+    }
     area_->refresh_tab(group, *state->active);
     update_title();
     update_status();
@@ -1086,6 +1184,11 @@ void MainWindow::on_selections_changed(workbench::GroupId group) {
 void MainWindow::refresh_current() {
     const core::Uri* current = current_uri_ptr();
     if (current && (!shown_uri_ || !(*shown_uri_ == *current))) {
+        if (shown_uri_ && auto_save_ == core::AutoSave::on_focus_change) {
+            if (const auto previous = documents_.find(*shown_uri_); previous != documents_.end()) {
+                auto_save(previous->second);
+            }
+        }
         shown_uri_ = *current;
         bridge_.show(*current);
     } else if (!current) {
@@ -1157,6 +1260,10 @@ void MainWindow::changeEvent(QEvent* event) {
     case QEvent::ActivationChange:
         if (has_custom_title_bar()) {
             title_bar_->set_active(isActiveWindow());
+        }
+        if (!isActiveWindow() && (auto_save_ == core::AutoSave::on_focus_change ||
+                                  auto_save_ == core::AutoSave::on_window_change)) {
+            auto_save_all();
         }
         break;
     case QEvent::WindowStateChange:
