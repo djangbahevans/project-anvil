@@ -7940,6 +7940,33 @@ TEST_F(ZenModeTest, TheEditorKeepsTheKeyboardFocusWhenTheSidebarThatHadItIsHidde
     EXPECT_TRUE(window_->view()->hasFocus());
 }
 
+TEST_F(ZenModeTest, TheFocusStaysInAPartThatZenModeLeavesShown) {
+    start_with_everything_shown();
+    focus_the_editor();
+    ui::FindBar* find_bar = window_->editor_area()->focused_group()->find_bar();
+    find_bar->open();
+    find_bar->find_field()->setFocus();
+    ASSERT_TRUE(find_bar->find_field()->hasFocus());
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(find_bar->find_field()->hasFocus());
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(find_bar->find_field()->hasFocus());
+}
+
+TEST_F(ZenModeTest, EscapeWaitsForASecondKeyOnlyInZenMode) {
+    start_with_everything_shown();
+    focus_the_editor();
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_FALSE(window_->status_bar().message().contains("Waiting"))
+        << window_->status_bar().message().toStdString();
+
+    run("workbench.action.toggleZenMode");
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_Escape);
+    EXPECT_EQ(window_->status_bar().message(),
+              "(Escape) was pressed. Waiting for second key of chord...");
+}
+
 class CenteredLayoutTest : public MainWindowTest {
 protected:
     void start() {
