@@ -298,7 +298,7 @@ TEST_F(QuickPickTest, SitsAtTheTopCenterOfTheWindowNoWiderThanItsLimit) {
     EXPECT_NEAR(pick_->x() + pick_->width() / 2, host_->width() / 2, 1);
 }
 
-TEST_F(QuickPickTest, TheListFitsItsRowsAndIsCappedByTheWindowHeight) {
+TEST_F(QuickPickTest, TheListFitsItsRowsAndShowsTwentyAtMost) {
     pick_->set_items(items_of({"One", "Two", "Three"}));
     pick_->open();
     EXPECT_EQ(pick_->list()->height(), 3 * QuickPick::row_height);
@@ -308,9 +308,22 @@ TEST_F(QuickPickTest, TheListFitsItsRowsAndIsCappedByTheWindowHeight) {
         many.push_back(QString::number(i));
     }
     pick_->set_items(items_of(many));
-    EXPECT_LE(pick_->list()->height(), static_cast<int>(host_->height() * 0.4) + 6);
-    EXPECT_GT(pick_->list()->height(), 5 * QuickPick::row_height);
+    EXPECT_EQ(pick_->list()->height(), QuickPick::max_visible_rows * QuickPick::row_height + 6);
     EXPECT_LT(pick_->y() + pick_->height(), host_->height());
+}
+
+TEST_F(QuickPickTest, TheListIsCappedByTheHeightOfALowWindow) {
+    std::vector<QString> many;
+    for (int i = 0; i < 500; ++i) {
+        many.push_back(QString::number(i));
+    }
+    host_->resize(900, 300);
+    QApplication::processEvents();
+    pick_->set_items(items_of(many));
+    pick_->open();
+    EXPECT_LT(pick_->list()->height(), 12 * QuickPick::row_height);
+    EXPECT_GE(pick_->list()->height(), 3 * QuickPick::row_height);
+    EXPECT_LE(pick_->y() + pick_->height(), host_->height());
 }
 
 TEST_F(QuickPickTest, ADetailMakesItsRowTwoLinesHigh) {
@@ -350,6 +363,139 @@ TEST_F(QuickPickTest, FiltersFiveThousandItemsWithoutNoticeableDelay) {
     }
 }
 
+namespace {
+
+QuickPickItem separator(const QString& label) {
+    return {label, {}, {}, {}, false, true};
+}
+
+} // namespace
+
+TEST_F(QuickPickTest, SeparatorsAreNotRowsAndTheItemsKeepTheirPositions) {
+    pick_->set_items({separator("First"),
+                      {"One", {}, {}, {}},
+                      {"Two", {}, {}, {}},
+                      separator("Second"),
+                      {"Three", {}, {}, {}},
+                      separator("Last")});
+    pick_->open();
+    EXPECT_EQ(pick_->shown_items(), (std::vector<std::size_t>{1, 2, 4}));
+    EXPECT_EQ(pick_->list()->model()->rowCount(), 3);
+
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    press(Qt::Key_Down);
+    press(Qt::Key_Down);
+    press(Qt::Key_Return);
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.takeFirst().at(0).toULongLong(), 4U);
+}
+
+TEST_F(QuickPickTest, NavigationNeverStopsOnASeparatorAndWrapsAroundTheItems) {
+    pick_->set_items({{"One", {}, {}, {}}, separator("Group"), {"Two", {}, {}, {}}});
+    pick_->open();
+    EXPECT_EQ(current_row(), 0);
+    press(Qt::Key_Down);
+    EXPECT_EQ(current_row(), 1);
+    press(Qt::Key_Down);
+    EXPECT_EQ(current_row(), 0);
+    press(Qt::Key_Up);
+    EXPECT_EQ(current_row(), 1);
+    press(Qt::Key_PageDown);
+    EXPECT_EQ(current_row(), 1);
+    press(Qt::Key_PageUp);
+    EXPECT_EQ(current_row(), 0);
+}
+
+TEST_F(QuickPickTest, SeparatorsAreLeftOutAndNotMatchedWhileAFilterIsTyped) {
+    pick_->set_items(
+        {separator("Group"), {"Two", {}, {}, {}}, separator("Other"), {"Three", {}, {}, {}}});
+    pick_->open();
+    type("t");
+    EXPECT_EQ(pick_->shown_items(), (std::vector<std::size_t>{1, 3}));
+    pick_->filter_field()->clear();
+    type("Group");
+    EXPECT_TRUE(pick_->shown_items().empty());
+    pick_->filter_field()->clear();
+    EXPECT_EQ(pick_->shown_items(), (std::vector<std::size_t>{1, 3}));
+}
+
+TEST_F(QuickPickTest, ASeparatorDrawsALineAboveTheNextRowAndItsLabelAtTheRightEnd) {
+    pick_->set_items(
+        {{"Top", {}, {}, {}}, separator("Group"), {"Next", {}, {}, {}}, {"After", {}, {}, {}}});
+    pick_->open();
+    QApplication::processEvents();
+    const QImage image = pick_->grab().toImage();
+    const int list_top = pick_->list()->geometry().top();
+    const int line_x = pick_->width() / 2;
+    const QColor border = colors_.color("pickerGroup.border");
+    EXPECT_EQ(image.pixelColor(line_x, list_top + QuickPick::row_height).rgb(), border.rgb());
+    EXPECT_NE(image.pixelColor(line_x, list_top + 2 * QuickPick::row_height).rgb(), border.rgb());
+    EXPECT_NE(image.pixelColor(line_x, list_top).rgb(), border.rgb());
+
+    // The label is in the right part of the row of the next item, and the other rows have none.
+    const auto ink = [&](int row) {
+        int pixels = 0;
+        const QColor background = colors_.color("quickInput.background");
+        const QColor highlight = colors_.color("quickInputList.focusBackground");
+        for (int y = list_top + row * QuickPick::row_height + 3;
+             y < list_top + (row + 1) * QuickPick::row_height - 3; ++y) {
+            for (int x = pick_->width() * 3 / 4; x < pick_->width() - 12; ++x) {
+                const QColor color = image.pixelColor(x, y);
+                pixels += color != background && color != highlight;
+            }
+        }
+        return pixels;
+    };
+    EXPECT_GT(ink(1), 10);
+    EXPECT_EQ(ink(2), 0);
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        std::vector<QuickPickItem> items = {{"Auto Detect", {}, {}, {}},
+                                            {"Configure File Association for '.md'…", {}, {}, {}},
+                                            separator("languages (identifier)")};
+        for (const char* name : {"Agent", "Batch", "BibTeX", "C", "C#", "C++", "Clojure"}) {
+            items.push_back({name, QString("(%1)").arg(QString(name).toLower()), {}, {}});
+        }
+        pick_->set_items(std::move(items));
+        pick_->set_placeholder("Select Language Mode");
+        pick_->set_top_offset(30);
+        QApplication::processEvents();
+        host_->grab().save(QString::fromUtf8(directory) + "/quick_pick_separators.png");
+    }
+}
+
+TEST_F(QuickPickTest, TheCornersAreRoundedAndTheBorderFollowsThem) {
+    pick_->set_items(items_of({"One", "Two"}));
+    pick_->set_top_offset(40);
+    pick_->open();
+    QApplication::processEvents();
+    const QImage image = host_->grab().toImage();
+    const QColor card = colors_.color("quickInput.background");
+    const int left = pick_->x();
+    const int top = pick_->y();
+    EXPECT_NE(image.pixelColor(left, top), card) << "the corner is outside the arc";
+    EXPECT_NE(image.pixelColor(left, top), colors_.color("widget.border"));
+    EXPECT_EQ(image.pixelColor(left + pick_->width() / 2, top), colors_.color("widget.border"));
+}
+
+TEST_F(QuickPickTest, AShadowSurroundsThePopupAndIsGoneWithIt) {
+    pick_->set_items(items_of({"One", "Two"}));
+    pick_->set_top_offset(60);
+    pick_->open();
+    QApplication::processEvents();
+    const QImage open = host_->grab().toImage();
+    const int below = pick_->y() + pick_->height() + 4;
+    const int middle = pick_->x() + pick_->width() / 2;
+    pick_->cancel();
+    QApplication::processEvents();
+    const QImage closed = host_->grab().toImage();
+    EXPECT_NE(open.pixelColor(middle, below), closed.pixelColor(middle, below))
+        << "the shadow darkens the window under the popup";
+    EXPECT_EQ(open.pixelColor(middle, pick_->y() + pick_->height() + 40),
+              closed.pixelColor(middle, pick_->y() + pick_->height() + 40))
+        << "and fades out within its blur";
+}
+
 TEST_F(QuickPickTest, RendersTheList) {
     pick_->set_items({{"Format Document", {}, {}, "Shift+Alt+F"},
                       {"Open File…", {}, {}, "Ctrl+O"},
@@ -378,12 +524,14 @@ TEST_F(QuickPickTest, RepaintsWithTheColorsOfTheWorkbench) {
     // not.
     const int first_row_y = pick_->list()->geometry().top() + QuickPick::row_height / 2;
     const int second_row_y = first_row_y + QuickPick::row_height;
-    const int x = pick_->list()->geometry().left() + 2;
+    // Inside the highlight, which is inset from the edge, and left of the text.
+    const int x = pick_->list()->geometry().left() + 6;
+    const int border_y = pick_->height() / 2;
 
     const QImage before = grab();
     EXPECT_EQ(before.pixelColor(x, first_row_y), colors_.color("quickInputList.focusBackground"));
     EXPECT_EQ(before.pixelColor(x, second_row_y), colors_.color("quickInput.background"));
-    EXPECT_EQ(before.pixelColor(0, 5), colors_.color("widget.border"));
+    EXPECT_EQ(before.pixelColor(0, border_y), colors_.color("widget.border"));
 
     QSignalSpy changed(&colors_, &WorkbenchColors::changed);
     colors_.set_colors({{"quickInputList.focusBackground", QColor("#aa0000")},
@@ -401,5 +549,5 @@ TEST_F(QuickPickTest, RepaintsWithTheColorsOfTheWorkbench) {
     const QImage after = grab();
     EXPECT_EQ(after.pixelColor(x, first_row_y), QColor("#aa0000"));
     EXPECT_EQ(after.pixelColor(x, second_row_y), QColor("#102030"));
-    EXPECT_EQ(after.pixelColor(0, 5), QColor("#00cc00"));
+    EXPECT_EQ(after.pixelColor(0, border_y), QColor("#00cc00"));
 }

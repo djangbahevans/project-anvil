@@ -2,16 +2,19 @@
 
 #include <QAbstractListModel>
 #include <QApplication>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
 #include <QPainter>
+#include <QPainterPath>
 #include <QScrollBar>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <numeric>
+#include <utility>
 
 namespace anvil::ui {
 namespace {
@@ -20,6 +23,20 @@ constexpr int max_width = 600;
 constexpr int window_margin = 8;
 constexpr int text_padding = 8;
 constexpr int detail_row_height = 2 * QuickPick::row_height;
+constexpr qreal corner_radius = 8;
+constexpr int shadow_blur = 20;
+// The highlight of a row is inset from the edges of the list, and its text from the highlight.
+constexpr int row_inset = 4;
+constexpr int header_padding = 6;
+constexpr std::size_t no_separator = static_cast<std::size_t>(-1);
+
+QString css(const QColor& color) {
+    return QString("rgba(%1,%2,%3,%4)")
+        .arg(color.red())
+        .arg(color.green())
+        .arg(color.blue())
+        .arg(color.alphaF());
+}
 
 } // namespace
 
@@ -29,6 +46,8 @@ public:
         std::size_t item = 0;
         std::vector<core::MatchRange> label_ranges;
         std::vector<core::MatchRange> description_ranges;
+        // The separator that starts the group of this row, which is its first row.
+        std::size_t separator = no_separator;
     };
 
     explicit Model(const std::vector<QuickPickItem>& items, QObject* parent)
@@ -50,6 +69,9 @@ public:
     const Row& row_of(const QModelIndex& index) const {
         return rows_[static_cast<std::size_t>(index.row())];
     }
+    const QString& separator_label(std::size_t item) const {
+        return items_[item].label;
+    }
 
     int rowCount(const QModelIndex& parent = {}) const override {
         return parent.isValid() ? 0 : static_cast<int>(rows_.size());
@@ -65,6 +87,37 @@ public:
 private:
     const std::vector<QuickPickItem>& items_;
     std::vector<Row> rows_;
+};
+
+// The shadow of the popup: a widget behind it that is larger by the blur, since a child widget
+// cannot draw outside its own bounds.
+class QuickPick::Shadow : public QWidget {
+public:
+    Shadow(QWidget* window, const WorkbenchColors& colors) : QWidget(window), colors_(colors) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        hide();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QColor base = colors_.color("widget.shadow");
+        const QRectF card =
+            QRectF(rect()).adjusted(shadow_blur, shadow_blur, -shadow_blur, -shadow_blur);
+        for (int distance = shadow_blur; distance >= 1; --distance) {
+            const float falloff = 1.0F - static_cast<float>(distance) / (shadow_blur + 1);
+            QColor color = base;
+            color.setAlphaF(base.alphaF() * falloff * falloff * 0.5F);
+            painter.setPen(QPen(color, 1));
+            painter.drawRoundedRect(card.adjusted(-distance, -distance, distance, distance)
+                                        .adjusted(0.5, 0.5, -0.5, -0.5),
+                                    corner_radius + distance, corner_radius + distance);
+        }
+    }
+
+private:
+    const WorkbenchColors& colors_;
 };
 
 class QuickPick::Delegate : public QStyledItemDelegate {
@@ -87,8 +140,19 @@ public:
 
         painter->save();
         painter->setClipRect(option.rect);
-        painter->fillRect(option.rect, colors_.color(selected ? "quickInputList.focusBackground"
-                                                              : "quickInput.background"));
+        painter->setRenderHint(QPainter::Antialiasing);
+        if (selected) {
+            QPainterPath highlight;
+            highlight.addRoundedRect(QRectF(option.rect).adjusted(row_inset, 0, -row_inset, 0), 3,
+                                     3);
+            painter->fillPath(highlight, colors_.color("quickInputList.focusBackground"));
+        }
+        if (row.separator != no_separator && index.row() > 0) {
+            painter->setPen(colors_.color("pickerGroup.border"));
+            const qreal y = option.rect.top() + 0.5;
+            painter->drawLine(QPointF(option.rect.left() + row_inset, y),
+                              QPointF(option.rect.right() - row_inset, y));
+        }
 
         QColor text =
             colors_.color(selected ? "quickInputList.focusForeground" : "quickInput.foreground");
@@ -105,7 +169,7 @@ public:
         const QFontMetrics plain_metrics(option.font);
         const QFontMetrics bold_metrics(bold);
 
-        const int right = option.rect.right() - text_padding;
+        const int right = option.rect.right() - row_inset - text_padding;
         int keybinding_width = 0;
         if (!item.keybinding.isEmpty()) {
             keybinding_width = plain_metrics.horizontalAdvance(item.keybinding);
@@ -115,11 +179,23 @@ public:
                 QRect(right - keybinding_width, option.rect.top(), keybinding_width, row_height),
                 Qt::AlignVCenter | Qt::AlignRight, item.keybinding);
         }
-        const int limit = right - keybinding_width - (keybinding_width > 0 ? text_padding : 0);
+        int limit = right - keybinding_width - (keybinding_width > 0 ? text_padding : 0);
+        if (row.separator != no_separator) {
+            const QString& label = model->separator_label(row.separator);
+            QFont small = option.font;
+            small.setPointSizeF(option.font.pointSizeF() * 0.85);
+            const int label_width = QFontMetrics(small).horizontalAdvance(label);
+            painter->setFont(small);
+            painter->setPen(colors_.color("descriptionForeground"));
+            painter->drawText(
+                QRect(limit - label_width, option.rect.top(), label_width, row_height),
+                Qt::AlignVCenter | Qt::AlignRight, label);
+            limit -= label_width + text_padding;
+        }
         painter->setClipRect(QRect(option.rect.left(), option.rect.top(),
                                    std::max(0, limit - option.rect.left()), option.rect.height()));
 
-        int x = option.rect.left() + text_padding;
+        int x = option.rect.left() + row_inset + text_padding;
         const int baseline =
             option.rect.top() + (row_height - plain_metrics.height()) / 2 + plain_metrics.ascent();
         const auto draw_runs = [&](const QString& string,
@@ -160,7 +236,7 @@ public:
             small.setPointSizeF(option.font.pointSizeF() * 0.9);
             painter->setFont(small);
             painter->setPen(dim);
-            painter->drawText(option.rect.left() + text_padding,
+            painter->drawText(option.rect.left() + row_inset + text_padding,
                               option.rect.top() + row_height + QFontMetrics(small).ascent() + 2,
                               item.detail);
         }
@@ -175,8 +251,14 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
     : QFrame(window), colors_(colors) {
     hide();
 
-    filter_ = new QLineEdit(this);
+    setAttribute(Qt::WA_TranslucentBackground);
+    shadow_ = new Shadow(window, colors_);
+    header_ = new QWidget(this);
+    filter_ = new QLineEdit(header_);
     filter_->installEventFilter(this);
+    auto* header_layout = new QHBoxLayout(header_);
+    header_layout->setContentsMargins(header_padding, header_padding, header_padding, 4);
+    header_layout->addWidget(filter_);
     list_ = new QListView(this);
     list_->setFrameShape(QFrame::NoFrame);
     list_->setFocusPolicy(Qt::NoFocus);
@@ -193,9 +275,9 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
     empty_->hide();
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(1, 1, 1, 1);
+    layout->setContentsMargins(1, 1, 1, static_cast<int>(corner_radius) - 1);
     layout->setSpacing(0);
-    layout->addWidget(filter_);
+    layout->addWidget(header_);
     layout->addWidget(list_);
     layout->addWidget(empty_);
 
@@ -216,6 +298,12 @@ void QuickPick::apply_colors() {
     input.setColor(QPalette::Text, colors_.color("input.foreground"));
     input.setColor(QPalette::PlaceholderText, colors_.color("input.placeholderForeground"));
     filter_->setPalette(input);
+    filter_->setStyleSheet(
+        QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; "
+                "padding: 3px 6px; }"
+                "QLineEdit:focus { border-color: %4; }")
+            .arg(css(colors_.color("input.background")), css(colors_.color("input.foreground")),
+                 css(colors_.color("input.border")), css(colors_.color("focusBorder"))));
 
     QPalette list = list_->palette();
     list.setColor(QPalette::Base, colors_.color("quickInput.background"));
@@ -231,9 +319,39 @@ void QuickPick::apply_colors() {
 
 void QuickPick::paintEvent(QPaintEvent*) {
     QPainter painter(this);
-    painter.fillRect(rect(), colors_.color("quickInput.background"));
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPainterPath card;
+    card.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), corner_radius,
+                        corner_radius);
+    painter.fillPath(card, colors_.color("quickInput.background"));
     painter.setPen(colors_.color("widget.border"));
-    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+    painter.drawPath(card);
+}
+
+void QuickPick::sync_shadow() {
+    shadow_->setGeometry(geometry().adjusted(-shadow_blur, -shadow_blur, shadow_blur, shadow_blur));
+    shadow_->setVisible(isVisible());
+    shadow_->stackUnder(this);
+}
+
+void QuickPick::showEvent(QShowEvent* event) {
+    QFrame::showEvent(event);
+    sync_shadow();
+}
+
+void QuickPick::hideEvent(QHideEvent* event) {
+    QFrame::hideEvent(event);
+    shadow_->hide();
+}
+
+void QuickPick::moveEvent(QMoveEvent* event) {
+    QFrame::moveEvent(event);
+    sync_shadow();
+}
+
+void QuickPick::resizeEvent(QResizeEvent* event) {
+    QFrame::resizeEvent(event);
+    sync_shadow();
 }
 
 void QuickPick::set_items(std::vector<QuickPickItem> items) {
@@ -243,7 +361,7 @@ void QuickPick::set_items(std::vector<QuickPickItem> items) {
     has_detail_ = false;
     for (const QuickPickItem& item : items_) {
         cached_.push_back({item.label.toStdString(), item.description.toStdString()});
-        has_detail_ = has_detail_ || !item.detail.isEmpty();
+        has_detail_ = has_detail_ || (!item.separator && !item.detail.isEmpty());
     }
     list_->setUniformItemSizes(!has_detail_);
     refilter();
@@ -313,14 +431,21 @@ void QuickPick::refilter() {
 
     std::vector<Model::Row> rows;
     if (!filtering_ || query.normalized.empty()) {
-        rows.resize(items_.size());
-        for (std::size_t i = 0; i < rows.size(); ++i) {
-            rows[i].item = i;
+        std::size_t pending = no_separator;
+        for (std::size_t i = 0; i < items_.size(); ++i) {
+            if (items_[i].separator) {
+                pending = i;
+                continue;
+            }
+            rows.push_back({i, {}, {}, std::exchange(pending, no_separator)});
         }
     } else {
         std::vector<core::ItemScore> scores(items_.size());
         std::vector<std::size_t> order;
         for (std::size_t i = 0; i < items_.size(); ++i) {
+            if (items_[i].separator) {
+                continue;
+            }
             scores[i] = core::score_item({cached_[i].label, cached_[i].description, {}}, query);
             if (scores[i].score != 0) {
                 order.push_back(i);
@@ -361,8 +486,11 @@ void QuickPick::reposition() {
         } else {
             content = rows * row_height;
         }
-        const int limit = std::max(3 * row_height, static_cast<int>(window->height() * 0.4));
-        list_height = std::min(content, limit / row_height * row_height + 6);
+        const int available =
+            window->height() - top_offset_ - header_->sizeHint().height() - 2 * window_margin;
+        const int fitting = std::max(3, available / row_height);
+        const int limit = std::min(max_visible_rows, fitting) * row_height;
+        list_height = std::min(content, limit + 6);
     }
     list_->setVisible(rows > 0);
     empty_->setVisible(rows == 0 && !empty_->text().isEmpty());
