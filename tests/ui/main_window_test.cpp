@@ -2653,6 +2653,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.navigateForward",
                                           "workbench.action.navigateToLastEditLocation",
                                           "workbench.action.reopenClosedEditor",
+                                          "workbench.action.selectTheme",
                                           "workbench.action.gotoLine",
                                           "editor.action.jumpToBracket",
                                           "workbench.action.openSettings",
@@ -2860,6 +2861,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "editor.action.jumpToBracket",
         "workbench.action.openSettings",
         "workbench.action.openGlobalKeybindings",
+        "workbench.action.selectTheme",
         "workbench.action.activityBarLocation.default",
         "workbench.action.activityBarLocation.hide",
         "workbench.action.positionPanelTop",
@@ -7298,4 +7300,185 @@ TEST_F(ReopenTest, TheShortcutReopensTheEditor) {
     window_->view()->setFocus();
     QTest::keyClick(window_->view(), Qt::Key_T, Qt::ControlModifier | Qt::ShiftModifier);
     EXPECT_TRUE(has(focused(), a));
+}
+
+class ThemePickerTest : public MainWindowTest {
+protected:
+    void start() {
+        settings_file_ = write("settings.json", "{}");
+        create_window();
+        window_->resize(900, 600);
+        window_->show();
+        QApplication::processEvents();
+    }
+
+    ui::QuickPick* pick() {
+        return window_->command_palette();
+    }
+    QString label_of(std::size_t item) const {
+        return window_->command_palette()->items()[item].label;
+    }
+    // The position in the list of the theme, or of nothing.
+    std::optional<std::size_t> item_of(const QString& label) const {
+        const auto& items = window_->command_palette()->items();
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (!items[i].separator && items[i].label == label) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+    QString chosen_label() const {
+        const QModelIndex current = window_->command_palette()->list()->currentIndex();
+        return current.data().toString();
+    }
+    void press(Qt::Key key) {
+        QTest::keyClick(pick()->filter_field(), key);
+    }
+    std::string applied() const {
+        return window_->themes().current();
+    }
+    QColor editor_background() const {
+        return window_->colors().color("editor.background");
+    }
+    std::string settings_text() const {
+        return platform::read_file(settings_file_).value_or("");
+    }
+};
+
+TEST_F(ThemePickerTest, TheItemIsEnabledAndShowsItsKey) {
+    start();
+    QAction* item = menu_action("workbench.action.selectTheme");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_TRUE(item->text().endsWith("\tCtrl+K Ctrl+T")) << item->text().toStdString();
+}
+
+TEST_F(ThemePickerTest, TheQuickPickListsTheThemesInGroupsAndChoosesTheCurrentOne) {
+    start();
+    ASSERT_EQ(applied(), "Dark 2026");
+    window_->commands().execute("workbench.action.selectTheme");
+    ASSERT_TRUE(pick()->isVisible());
+    EXPECT_EQ(pick()->filter_field()->placeholderText(),
+              "Select Color Theme (Up/Down Keys to Preview)");
+
+    std::vector<QString> headings;
+    for (const ui::QuickPickItem& item : pick()->items()) {
+        if (item.separator) {
+            headings.push_back(item.label);
+        }
+    }
+    EXPECT_EQ(headings,
+              (std::vector<QString>{"dark themes", "light themes", "high contrast themes"}));
+    EXPECT_EQ(pick()->shown_items().size(), window_->themes().themes().size());
+    EXPECT_EQ(chosen_label(), "Dark 2026");
+    EXPECT_EQ(label_of(1), "Dark 2026");
+}
+
+TEST_F(ThemePickerTest, TheThemeOfTheSettingsIsTheChosenOne) {
+    settings_file_ = write("settings.json", R"j({"workbench.colorTheme": "Light Modern"})j");
+    create_window();
+    window_->commands().execute("workbench.action.selectTheme");
+    EXPECT_EQ(chosen_label(), "Light Modern");
+}
+
+TEST_F(ThemePickerTest, MovingTheChosenRowPreviewsTheThemeWithoutChangingTheSettings) {
+    start();
+    const auto id_of_label = [&](const QString& label) {
+        for (const ui::ThemeStore::Entry& entry : window_->themes().themes()) {
+            if (QString::fromStdString(entry.label) == label) {
+                return entry.id;
+            }
+        }
+        return std::string();
+    };
+    window_->commands().execute("workbench.action.selectTheme");
+    const QColor before = editor_background();
+    for (int i = 0; i < 6; ++i) {
+        press(Qt::Key_Down);
+        EXPECT_EQ(applied(), id_of_label(chosen_label())) << i;
+    }
+    EXPECT_NE(applied(), "Dark 2026");
+    EXPECT_NE(editor_background(), before);
+    EXPECT_EQ(settings_text(), "{}");
+    EXPECT_EQ(window_->settings().editor().color_theme, "Dark 2026");
+    press(Qt::Key_Escape);
+}
+
+TEST_F(ThemePickerTest, EnterKeepsTheThemeAndWritesItToTheSettings) {
+    start();
+    window_->commands().execute("workbench.action.selectTheme");
+    QTest::keyClicks(pick()->filter_field(), "Light Modern");
+    ASSERT_EQ(applied(), "Light Modern");
+    press(Qt::Key_Return);
+    EXPECT_TRUE(pick()->isHidden());
+    EXPECT_EQ(applied(), "Light Modern");
+    EXPECT_NE(settings_text().find("\"workbench.colorTheme\": \"Light Modern\""), std::string::npos)
+        << settings_text();
+    EXPECT_EQ(window_->settings().editor().color_theme, "Light Modern");
+}
+
+TEST_F(ThemePickerTest, EscapeBringsTheThemeAndTheColorsBack) {
+    start();
+    const QColor before = editor_background();
+    window_->commands().execute("workbench.action.selectTheme");
+    QTest::keyClicks(pick()->filter_field(), "Light Modern");
+    ASSERT_EQ(applied(), "Light Modern");
+    ASSERT_NE(editor_background(), before);
+
+    press(Qt::Key_Escape);
+    EXPECT_TRUE(pick()->isHidden());
+    EXPECT_EQ(applied(), "Dark 2026");
+    EXPECT_EQ(editor_background(), before);
+    EXPECT_EQ(settings_text(), "{}");
+}
+
+TEST_F(ThemePickerTest, TheFocusLeavingTheQuickPickPutsTheThemeBackToo) {
+    start();
+    window_->commands().execute("workbench.action.selectTheme");
+    QTest::keyClicks(pick()->filter_field(), "High Contrast");
+    ASSERT_NE(applied(), "Dark 2026");
+    pick()->cancel();
+    EXPECT_EQ(applied(), "Dark 2026");
+}
+
+TEST_F(ThemePickerTest, AThemeOfAnExtensionIsInTheListAndAThemeWithoutAFileCannotBeChosen) {
+    start();
+    window_->themes().add_themes({{.id = "ext.theme",
+                                   .label = "Extension Theme",
+                                   .kind = core::ThemeKind::light,
+                                   .file = scratch_ / "missing-theme.json"}});
+    window_->status_bar().clear_message();
+    window_->commands().execute("workbench.action.selectTheme");
+    const auto item = item_of("Extension Theme");
+    ASSERT_TRUE(item.has_value());
+    EXPECT_TRUE(pick()->items()[*item].disabled);
+
+    QTest::keyClicks(pick()->filter_field(), "Extension");
+    EXPECT_EQ(applied(), "Dark 2026");
+    EXPECT_TRUE(window_->status_bar().message().isEmpty())
+        << window_->status_bar().message().toStdString();
+    press(Qt::Key_Return);
+    EXPECT_TRUE(pick()->isVisible());
+    EXPECT_EQ(settings_text(), "{}");
+}
+
+TEST_F(ThemePickerTest, WithNoThemesTheStatusBarSaysSoAndNothingOpens) {
+    themes_directory_ = scratch_ / "no-themes";
+    start();
+    window_->status_bar().clear_message();
+    window_->commands().execute("workbench.action.selectTheme");
+    EXPECT_FALSE(pick()->isVisible());
+    EXPECT_EQ(window_->status_bar().message(), "There are no color themes to choose from");
+}
+
+TEST_F(ThemePickerTest, TheCommandIsInThePaletteAndTheShortcutOpensTheQuickPick) {
+    start();
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_T, Qt::ControlModifier);
+    EXPECT_TRUE(pick()->isVisible());
+    EXPECT_EQ(label_of(1), "Dark 2026");
 }

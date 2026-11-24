@@ -269,9 +269,19 @@ private:
     void choose_language(const core::Uri& uri, const std::string& id);
     // Forgets what the window knows of the language of a document that leaves the window.
     void forget_document_language(const core::Uri& uri);
+    // What a pick can do besides choosing: start with an item as the chosen row, hear of each item
+    // the chosen row moves to, and hear that the pick was closed without a choice.
+    struct PickHooks {
+        std::optional<std::size_t> active;
+        std::function<void(std::size_t)> highlighted;
+        std::function<void()> dismissed;
+    };
     // Shows `items` in the quick pick; `chosen` gets the position of the one the user picks.
     void pick_from(const QString& placeholder, std::vector<QuickPickItem> items,
-                   std::function<void(std::size_t)> chosen);
+                   std::function<void(std::size_t)> chosen, PickHooks hooks = {});
+    // Opens the quick pick of color themes, which shows each one as the chosen row moves and keeps
+    // the one that is chosen in the settings.
+    void select_color_theme();
     // What a pick of a language shows, as VS Code's does: the registered languages that have a
     // name, sorted by name, each with its id in parentheses after the name and `current` marked as
     // the configured language.
@@ -449,6 +459,8 @@ private:
     std::map<core::Uri, std::string> chosen_languages_;
     // What the quick pick does with the item that is chosen, while it is not the command palette.
     std::function<void(std::size_t)> pick_action_;
+    std::function<void(std::size_t)> pick_highlighted_;
+    std::function<void()> pick_dismissed_;
     // The open documents, each shown by one or more tabs of the layout.
     std::map<core::Uri, std::shared_ptr<core::Document>> documents_;
     workbench::EditorLayout layout_;

@@ -281,6 +281,13 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
     layout->addWidget(list_);
     layout->addWidget(empty_);
 
+    connect(list_->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex& current) {
+                const auto row = static_cast<std::size_t>(current.row());
+                if (current.isValid() && row < model_->rows().size()) {
+                    emit active_changed(model_->rows()[row].item);
+                }
+            });
     connect(filter_, &QLineEdit::textChanged, this, [this] { refilter(); });
     connect(list_, &QListView::clicked, this, [this](const QModelIndex& index) { choose(index); });
     connect(qApp, &QApplication::focusChanged, this,
@@ -394,6 +401,16 @@ void QuickPick::open(const QString& text) {
     raise();
     filter_->setFocus();
     filter_->setCursorPosition(static_cast<int>(text.size()));
+}
+
+void QuickPick::set_active_item(std::size_t item) {
+    const auto& rows = model_->rows();
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        if (rows[row].item == item) {
+            list_->setCurrentIndex(model_->index(static_cast<int>(row)));
+            return;
+        }
+    }
 }
 
 void QuickPick::cancel() {

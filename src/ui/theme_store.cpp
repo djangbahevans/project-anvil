@@ -203,6 +203,38 @@ bool ThemeStore::apply(const Entry& entry, std::string* problem) {
     return true;
 }
 
+std::vector<std::vector<const ThemeStore::Entry*>> ThemeStore::picker_groups() const {
+    std::vector<std::vector<const Entry*>> groups(3);
+    for (const Entry& entry : themes_) {
+        switch (entry.kind) {
+        case core::ThemeKind::dark:
+            groups[0].push_back(&entry);
+            break;
+        case core::ThemeKind::light:
+            groups[1].push_back(&entry);
+            break;
+        case core::ThemeKind::high_contrast_dark:
+        case core::ThemeKind::high_contrast_light:
+            groups[2].push_back(&entry);
+            break;
+        }
+    }
+    const auto is_default = [](const Entry* entry) {
+        return entry->id == "Dark 2026" || entry->id == "Light 2026";
+    };
+    for (std::vector<const Entry*>& group : groups) {
+        std::ranges::stable_sort(group, [&](const Entry* a, const Entry* b) {
+            if (is_default(a) != is_default(b)) {
+                return is_default(a);
+            }
+            return QString::compare(QString::fromStdString(a->label),
+                                    QString::fromStdString(b->label), Qt::CaseInsensitive) < 0;
+        });
+    }
+    std::erase_if(groups, [](const auto& group) { return group.empty(); });
+    return groups;
+}
+
 bool ThemeStore::select(std::string_view name, std::string_view fallback) {
     std::string problem;
     if (const Entry* entry = find(name)) {

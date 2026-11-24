@@ -47,6 +47,11 @@ public:
         return themes_;
     }
 
+    // The themes grouped as the color theme picker lists them: dark, light and high contrast
+    // themes, in this order. Within a group the default theme comes first and the others follow by
+    // label, ignoring case. Empty groups are left out.
+    std::vector<std::vector<const Entry*>> picker_groups() const;
+
     // Adds themes after the ones there are, such as those that extensions contribute. A theme with
     // the id of one that is listed already is left out and logged, so the first of two themes of
     // the same name wins; one whose file is missing is listed and logged as unavailable.

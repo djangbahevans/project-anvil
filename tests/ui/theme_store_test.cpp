@@ -434,3 +434,65 @@ TEST_F(ThemeStoreTest, AnInvalidContributedThemeFileFailsAndTheOthersStillWork) 
     ASSERT_TRUE(store_->select("Included"));
     EXPECT_EQ(colors_.color("editor.background"), QColor("#444444"));
 }
+
+TEST_F(ThemeStoreTest, ThePickerListsDarkThenLightThenHighContrastThemesWithTheDefaultFirst) {
+    open_shipped();
+    const auto groups = store_->picker_groups();
+    const auto ids = [](const std::vector<const ThemeStore::Entry*>& group) {
+        std::vector<std::string> names;
+        for (const ThemeStore::Entry* entry : group) {
+            names.push_back(entry->id);
+        }
+        return names;
+    };
+    ASSERT_EQ(groups.size(), 3U);
+    EXPECT_EQ(ids(groups[0]), (std::vector<std::string>{"Dark 2026", "Visual Studio Dark",
+                                                        "Dark Modern", "Dark+"}));
+    EXPECT_EQ(ids(groups[1]), (std::vector<std::string>{"Light 2026", "Visual Studio Light",
+                                                        "Light Modern", "Light+"}));
+    EXPECT_EQ(ids(groups[2]),
+              (std::vector<std::string>{"Default High Contrast", "Default High Contrast Light"}));
+}
+
+TEST_F(ThemeStoreTest, ThePickerLeavesOutGroupsWithNoThemeAndSortsByLabelIgnoringCase) {
+    write("themes.json", R"j([
+        {"id": "b", "label": "banana", "uiTheme": "vs", "path": "t.json"},
+        {"id": "a", "label": "Cherry", "uiTheme": "vs", "path": "t.json"},
+        {"id": "c", "label": "Apple", "uiTheme": "vs", "path": "t.json"}])j");
+    write("t.json", "{}");
+    open_store(scratch_);
+    const auto groups = store_->picker_groups();
+    ASSERT_EQ(groups.size(), 1U);
+    ASSERT_EQ(groups[0].size(), 3U);
+    EXPECT_EQ(groups[0][0]->label, "Apple");
+    EXPECT_EQ(groups[0][1]->label, "banana");
+    EXPECT_EQ(groups[0][2]->label, "Cherry");
+}
+
+TEST_F(ThemeStoreTest, ThePickerOffersAThemeWhoseFileIsMissingAsUnavailable) {
+    open_shipped();
+    store_->add_themes({{.id = "gone",
+                         .label = "Gone",
+                         .kind = core::ThemeKind::dark,
+                         .file = scratch_ / "gone.json"}});
+    const ThemeStore::Entry* gone = nullptr;
+    const auto groups = store_->picker_groups();
+    for (const ThemeStore::Entry* entry : groups[0]) {
+        if (entry->id == "gone") {
+            gone = entry;
+        }
+    }
+    ASSERT_NE(gone, nullptr);
+    EXPECT_FALSE(gone->available);
+}
+
+TEST_F(ThemeStoreTest, TheGroupsOfThePickerOrderByLabelAndNotById) {
+    write("themes.json", R"j([{"id": "z", "label": "Alpha", "uiTheme": "vs-dark", "path": "t.json"},
+                              {"id": "a", "label": "Omega", "uiTheme": "vs-dark", "path": "t.json"}])j");
+    write("t.json", "{}");
+    open_store(scratch_);
+    const auto groups = store_->picker_groups();
+    ASSERT_EQ(groups.size(), 1U);
+    EXPECT_EQ(groups[0][0]->label, "Alpha");
+    EXPECT_EQ(groups[0][1]->label, "Omega");
+}

@@ -70,6 +70,9 @@ public:
     // Shows the popup with `text` in the filter field and the first item chosen, and takes the
     // keyboard focus. The focus goes back to where it was when the popup closes.
     void open(const QString& text = {});
+    // Makes the item, by its position in the list that was set, the chosen row, when the filter
+    // shows it and it is not a divider.
+    void set_active_item(std::size_t item);
     // Closes the popup without a choice.
     void cancel();
 
@@ -91,6 +94,9 @@ public:
     std::vector<core::MatchRange> label_highlights(std::size_t row) const;
 
 signals:
+    // The chosen row moved to the item at this position of the list that was set: by the arrow
+    // keys, the mouse, or because typing changed what is shown.
+    void active_changed(std::size_t item);
     // The user chose the item at this position of the list that was set. The popup is closed.
     void accepted(std::size_t item);
     // The popup closed without a choice.
