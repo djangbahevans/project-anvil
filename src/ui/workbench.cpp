@@ -10,6 +10,20 @@
 
 namespace anvil::ui {
 
+std::string_view panel_position_name(PanelPosition position) {
+    switch (position) {
+    case PanelPosition::top:
+        return "top";
+    case PanelPosition::left:
+        return "left";
+    case PanelPosition::right:
+        return "right";
+    case PanelPosition::bottom:
+        return "bottom";
+    }
+    return {};
+}
+
 std::string_view part_id(Part part) {
     switch (part) {
     case Part::title_bar:
@@ -85,11 +99,11 @@ Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     across_->setStretchFactor(1, 1);
 
     auto* row = new QWidget(this);
-    auto* layout = new QHBoxLayout(row);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    layout->addWidget(activity_bar_);
-    layout->addWidget(across_, 1);
+    row_layout_ = new QHBoxLayout(row);
+    row_layout_->setContentsMargins(0, 0, 0, 0);
+    row_layout_->setSpacing(0);
+    row_layout_->addWidget(activity_bar_);
+    row_layout_->addWidget(across_, 1);
 
     root_layout_ = new QVBoxLayout(this);
     root_layout_->setContentsMargins(0, 0, 0, 0);
@@ -186,7 +200,7 @@ void Workbench::set_visible(Part part, bool visible) {
             if (panel_maximized_) {
                 set_maximized(Part::panel, false);
             } else {
-                panel_size_ = panel_->height();
+                panel_size() = panel_extent();
             }
             panel_->hide();
         }
@@ -212,7 +226,7 @@ void Workbench::set_maximized(Part part, bool maximized) {
         const bool was_shown = !panel_->isHidden();
         set_visible(Part::panel, true);
         if (was_shown) {
-            panel_size_ = panel_->height();
+            panel_size() = panel_extent();
         }
         panel_maximized_ = true;
         editor_host_->hide();
@@ -239,7 +253,7 @@ int Workbench::size(Part part) const {
     case Part::editor:
         return editor_host_->width();
     case Part::panel:
-        return panel_->isHidden() ? panel_size_ : panel_->height();
+        return panel_->isHidden() ? panel_size() : panel_extent();
     case Part::status_bar:
         return status_bar_ ? status_bar_->height() : 0;
     }
@@ -250,21 +264,96 @@ void Workbench::set_size(Part part, int pixels) {
     if (part == Part::sidebar) {
         sidebar_size_ = std::max(pixels, sidebar_minimum_width);
     } else if (part == Part::panel) {
-        panel_size_ = std::max(pixels, panel_minimum_height);
+        panel_size() =
+            std::max(pixels, panel_is_beside_editor() ? panel_minimum_width : panel_minimum_height);
     } else {
         return;
     }
     apply_sizes();
 }
 
+Side Workbench::sidebar_side() const {
+    return sidebar_side_;
+}
+
+void Workbench::set_sidebar_side(Side side) {
+    if (side == sidebar_side_) {
+        return;
+    }
+    if (sidebar_->isVisible()) {
+        sidebar_size_ = sidebar_->width();
+    }
+    sidebar_side_ = side;
+    arrange();
+    emit sidebar_side_changed(side);
+}
+
+PanelPosition Workbench::panel_position() const {
+    return panel_position_;
+}
+
+void Workbench::set_panel_position(PanelPosition position) {
+    if (position == panel_position_) {
+        return;
+    }
+    if (panel_->isVisible() && !panel_maximized_) {
+        panel_size() = panel_extent();
+    }
+    panel_position_ = position;
+    arrange();
+    emit panel_position_changed(position);
+}
+
+bool Workbench::panel_is_beside_editor() const {
+    return panel_position_ == PanelPosition::left || panel_position_ == PanelPosition::right;
+}
+
+int Workbench::panel_extent() const {
+    return panel_is_beside_editor() ? panel_->width() : panel_->height();
+}
+
+int& Workbench::panel_size() {
+    return panel_sizes_[static_cast<std::size_t>(panel_position_)];
+}
+
+int Workbench::panel_size() const {
+    return panel_sizes_[static_cast<std::size_t>(panel_position_)];
+}
+
+void Workbench::arrange() {
+    const bool sidebar_last = sidebar_side_ == Side::right;
+    across_->insertWidget(sidebar_last ? 1 : 0, sidebar_);
+    across_->setStretchFactor(across_->indexOf(sidebar_), 0);
+    across_->setStretchFactor(across_->indexOf(down_), 1);
+    row_layout_->removeWidget(activity_bar_);
+    row_layout_->insertWidget(sidebar_last ? 1 : 0, activity_bar_);
+
+    const bool beside = panel_is_beside_editor();
+    const bool panel_first =
+        panel_position_ == PanelPosition::top || panel_position_ == PanelPosition::left;
+    down_->setOrientation(beside ? Qt::Horizontal : Qt::Vertical);
+    down_->insertWidget(panel_first ? 0 : 1, panel_);
+    down_->setStretchFactor(down_->indexOf(panel_), 0);
+    down_->setStretchFactor(down_->indexOf(editor_host_), 1);
+    panel_->setMinimumSize(beside ? panel_minimum_width : 0, beside ? 0 : panel_minimum_height);
+
+    apply_sizes();
+}
+
 void Workbench::apply_sizes() {
     if (!sidebar_->isHidden()) {
         const int total = across_->width();
-        across_->setSizes({sidebar_size_, std::max(1, total - sidebar_size_)});
+        const int rest = std::max(1, total - sidebar_size_);
+        across_->setSizes(sidebar_side_ == Side::left ? QList<int>{sidebar_size_, rest}
+                                                      : QList<int>{rest, sidebar_size_});
     }
     if (!panel_->isHidden() && !panel_maximized_) {
-        const int total = down_->height();
-        down_->setSizes({std::max(1, total - panel_size_), panel_size_});
+        const int total = panel_is_beside_editor() ? down_->width() : down_->height();
+        const int rest = std::max(1, total - panel_size());
+        const bool panel_first =
+            panel_position_ == PanelPosition::top || panel_position_ == PanelPosition::left;
+        down_->setSizes(panel_first ? QList<int>{panel_size(), rest}
+                                    : QList<int>{rest, panel_size()});
     }
 }
 

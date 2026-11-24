@@ -114,6 +114,11 @@ public:
         setChecked(shown);
         update();
     }
+    void set_icons(std::string_view shown_icon, std::string_view hidden_icon) {
+        shown_icon_ = shown_icon;
+        hidden_icon_ = hidden_icon;
+        update();
+    }
     void set_active(bool active) {
         active_ = active;
         update();
@@ -350,6 +355,12 @@ void TitleBar::set_layout_controls_visible(bool visible) {
 
 void TitleBar::set_sidebar_shown(bool shown) {
     static_cast<LayoutButton*>(sidebar_button_)->set_shown(shown);
+}
+
+void TitleBar::set_sidebar_side(Side side) {
+    static_cast<LayoutButton*>(sidebar_button_)
+        ->set_icons(side == Side::left ? "layout-sidebar-left" : "layout-sidebar-right",
+                    side == Side::left ? "layout-sidebar-left-off" : "layout-sidebar-right-off");
 }
 
 void TitleBar::set_panel_shown(bool shown) {

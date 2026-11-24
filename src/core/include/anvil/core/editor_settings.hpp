@@ -35,6 +35,13 @@ enum class RenderWhitespace { none, boundary, selection, trailing, all };
 // on macOS.
 enum class MultiCursorModifier { alt, ctrl_cmd };
 
+// workbench.sideBar.location: the edge of the window the primary side bar is on.
+enum class SideBarLocation { left, right };
+
+// workbench.activityBar.location. `top` and `bottom` are valid values that the window shows as
+// `standard`, because the activity bar has no place other than beside the side bar yet.
+enum class ActivityBarLocation { standard, top, bottom, hidden };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
@@ -83,6 +90,13 @@ struct EditorSettings {
     // the panel
     bool layout_controls = true;
 
+    // workbench.statusBar.visible
+    bool status_bar_visible = true;
+    // workbench.sideBar.location
+    SideBarLocation side_bar_location = SideBarLocation::left;
+    // workbench.activityBar.location, where "default" is `standard`
+    ActivityBarLocation activity_bar_location = ActivityBarLocation::standard;
+
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
@@ -91,7 +105,9 @@ struct EditorSettings {
     // of "\n", "\r\n" and "auto", an `editor.multiCursorModifier` that is not "alt" or "ctrlCmd",
     // an `editor.renderWhitespace` that is not "none", "boundary", "selection", "trailing" or
     // "all", a `files.autoSave` that is not "off", "afterDelay", "onFocusChange" or
-    // "onWindowChange", or a `window.titleBarStyle` that is not "custom" or "native", fails with
+    // "onWindowChange", a `workbench.sideBar.location` that is not "left" or "right", a
+    // `workbench.activityBar.location` that is not "default", "top", "bottom" or "hidden", or a
+    // `window.titleBarStyle` that is not "custom" or "native", fails with
     // ErrorCode::invalid_argument and a message that names every offending key.
     static std::expected<EditorSettings, Error> from_settings(const Settings& settings,
                                                               const EditorDefaults& defaults);

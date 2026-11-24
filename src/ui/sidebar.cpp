@@ -78,6 +78,9 @@ Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
     connect(activity_bar_, &ActivityBar::activated, this,
             [this](const QString& id) { choose(id.toStdString()); });
     connect(&registry_, &ViewContainerRegistry::changed, this, [this] { refresh(); });
+    activity_bar_->set_side(workbench_.sidebar_side());
+    connect(&workbench_, &Workbench::sidebar_side_changed, this,
+            [this](Side side) { activity_bar_->set_side(side); });
     connect(&workbench_, &Workbench::visibility_changed, this, [this](Part part, bool visible) {
         if (part != Part::sidebar) {
             return;
@@ -127,6 +130,14 @@ void Sidebar::choose(const std::string& id) {
     activate(id);
 }
 
+void Sidebar::set_activity_bar_allowed(bool allowed) {
+    if (allowed == activity_bar_allowed_) {
+        return;
+    }
+    activity_bar_allowed_ = allowed;
+    refresh();
+}
+
 void Sidebar::update_buttons() {
     activity_bar_->set_active(workbench_.is_visible(Part::sidebar) ? active_ : std::string());
 }
@@ -139,7 +150,7 @@ void Sidebar::refresh() {
         entries.push_back({container->id, container->title, container->icon});
     }
     activity_bar_->set_entries(entries);
-    workbench_.set_visible(Part::activity_bar, !entries.empty());
+    workbench_.set_visible(Part::activity_bar, activity_bar_allowed_ && !entries.empty());
 
     // A container that was removed, or moved to the panel, leaves with its widget.
     stack_->prune();

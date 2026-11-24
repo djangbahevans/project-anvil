@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QEnterEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QSignalSpy>
 #include <QSplitterHandle>
 #include <QTest>
@@ -524,4 +525,292 @@ TEST_F(WorkbenchTest, ASizeSetWhileMaximizedAppliesWhenThePanelIsRestored) {
     workbench_->set_maximized(Part::panel, false);
     QApplication::processEvents();
     EXPECT_NEAR(workbench_->panel()->height(), 150, 1);
+}
+
+namespace {
+
+using anvil::ui::PanelPosition;
+using anvil::ui::Side;
+
+constexpr PanelPosition all_positions[] = {PanelPosition::top, PanelPosition::left,
+                                           PanelPosition::right, PanelPosition::bottom};
+
+QRect rect_in(const QWidget* widget, const QWidget* ancestor) {
+    return QRect(widget->mapTo(ancestor, QPoint(0, 0)), widget->size());
+}
+
+} // namespace
+
+TEST_F(WorkbenchTest, ThePartsFollowTheSideOfTheSidebarAndThePositionOfThePanel) {
+    workbench_->set_visible(Part::activity_bar, true);
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::sidebar, 200);
+
+    for (const Side side : {Side::left, Side::right}) {
+        for (const PanelPosition position : all_positions) {
+            workbench_->set_sidebar_side(side);
+            workbench_->set_panel_position(position);
+            QApplication::processEvents();
+            SCOPED_TRACE(::testing::Message() << (side == Side::left ? "left" : "right") << " "
+                                              << anvil::ui::panel_position_name(position));
+
+            const QRect whole = workbench_->rect();
+            const QRect activity = rect_in(workbench_->activity_bar(), workbench_.get());
+            const QRect sidebar = rect_in(workbench_->sidebar(), workbench_.get());
+            const QRect panel = rect_in(workbench_->panel(), workbench_.get());
+            const QRect editor = rect_in(editor_, workbench_.get());
+
+            if (side == Side::left) {
+                EXPECT_EQ(activity.left(), whole.left());
+                EXPECT_EQ(sidebar.left(), activity.right() + 1);
+                EXPECT_GT(editor.left(), sidebar.right());
+                EXPECT_GT(panel.left(), sidebar.right());
+            } else {
+                EXPECT_EQ(activity.right(), whole.right());
+                EXPECT_EQ(sidebar.right(), activity.left() - 1);
+                EXPECT_LT(editor.right(), sidebar.left());
+                EXPECT_LT(panel.right(), sidebar.left());
+            }
+            EXPECT_EQ(sidebar.width(), 200);
+            EXPECT_EQ(activity.width(), Workbench::activity_bar_width);
+
+            switch (position) {
+            case PanelPosition::top:
+                EXPECT_LT(panel.bottom(), editor.top());
+                EXPECT_EQ(panel.left(), editor.left());
+                EXPECT_EQ(panel.width(), editor.width());
+                break;
+            case PanelPosition::bottom:
+                EXPECT_GT(panel.top(), editor.bottom());
+                EXPECT_EQ(panel.left(), editor.left());
+                EXPECT_EQ(panel.width(), editor.width());
+                break;
+            case PanelPosition::left:
+                EXPECT_LT(panel.right(), editor.left());
+                EXPECT_EQ(panel.top(), editor.top());
+                EXPECT_EQ(panel.height(), editor.height());
+                break;
+            case PanelPosition::right:
+                EXPECT_GT(panel.left(), editor.right());
+                EXPECT_EQ(panel.top(), editor.top());
+                EXPECT_EQ(panel.height(), editor.height());
+                break;
+            }
+        }
+    }
+}
+
+TEST_F(WorkbenchTest, TheSidebarAndThePanelStartOnTheLeftAndAtTheBottom) {
+    EXPECT_EQ(workbench_->sidebar_side(), Side::left);
+    EXPECT_EQ(workbench_->panel_position(), PanelPosition::bottom);
+    EXPECT_EQ(anvil::ui::panel_position_name(PanelPosition::top), "top");
+    EXPECT_EQ(anvil::ui::panel_position_name(PanelPosition::left), "left");
+    EXPECT_EQ(anvil::ui::panel_position_name(PanelPosition::right), "right");
+    EXPECT_EQ(anvil::ui::panel_position_name(PanelPosition::bottom), "bottom");
+}
+
+TEST_F(WorkbenchTest, TheSidebarKeepsItsSizeWhenItMovesToTheOtherSide) {
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_size(Part::sidebar, 260);
+    QApplication::processEvents();
+
+    workbench_->set_sidebar_side(Side::right);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), 260, 1);
+    EXPECT_EQ(workbench_->size(Part::sidebar), workbench_->sidebar()->width());
+
+    workbench_->set_visible(Part::sidebar, false);
+    workbench_->set_sidebar_side(Side::left);
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), 260, 1);
+}
+
+TEST_F(WorkbenchTest, ADraggedSashOfASidebarOnTheRightResizesIt) {
+    workbench_->set_sidebar_side(Side::right);
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    const auto handles = sashes();
+    ASSERT_EQ(handles.size(), 1U);
+    QSplitterHandle* sash = handles.front();
+    const int before = workbench_->sidebar()->width();
+
+    QTest::mousePress(sash, Qt::LeftButton, {}, sash->rect().center());
+    QTest::mouseMove(sash, sash->rect().center() + QPoint(-60, 0));
+    QTest::mouseRelease(sash, Qt::LeftButton, {}, sash->rect().center() + QPoint(-60, 0));
+    QApplication::processEvents();
+    const int dragged = workbench_->sidebar()->width();
+    EXPECT_NEAR(dragged, before + 60, 3);
+
+    workbench_->set_sidebar_side(Side::left);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), dragged, 1);
+}
+
+TEST_F(WorkbenchTest, EveryPanelPositionKeepsItsOwnSize) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::panel, 180);
+    QApplication::processEvents();
+
+    workbench_->set_panel_position(PanelPosition::right);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->width(), Workbench::default_size, 1);
+    workbench_->set_size(Part::panel, 410);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->width(), 410, 1);
+
+    workbench_->set_panel_position(PanelPosition::top);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), Workbench::default_size, 1);
+
+    workbench_->set_panel_position(PanelPosition::bottom);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), 180, 1);
+    workbench_->set_panel_position(PanelPosition::right);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->width(), 410, 1);
+    EXPECT_EQ(workbench_->size(Part::panel), workbench_->panel()->width());
+}
+
+TEST_F(WorkbenchTest, ASizeThatTheUserDraggedIsKeptWhenThePanelMoves) {
+    workbench_->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    const auto handles = sashes();
+    ASSERT_EQ(handles.size(), 1U);
+    QSplitterHandle* sash = handles.front();
+    QTest::mousePress(sash, Qt::LeftButton, {}, sash->rect().center());
+    QTest::mouseMove(sash, sash->rect().center() + QPoint(0, -70));
+    QTest::mouseRelease(sash, Qt::LeftButton, {}, sash->rect().center() + QPoint(0, -70));
+    QApplication::processEvents();
+    const int dragged = workbench_->panel()->height();
+    EXPECT_NEAR(dragged, Workbench::default_size + 70, 3);
+
+    workbench_->set_panel_position(PanelPosition::left);
+    workbench_->set_panel_position(PanelPosition::bottom);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), dragged, 1);
+}
+
+TEST_F(WorkbenchTest, ThePanelBesideTheEditorHasAMinimumWidthAndNoMinimumHeight) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_panel_position(PanelPosition::left);
+    workbench_->set_size(Part::panel, 50);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->panel()->width(), Workbench::panel_minimum_width);
+    EXPECT_EQ(workbench_->panel()->height(), editor_height());
+    EXPECT_EQ(workbench_->panel()->minimumWidth(), Workbench::panel_minimum_width);
+    EXPECT_EQ(workbench_->panel()->minimumHeight(), 0);
+
+    workbench_->set_panel_position(PanelPosition::top);
+    workbench_->set_size(Part::panel, 10);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->panel()->height(), Workbench::panel_minimum_height);
+    EXPECT_EQ(workbench_->panel()->minimumHeight(), Workbench::panel_minimum_height);
+    EXPECT_EQ(workbench_->panel()->minimumWidth(), 0);
+}
+
+TEST_F(WorkbenchTest, NoPanelPositionLeavesTheEditorLessThanItsMinimum) {
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_visible(Part::panel, true);
+    for (const PanelPosition position : all_positions) {
+        workbench_->set_panel_position(position);
+        workbench_->set_size(Part::panel, 5000);
+        workbench_->set_size(Part::sidebar, 5000);
+        QApplication::processEvents();
+        EXPECT_GE(editor_width(), Workbench::editor_minimum_width);
+        EXPECT_GE(editor_height(), Workbench::editor_minimum_height);
+    }
+}
+
+TEST_F(WorkbenchTest, AHiddenPanelStaysHiddenWhenItMovesAndComesBackThere) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_visible(Part::panel, false);
+    QApplication::processEvents();
+    const int editor_before = editor_height();
+
+    workbench_->set_panel_position(PanelPosition::right);
+    QApplication::processEvents();
+    EXPECT_FALSE(workbench_->is_visible(Part::panel));
+    EXPECT_EQ(editor_height(), editor_before);
+    EXPECT_EQ(editor_width(), workbench_->width());
+
+    workbench_->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_GT(at(workbench_->panel()).x(), at(editor_).x());
+    EXPECT_NEAR(workbench_->panel()->width(), Workbench::default_size, 1);
+}
+
+TEST_F(WorkbenchTest, AMaximizedPanelTakesTheWholeEditorAreaAtEveryPosition) {
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_maximized(Part::panel, true);
+    for (const PanelPosition position : all_positions) {
+        workbench_->set_panel_position(position);
+        QApplication::processEvents();
+        SCOPED_TRACE(anvil::ui::panel_position_name(position));
+        EXPECT_TRUE(workbench_->is_maximized(Part::panel));
+        EXPECT_FALSE(editor_->isVisible());
+        EXPECT_EQ(workbench_->panel()->width(),
+                  workbench_->width() - workbench_->sidebar()->width() - 4);
+        EXPECT_EQ(workbench_->panel()->height(), workbench_->height());
+    }
+}
+
+TEST_F(WorkbenchTest, RestoringAPanelThatWasMovedWhileMaximizedUsesTheSizeOfItsNewPosition) {
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::panel, 200);
+    workbench_->set_maximized(Part::panel, true);
+    workbench_->set_panel_position(PanelPosition::left);
+    workbench_->set_size(Part::panel, 350);
+    workbench_->set_maximized(Part::panel, false);
+    QApplication::processEvents();
+    EXPECT_TRUE(editor_->isVisible());
+    EXPECT_NEAR(workbench_->panel()->width(), 350, 1);
+
+    workbench_->set_panel_position(PanelPosition::bottom);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->panel()->height(), 200, 1);
+}
+
+TEST_F(WorkbenchTest, MovingThePartsTellsWhoIsListeningOnlyWhenSomethingChanges) {
+    QSignalSpy side(workbench_.get(), &Workbench::sidebar_side_changed);
+    QSignalSpy position(workbench_.get(), &Workbench::panel_position_changed);
+
+    workbench_->set_sidebar_side(Side::left);
+    workbench_->set_panel_position(PanelPosition::bottom);
+    EXPECT_EQ(side.count(), 0);
+    EXPECT_EQ(position.count(), 0);
+
+    workbench_->set_sidebar_side(Side::right);
+    workbench_->set_panel_position(PanelPosition::top);
+    ASSERT_EQ(side.count(), 1);
+    ASSERT_EQ(position.count(), 1);
+    EXPECT_EQ(side.front().front().value<Side>(), Side::right);
+    EXPECT_EQ(position.front().front().value<PanelPosition>(), PanelPosition::top);
+}
+
+TEST(WorkbenchFocusTest, MovingThePartsKeepsTheKeyboardFocusInTheEditorArea) {
+    WorkbenchColors colors{QApplication::palette()};
+    Workbench workbench(colors);
+    auto* editor = new QLineEdit;
+    workbench.set_editor_area(editor);
+    auto* in_sidebar = new QLineEdit(workbench.sidebar());
+    auto* in_panel = new QLineEdit(workbench.panel());
+    workbench.resize(1000, 700);
+    workbench.show();
+    workbench.set_visible(Part::sidebar, true);
+    workbench.set_visible(Part::panel, true);
+    QApplication::processEvents();
+
+    for (QLineEdit* focused : {editor, in_sidebar, in_panel}) {
+        focused->setFocus();
+        ASSERT_TRUE(focused->hasFocus());
+        workbench.set_sidebar_side(workbench.sidebar_side() == Side::left ? Side::right
+                                                                          : Side::left);
+        EXPECT_TRUE(focused->hasFocus());
+        for (const PanelPosition position : all_positions) {
+            workbench.set_panel_position(position);
+            EXPECT_TRUE(focused->hasFocus()) << anvil::ui::panel_position_name(position);
+        }
+    }
 }

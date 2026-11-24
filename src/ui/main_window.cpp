@@ -461,6 +461,11 @@ void MainWindow::apply_settings() {
         title_bar_->set_layout_controls_visible(editor.layout_controls);
     }
     layout_.set_focus_recent_after_close(editor.focus_recent_editor_after_close);
+    workbench_->set_visible(Part::status_bar, editor.status_bar_visible);
+    workbench_->set_sidebar_side(
+        editor.side_bar_location == core::SideBarLocation::right ? Side::right : Side::left);
+    sidebar_->set_activity_bar_allowed(editor.activity_bar_location !=
+                                       core::ActivityBarLocation::hidden);
     const bool auto_save_changed =
         editor.auto_save != auto_save_ || editor.auto_save_delay != auto_save_delay_;
     auto_save_ = editor.auto_save;
@@ -733,7 +738,43 @@ void MainWindow::register_commands() {
     add("workbench.action.togglePanel", tr("Toggle Panel Visibility"),
         [this] { workbench_->toggle(Part::panel); });
     add("workbench.action.toggleActivityBarVisibility", tr("Toggle Activity Bar Visibility"),
-        [this] { workbench_->toggle(Part::activity_bar); });
+        [this] {
+            const bool hidden =
+                settings_->editor().activity_bar_location == core::ActivityBarLocation::hidden;
+            change_setting("workbench.activityBar.location", hidden ? "default" : "hidden",
+                           tr("Activity Bar Position"));
+        });
+    add("workbench.action.activityBarLocation.default", tr("Move Activity Bar to Side"), [this] {
+        change_setting("workbench.activityBar.location", "default", tr("Activity Bar Position"));
+    });
+    add("workbench.action.activityBarLocation.hide", tr("Hide Activity Bar"), [this] {
+        change_setting("workbench.activityBar.location", "hidden", tr("Activity Bar Position"));
+    });
+    add("workbench.action.toggleStatusbarVisibility", tr("Toggle Status Bar Visibility"), [this] {
+        change_setting("workbench.statusBar.visible", !settings_->editor().status_bar_visible,
+                       tr("Status Bar Visibility"));
+    });
+    add("workbench.action.toggleSidebarPosition", tr("Toggle Primary Side Bar Position"), [this] {
+        const bool right = settings_->editor().side_bar_location == core::SideBarLocation::right;
+        change_setting("workbench.sideBar.location", right ? "left" : "right",
+                       tr("Primary Side Bar Position"));
+    });
+    const struct {
+        const char* id;
+        const char* title;
+        PanelPosition position;
+    } panel_positions[] = {
+        {"workbench.action.positionPanelTop", QT_TR_NOOP("Move Panel To Top"), PanelPosition::top},
+        {"workbench.action.positionPanelLeft", QT_TR_NOOP("Move Panel Left"), PanelPosition::left},
+        {"workbench.action.positionPanelRight", QT_TR_NOOP("Move Panel Right"),
+         PanelPosition::right},
+        {"workbench.action.positionPanelBottom", QT_TR_NOOP("Move Panel To Bottom"),
+         PanelPosition::bottom},
+    };
+    for (const auto& entry : panel_positions) {
+        add(entry.id, tr(entry.title),
+            [this, position = entry.position] { workbench_->set_panel_position(position); });
+    }
     add("workbench.action.toggleMaximizedPanel", tr("Toggle Maximized Panel"),
         [this] { workbench_->set_maximized(Part::panel, !workbench_->is_maximized(Part::panel)); });
 }
@@ -793,6 +834,7 @@ core::ContextKeys MainWindow::menu_context() const {
     keys.set("isFullscreen", isFullScreen());
     keys.set("sideBarVisible", workbench_->is_visible(Part::sidebar));
     keys.set("panelVisible", workbench_->is_visible(Part::panel));
+    keys.set("panelPosition", std::string(panel_position_name(workbench_->panel_position())));
     return keys;
 }
 
@@ -1657,6 +1699,8 @@ void MainWindow::set_up_title_bar() {
             title_bar_->set_panel_shown(shown);
         }
     });
+    connect(workbench_, &Workbench::sidebar_side_changed, title_bar_, &TitleBar::set_sidebar_side);
+    title_bar_->set_sidebar_side(workbench_->sidebar_side());
     title_bar_->set_sidebar_shown(workbench_->is_visible(Part::sidebar));
     title_bar_->set_panel_shown(workbench_->is_visible(Part::panel));
     title_bar_->set_command_center_text(workspace_label());
