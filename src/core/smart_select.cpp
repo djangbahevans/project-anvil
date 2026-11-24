@@ -164,9 +164,6 @@ std::vector<Selection> selection_ranges(const Text& text, std::size_t offset) {
     }
     candidates.push_back({0, text.size()});
 
-    std::erase_if(candidates, [offset](const Selection& range) {
-        return offset < range.start() || range.end() < offset;
-    });
     std::ranges::sort(candidates, [](const Selection& a, const Selection& b) {
         return a.start() != b.start() ? a.start() > b.start() : a.end() < b.end();
     });
