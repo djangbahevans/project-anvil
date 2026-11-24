@@ -634,6 +634,62 @@ void MainWindow::register_commands() {
                   workbench::Direction::up);
     add_direction("workbench.action.focusBelowGroup", tr("Focus Editor Group Below"),
                   workbench::Direction::down);
+    struct Arrangement {
+        const char* id;
+        const char* title;
+        workbench::Orientation orientation;
+        std::vector<workbench::LayoutShape> shapes;
+    };
+    using workbench::LayoutShape;
+    using workbench::Orientation;
+    const LayoutShape leaf;
+    const LayoutShape pair{{leaf, leaf}};
+    const std::vector<Arrangement> arrangements = {
+        {"workbench.action.editorLayoutSingle",
+         QT_TR_NOOP("Single Column Editor Layout"),
+         Orientation::horizontal,
+         {leaf}},
+        {"workbench.action.editorLayoutTwoColumns",
+         QT_TR_NOOP("Two Columns Editor Layout"),
+         Orientation::horizontal,
+         {leaf, leaf}},
+        {"workbench.action.editorLayoutThreeColumns",
+         QT_TR_NOOP("Three Columns Editor Layout"),
+         Orientation::horizontal,
+         {leaf, leaf, leaf}},
+        {"workbench.action.editorLayoutTwoRows",
+         QT_TR_NOOP("Two Rows Editor Layout"),
+         Orientation::vertical,
+         {leaf, leaf}},
+        {"workbench.action.editorLayoutThreeRows",
+         QT_TR_NOOP("Three Rows Editor Layout"),
+         Orientation::vertical,
+         {leaf, leaf, leaf}},
+        {"workbench.action.editorLayoutTwoByTwoGrid",
+         QT_TR_NOOP("Grid Editor Layout (2x2)"),
+         Orientation::horizontal,
+         {pair, pair}},
+        {"workbench.action.editorLayoutTwoColumnsBottom",
+         QT_TR_NOOP("Two Columns Bottom Editor Layout"),
+         Orientation::vertical,
+         {leaf, pair}},
+        {"workbench.action.editorLayoutTwoRowsRight",
+         QT_TR_NOOP("Two Rows Right Editor Layout"),
+         Orientation::horizontal,
+         {leaf, pair}},
+    };
+    for (const Arrangement& arrangement : arrangements) {
+        add(arrangement.id, tr(arrangement.title), [this, arrangement] {
+            layout_.apply_layout(arrangement.orientation, arrangement.shapes);
+            focus_current_editor();
+        });
+    }
+    add("workbench.action.toggleEditorGroupLayout", tr("Toggle Vertical/Horizontal Editor Layout"),
+        [this] {
+            if (layout_.flip()) {
+                focus_current_editor();
+            }
+        });
     add("workbench.action.closeGroup", tr("Close Editor Group"),
         [this] { close_group(layout_.focused()); });
     const auto set_render_whitespace = [this](const char* value) {

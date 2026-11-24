@@ -2582,6 +2582,15 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.revert",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
+                                          "workbench.action.editorLayoutSingle",
+                                          "workbench.action.editorLayoutTwoColumns",
+                                          "workbench.action.editorLayoutThreeColumns",
+                                          "workbench.action.editorLayoutTwoRows",
+                                          "workbench.action.editorLayoutThreeRows",
+                                          "workbench.action.editorLayoutTwoByTwoGrid",
+                                          "workbench.action.editorLayoutTwoRowsRight",
+                                          "workbench.action.editorLayoutTwoColumnsBottom",
+                                          "workbench.action.toggleEditorGroupLayout",
                                           "workbench.action.nextEditor",
                                           "workbench.action.previousEditor",
                                           "workbench.action.nextEditorInGroup",
@@ -2758,6 +2767,15 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "saveAll",
         "workbench.action.files.revert",
         "workbench.action.toggleAutoSave",
+        "workbench.action.editorLayoutSingle",
+        "workbench.action.editorLayoutTwoColumns",
+        "workbench.action.editorLayoutThreeColumns",
+        "workbench.action.editorLayoutTwoRows",
+        "workbench.action.editorLayoutThreeRows",
+        "workbench.action.editorLayoutTwoByTwoGrid",
+        "workbench.action.editorLayoutTwoRowsRight",
+        "workbench.action.editorLayoutTwoColumnsBottom",
+        "workbench.action.toggleEditorGroupLayout",
         "workbench.action.nextEditor",
         "workbench.action.previousEditor",
         "workbench.action.nextEditorInGroup",
@@ -3535,6 +3553,19 @@ TEST_F(MainWindowMenuBarTest, TheGoMenuSwitchesEditorsAndGroupsAndTheThirdGroupW
                            "workbench.action.focusLeftGroup", "workbench.action.focusBelowGroup"}) {
         EXPECT_TRUE(opened_action(menu(4), id)->isEnabled()) << id;
     }
+}
+
+TEST_F(MainWindowMenuBarTest, TheEditorLayoutItemsOfTheViewMenuArrangeTheGroups) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    QAction* two = opened_action(menu(3), "workbench.action.editorLayoutTwoColumns");
+    ASSERT_NE(two, nullptr);
+    EXPECT_TRUE(two->isEnabled());
+    EXPECT_TRUE(opened_action(menu(3), "workbench.action.toggleEditorGroupLayout")->isEnabled());
+    two->trigger();
+    EXPECT_EQ(window_->editor_layout().group_ids().size(), 2u);
+    opened_action(menu(3), "workbench.action.editorLayoutSingle")->trigger();
+    EXPECT_EQ(window_->editor_layout().group_ids().size(), 1u);
 }
 
 TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {
@@ -4367,6 +4398,107 @@ protected:
         QTest::keyClick(window_->view(), second, Qt::ControlModifier);
     }
 };
+
+// Where the groups are on the screen, found from the widgets.
+class MainWindowLayoutTest : public MainWindowGroupKeysTest {
+protected:
+    // The top left corner and size of each group of the window, in the order the layout shows them.
+    std::vector<QRect> group_rects() {
+        std::vector<QRect> rects;
+        for (const workbench::GroupId id : window_->editor_layout().group_ids()) {
+            QWidget* widget = window_->editor_area()->group(id);
+            rects.push_back(QRect(widget->mapTo(window_.get(), QPoint(0, 0)), widget->size()));
+        }
+        return rects;
+    }
+    void apply(const char* command) {
+        window_->commands().execute(command);
+        QApplication::processEvents();
+    }
+    static std::set<int> distinct(const std::vector<QRect>& rects,
+                                  int (QRect::*coordinate)() const) {
+        std::set<int> values;
+        for (const QRect& rect : rects) {
+            values.insert((rect.*coordinate)() / 8);
+        }
+        return values;
+    }
+};
+
+TEST_F(MainWindowLayoutTest, TheColumnLayoutsPutTheGroupsSideBySideWithEqualWidths) {
+    open_files();
+    apply("workbench.action.editorLayoutThreeColumns");
+    const auto rects = group_rects();
+    ASSERT_EQ(rects.size(), 3u);
+    EXPECT_EQ(distinct(rects, &QRect::top).size(), 1u);
+    EXPECT_EQ(distinct(rects, &QRect::left).size(), 3u);
+    for (const QRect& rect : rects) {
+        EXPECT_NEAR(rect.width(), rects[0].width(), 12);
+    }
+    apply("workbench.action.editorLayoutSingle");
+    EXPECT_EQ(group_count(), 1u);
+}
+
+TEST_F(MainWindowLayoutTest, TheRowLayoutsStackTheGroups) {
+    open_files();
+    apply("workbench.action.editorLayoutTwoRows");
+    auto rects = group_rects();
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_EQ(distinct(rects, &QRect::left).size(), 1u);
+    EXPECT_EQ(distinct(rects, &QRect::top).size(), 2u);
+    apply("workbench.action.editorLayoutThreeRows");
+    EXPECT_EQ(group_count(), 3u);
+}
+
+TEST_F(MainWindowLayoutTest, TheGridHasTwoColumnsOfTwoRows) {
+    open_files();
+    apply("workbench.action.editorLayoutTwoByTwoGrid");
+    const auto rects = group_rects();
+    ASSERT_EQ(rects.size(), 4u);
+    EXPECT_EQ(distinct(rects, &QRect::left).size(), 2u);
+    EXPECT_EQ(distinct(rects, &QRect::top).size(), 2u);
+}
+
+TEST_F(MainWindowLayoutTest, TwoRowsRightAndTwoColumnsBottomHaveOneGroupAlongAnEdge) {
+    open_files();
+    apply("workbench.action.editorLayoutTwoRowsRight");
+    auto rects = group_rects();
+    ASSERT_EQ(rects.size(), 3u);
+    EXPECT_GE(rects[0].height(), rects[1].height() + rects[2].height() - 12)
+        << "the first group is as tall as the other two together";
+    EXPECT_EQ(rects[1].left(), rects[2].left());
+    EXPECT_LT(rects[1].top(), rects[2].top());
+    apply("workbench.action.editorLayoutTwoColumnsBottom");
+    rects = group_rects();
+    ASSERT_EQ(rects.size(), 3u);
+    EXPECT_GE(rects[0].width(), rects[1].width() + rects[2].width() - 12);
+    EXPECT_EQ(rects[1].top(), rects[2].top());
+}
+
+TEST_F(MainWindowLayoutTest, FewerGroupsKeepEveryDocumentOpenInTheLastGroupThatStays) {
+    open_files();
+    apply("workbench.action.editorLayoutThreeColumns");
+    window_->commands().execute("workbench.action.focusSecondEditorGroup");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("d.txt", "d").string())));
+    const std::size_t documents = window_->open_document_count();
+    apply("workbench.action.editorLayoutTwoColumns");
+    EXPECT_EQ(group_count(), 2u);
+    EXPECT_EQ(window_->open_document_count(), documents);
+}
+
+TEST_F(MainWindowLayoutTest, FlipLayoutTurnsColumnsIntoRowsWithTheShiftAltZeroKey) {
+    open_files();
+    apply("workbench.action.editorLayoutTwoColumns");
+    ASSERT_EQ(distinct(group_rects(), &QRect::top).size(), 1u);
+    key(Qt::Key_0, Qt::ShiftModifier | Qt::AltModifier);
+    QApplication::processEvents();
+    const auto rects = group_rects();
+    EXPECT_EQ(distinct(rects, &QRect::left).size(), 1u);
+    EXPECT_EQ(distinct(rects, &QRect::top).size(), 2u);
+    key(Qt::Key_0, Qt::ShiftModifier | Qt::AltModifier);
+    QApplication::processEvents();
+    EXPECT_EQ(distinct(group_rects(), &QRect::top).size(), 1u);
+}
 
 TEST_F(MainWindowGroupKeysTest, ControlPageDownAndUpMoveThroughTheTabsAndWrap) {
     open_files();
