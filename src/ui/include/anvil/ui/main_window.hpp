@@ -261,6 +261,11 @@ private:
     void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);
     void activate_tab(workbench::GroupId group, std::size_t index);
     void focus_current_editor();
+    // Focuses the nth group (counting from 0) in the order they are shown; the group after the
+    // last one is made by splitting it, and a further one does nothing.
+    void focus_group_number(std::size_t index);
+    // Gives the keyboard focus to the editor of the shown group after a command moved it.
+    void show_current_after(bool changed);
     void open_find_bar(bool with_replace);
     const core::Uri* current_uri_ptr() const;
     std::optional<core::Uri> uri_of(const std::shared_ptr<core::Document>& document) const;

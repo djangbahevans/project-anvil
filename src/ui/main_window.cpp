@@ -584,6 +584,56 @@ void MainWindow::register_commands() {
         [this] { layout_.focus_next(); });
     add("workbench.action.focusPreviousGroup", tr("Focus Previous Editor Group"),
         [this] { layout_.focus_previous(); });
+    const auto show_current = [this](bool changed) { show_current_after(changed); };
+    add("workbench.action.nextEditor", tr("Open Next Editor"),
+        [this, show_current] { show_current(layout_.next_editor(true)); });
+    add("workbench.action.previousEditor", tr("Open Previous Editor"),
+        [this, show_current] { show_current(layout_.next_editor(false)); });
+    add("workbench.action.nextEditorInGroup", tr("Open Next Editor in Group"),
+        [this, show_current] { show_current(layout_.next_editor_in_group(true)); });
+    add("workbench.action.previousEditorInGroup", tr("Open Previous Editor in Group"),
+        [this, show_current] { show_current(layout_.next_editor_in_group(false)); });
+    add("workbench.action.openNextRecentlyUsedEditor", tr("Open Next Recently Used Editor"),
+        [this, show_current] { show_current(layout_.navigate_recent(false, false)); });
+    add("workbench.action.openPreviousRecentlyUsedEditor", tr("Open Previously Used Editor"),
+        [this, show_current] { show_current(layout_.navigate_recent(true, false)); });
+    add("workbench.action.openNextRecentlyUsedEditorInGroup",
+        tr("Open Next Recently Used Editor in Group"),
+        [this, show_current] { show_current(layout_.navigate_recent(false, true)); });
+    add("workbench.action.openPreviousRecentlyUsedEditorInGroup",
+        tr("Open Previously Used Editor in Group"),
+        [this, show_current] { show_current(layout_.navigate_recent(true, true)); });
+    struct Ordinal {
+        const char* id;
+        const char* title;
+    };
+    static const Ordinal ordinals[] = {
+        {"workbench.action.focusFirstEditorGroup", QT_TR_NOOP("Focus First Editor Group")},
+        {"workbench.action.focusSecondEditorGroup", QT_TR_NOOP("Focus Second Editor Group")},
+        {"workbench.action.focusThirdEditorGroup", QT_TR_NOOP("Focus Third Editor Group")},
+        {"workbench.action.focusFourthEditorGroup", QT_TR_NOOP("Focus Fourth Editor Group")},
+        {"workbench.action.focusFifthEditorGroup", QT_TR_NOOP("Focus Fifth Editor Group")},
+        {"workbench.action.focusSixthEditorGroup", QT_TR_NOOP("Focus Sixth Editor Group")},
+        {"workbench.action.focusSeventhEditorGroup", QT_TR_NOOP("Focus Seventh Editor Group")},
+        {"workbench.action.focusEighthEditorGroup", QT_TR_NOOP("Focus Eighth Editor Group")},
+    };
+    for (std::size_t index = 0; index < std::size(ordinals); ++index) {
+        add(ordinals[index].id, tr(ordinals[index].title),
+            [this, index] { focus_group_number(index); });
+    }
+    const auto add_direction = [&](const char* id, const QString& title,
+                                   workbench::Direction direction) {
+        add(id, title,
+            [this, direction] { show_current_after(layout_.focus_neighbor(direction)); });
+    };
+    add_direction("workbench.action.focusLeftGroup", tr("Focus Left Editor Group"),
+                  workbench::Direction::left);
+    add_direction("workbench.action.focusRightGroup", tr("Focus Right Editor Group"),
+                  workbench::Direction::right);
+    add_direction("workbench.action.focusAboveGroup", tr("Focus Editor Group Above"),
+                  workbench::Direction::up);
+    add_direction("workbench.action.focusBelowGroup", tr("Focus Editor Group Below"),
+                  workbench::Direction::down);
     add("workbench.action.closeGroup", tr("Close Editor Group"),
         [this] { close_group(layout_.focused()); });
     const auto set_render_whitespace = [this](const char* value) {
@@ -1137,6 +1187,25 @@ bool MainWindow::save() {
 bool MainWindow::save_as(const QString& path) {
     const core::Uri* current = current_uri_ptr();
     return current && save_document_as(*current, path);
+}
+
+void MainWindow::focus_group_number(std::size_t index) {
+    const std::vector<workbench::GroupId> groups = layout_.group_ids();
+    if (index < groups.size()) {
+        layout_.focus(groups[index]);
+    } else if (index == groups.size()) {
+        // The group after the last one is made by splitting the last, as VS Code does.
+        layout_.split(groups.back(), workbench::Direction::right);
+    } else {
+        return;
+    }
+    focus_current_editor();
+}
+
+void MainWindow::show_current_after(bool changed) {
+    if (changed) {
+        focus_current_editor();
+    }
 }
 
 bool MainWindow::save_all() {
