@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QFileDialog>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLabel>
@@ -466,6 +467,204 @@ TEST_F(AutoSaveTest, TheToggleCommandTurnsEveryOtherModeOff) {
         window_->commands().execute("workbench.action.toggleAutoSave");
         EXPECT_EQ(window_->settings().editor().auto_save, core::AutoSave::off) << mode;
     }
+}
+
+class SaveAllTest : public MainWindowTest {
+protected:
+    // Answers the next file dialog the window opens: with `chosen` when it is set, and by
+    // cancelling when not, after running `while_open` with the dialog on screen.
+    void answer_next_save_dialog(std::optional<std::filesystem::path> chosen,
+                                 std::function<void()> while_open = {}) {
+        dialog_shown_ = false;
+        auto* timer = new QTimer(window_.get());
+        timer->setInterval(5);
+        QObject::connect(
+            timer, &QTimer::timeout, timer,
+            [this, timer, chosen = std::move(chosen), while_open = std::move(while_open)] {
+                auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+                if (!dialog) {
+                    return;
+                }
+                dialog_shown_ = true;
+                timer->deleteLater();
+                if (while_open) {
+                    while_open();
+                }
+                if (chosen) {
+                    dialog->selectFile(QString::fromStdString(chosen->string()));
+                    QMetaObject::invokeMethod(dialog, "accept");
+                } else {
+                    dialog->reject();
+                }
+            });
+        timer->start();
+    }
+
+    std::string on_disk(const std::filesystem::path& path) const {
+        return *platform::read_file(path);
+    }
+    // Opens the file and types at the start of it.
+    void edit(const std::filesystem::path& path, const QString& typed) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+        type(typed);
+    }
+
+    bool dialog_shown_ = false;
+};
+
+TEST_F(SaveAllTest, WritesEveryDocumentWithUnsavedChangesAndNoOther) {
+    create_window();
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    const auto c = write("c.txt", "C");
+    ASSERT_NO_FATAL_FAILURE(edit(a, "1"));
+    ASSERT_NO_FATAL_FAILURE(edit(b, "2"));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(c.string())));
+    ASSERT_TRUE(window_->save_all());
+    EXPECT_EQ(on_disk(a), "1A");
+    EXPECT_EQ(on_disk(b), "2B");
+    EXPECT_EQ(on_disk(c), "C");
+    EXPECT_FALSE(window_->isWindowModified());
+}
+
+TEST_F(SaveAllTest, AsksForAnUntitledDocumentsNameWhenItsTurnComes) {
+    create_window();
+    const auto a = write("a.txt", "A");
+    type("U");
+    ASSERT_NO_FATAL_FAILURE(edit(a, "1"));
+    const auto named = scratch_ / "named.txt";
+    answer_next_save_dialog(named, [&] {
+        EXPECT_EQ(on_disk(a), "A") << "the untitled document comes first in the tabs";
+    });
+    EXPECT_TRUE(window_->save_all());
+    EXPECT_TRUE(dialog_shown_);
+    EXPECT_EQ(on_disk(named), "U");
+    EXPECT_EQ(on_disk(a), "1A");
+}
+
+TEST_F(SaveAllTest, StopsWhenTheUserCancelsTheQuestion) {
+    create_window();
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    ASSERT_NO_FATAL_FAILURE(edit(a, "1"));
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    type("U");
+    ASSERT_NO_FATAL_FAILURE(edit(b, "2"));
+    answer_next_save_dialog(std::nullopt);
+    EXPECT_FALSE(window_->save_all());
+    EXPECT_TRUE(dialog_shown_);
+    EXPECT_EQ(on_disk(a), "1A") << "before the untitled document";
+    EXPECT_EQ(on_disk(b), "B") << "after the untitled document";
+}
+
+TEST_F(SaveAllTest, FindsTheDocumentsAgainWhenTabsChangeWhileItAsks) {
+    create_window();
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    type("U");
+    ASSERT_NO_FATAL_FAILURE(edit(a, "1"));
+    ASSERT_NO_FATAL_FAILURE(edit(b, "2"));
+    const auto named = scratch_ / "named.txt";
+    // An extension closes a document with unsaved changes while the question is open.
+    answer_next_save_dialog(named, [&] { window_->close_document(1); });
+    EXPECT_TRUE(window_->save_all());
+    EXPECT_EQ(on_disk(named), "U");
+    EXPECT_EQ(on_disk(a), "A") << "closed before its turn";
+    EXPECT_EQ(on_disk(b), "2B");
+}
+
+TEST_F(SaveAllTest, ABlockedWriteDoesNotStopTheOthersAndIsReported) {
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "root can write to a read-only file";
+    }
+    create_window();
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    ASSERT_NO_FATAL_FAILURE(edit(a, "1"));
+    ASSERT_NO_FATAL_FAILURE(edit(b, "2"));
+    std::filesystem::permissions(scratch_, std::filesystem::perms::owner_read |
+                                               std::filesystem::perms::owner_exec);
+    int prompts = 0;
+    const std::function<void()> answer_again = [&] {
+        ++prompts;
+        answer_next_prompt(QMessageBox::Ok, answer_again);
+    };
+    answer_next_prompt(QMessageBox::Ok, answer_again);
+    EXPECT_FALSE(window_->save_all());
+    std::filesystem::permissions(scratch_, std::filesystem::perms::owner_all);
+    EXPECT_EQ(prompts, 2) << "one for each of the two documents that could not be written";
+}
+
+TEST_F(MainWindowTest, RevertReplacesTheTextWithTheFileAndLeavesTheDocumentClean) {
+    create_window();
+    const auto path = write("a.txt", "one\ntwo\nthree");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("X");
+    ASSERT_TRUE(window_->isWindowModified());
+    ASSERT_TRUE(platform::write_file(path, "new\ncontent\nhere\nnow").has_value());
+    EXPECT_TRUE(window_->revert());
+    EXPECT_EQ(current_text(), "new\ncontent\nhere\nnow");
+    EXPECT_FALSE(window_->isWindowModified());
+    EXPECT_FALSE(window_->current_document()->is_dirty());
+}
+
+TEST_F(MainWindowTest, RevertKeepsEachSelectionAtItsLineAndColumnClampedToTheNewText) {
+    create_window();
+    const auto path = write("a.txt", "one\ntwo\nthree");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(core::SelectionSet::from({core::Selection{5, 10}}))
+                    .has_value());
+    ASSERT_TRUE(platform::write_file(path, "abcdef\nxy").has_value());
+    EXPECT_TRUE(window_->revert());
+    // Line 1, column 1 stays there; line 2, column 2 is past the end of the shorter text.
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{8, 9}));
+
+    ASSERT_TRUE(platform::write_file(path, "ab").has_value());
+    EXPECT_TRUE(window_->revert());
+    EXPECT_EQ(window_->current_document()->selections().primary(), (core::Selection{2, 2}));
+}
+
+TEST_F(MainWindowTest, RevertCanBeUndoneAndThenTheDocumentHasUnsavedChanges) {
+    create_window();
+    const auto path = write("a.txt", "old");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("X");
+    ASSERT_TRUE(window_->revert());
+    EXPECT_EQ(current_text(), "old");
+    window_->view()->undo();
+    EXPECT_EQ(current_text(), "Xold");
+    EXPECT_TRUE(window_->isWindowModified());
+}
+
+TEST_F(MainWindowTest, RevertDoesNothingForAnUntitledDocumentAndSaysWhenTheFileIsGone) {
+    create_window();
+    type("typed");
+    EXPECT_FALSE(window_->revert());
+    EXPECT_EQ(current_text(), "typed");
+    EXPECT_TRUE(window_->isWindowModified());
+
+    const auto path = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("!");
+    std::filesystem::remove(path);
+    EXPECT_FALSE(window_->revert());
+    EXPECT_EQ(current_text(), "!A");
+    EXPECT_TRUE(window_->status_bar().message().startsWith("Revert failed"));
+}
+
+TEST_F(MainWindowTest, RevertTellsTheExtensionsAndTheDocumentIsSavedForThem) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = write("a.txt", "one");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    type("X");
+    ASSERT_TRUE(platform::write_file(path, "two").has_value());
+    EXPECT_TRUE(window_->revert());
+    EXPECT_EQ(current_text(), "two");
+    EXPECT_FALSE(window_->current_document()->is_dirty());
 }
 
 TEST_F(MainWindowTest, UndoBackToTheSavedStateIsClean) {
@@ -2363,6 +2562,8 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.clipboardPasteAction",
                                           "workbench.action.files.save",
                                           "workbench.action.files.saveAs",
+                                          "saveAll",
+                                          "workbench.action.files.revert",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
                                           "workbench.action.toggleMultiCursorModifier",
@@ -2501,11 +2702,16 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
     create_window();
     window_->commands().execute("workbench.action.splitEditorRight");
     window_->commands().execute("workbench.action.focusPreviousGroup");
+    // Save All needs a document with unsaved changes, and Revert File one with a file.
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    type("x");
     const std::vector<std::string> command_ids = {
         "workbench.action.files.newUntitledFile",
         "workbench.action.files.openFile",
         "workbench.action.files.save",
         "workbench.action.files.saveAs",
+        "saveAll",
+        "workbench.action.files.revert",
         "workbench.action.toggleAutoSave",
         "workbench.action.toggleMultiCursorModifier",
         "editor.action.toggleColumnSelection",
@@ -3220,6 +3426,22 @@ TEST_F(MainWindowMenuBarTest, TheColumnSelectionItemIsCheckedWhileTheModeIsOn) {
     EXPECT_TRUE(opened_action(menu(2), "editor.action.toggleColumnSelection")->isChecked());
     window_->commands().execute("editor.action.toggleColumnSelection");
     EXPECT_FALSE(window_->settings().editor().column_selection);
+}
+
+TEST_F(MainWindowMenuBarTest, SaveAllWaitsForUnsavedChangesAndRevertForAFile) {
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    EXPECT_FALSE(opened_action(menu(0), "saveAll")->isEnabled()) << "nothing is unsaved";
+    EXPECT_FALSE(opened_action(menu(0), "workbench.action.files.revert")->isEnabled())
+        << "an untitled document has no file";
+    window_->view()->setFocus();
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, "x");
+    QApplication::sendEvent(window_->view(), &press);
+    EXPECT_TRUE(opened_action(menu(0), "saveAll")->isEnabled());
+    EXPECT_FALSE(opened_action(menu(0), "workbench.action.files.revert")->isEnabled());
+
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "A").string())));
+    EXPECT_TRUE(opened_action(menu(0), "workbench.action.files.revert")->isEnabled());
 }
 
 TEST_F(MainWindowMenuBarTest, AnItemThatIsNotToggledIsNotCheckable) {
