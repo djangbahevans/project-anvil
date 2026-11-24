@@ -33,7 +33,7 @@ gh issue list --label in-progress
    gh api repos/djangbahevans/project-anvil/milestones --jq '[.[] | select(.state=="open")] | sort_by(.title | capture("^M(?<n>[0-9]+)(?<s>[a-z]*)") | [(.n | tonumber), .s]) | .[] | "\(.number) \(.title) (\(.open_issues) open)"'
    gh issue list --milestone "<title>" --label agent-ready --search "-label:in-progress -label:blocked"
    ```
-3. Take the lowest-numbered `agent-ready` issue in it that no open pull request covers.
+3. Take the lowest-numbered `agent-ready` issue in it that no open pull request covers and that `scripts/issue-links.sh blockers <n>` shows no open blocker for. An `agent-ready` issue with an open blocker has a wrong label: say so in a comment and take the next one.
 4. If the milestone has no `agent-ready` issue, run `groom-issue` on its first unready issue. Moving an issue to ready is useful work.
 5. If nothing can proceed, report why (what is blocked on what, which decisions are pending) instead of inventing work.
 

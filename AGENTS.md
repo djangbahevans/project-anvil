@@ -33,7 +33,7 @@ Step-by-step procedures live in `.claude/skills/<name>/SKILL.md`. They are plain
 
 - Area: `area:core`, `area:platform`, `area:exthost`, `area:ui`, `area:build`, `area:docs`.
 - Type: `type:feature`, `type:tech-debt`, `type:performance`, `type:research`.
-- Readiness, at most one per issue: `agent-ready` (can be implemented as written), `needs-decision` (a design choice is open; the maintainer decides), `needs-split` (too large for one pull request), `blocked` (waits on another issue), `needs-human` (needs hardware, an account or a judgment only the maintainer can make).
+- Readiness, at most one per issue: `agent-ready` (can be implemented as written), `needs-decision` (a design choice is open; the maintainer decides), `needs-split` (too large for one pull request), `blocked` (waits on an open issue, which `scripts/issue-links.sh blocked-by` records so that GitHub shows it and `scripts/issue-links.sh blockers <n>` lists it, or on an external fact), `needs-human` (needs hardware, an account or a judgment only the maintainer can make).
 - `in-progress`: a session has claimed the issue. Remove it when work stops without a merged pull request.
 
 An issue without a readiness label has not been groomed: run `groom-issue` on it before implementing.
@@ -75,7 +75,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, view containers with the activity bar, sidebar and panel, status bar, title bar and window frame, tab strip, splitter, editor area and its groups, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
-| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the token theme matcher and the key binding parser, generating the key, icon and menu tables, copying the color themes, formatting |
+| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the token theme matcher and the key binding parser, generating the key, icon and menu tables, copying the color themes, formatting, setting and reading the relations between issues |
 
 ## Conventions
 

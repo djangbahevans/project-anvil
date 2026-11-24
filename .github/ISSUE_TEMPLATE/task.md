@@ -20,7 +20,7 @@ Files to read, tests to model new ones on, traps from AGENTS.md that apply.
 
 ## Dependencies
 
-"Depends on: #N" for each unfinished prerequisite, or "None".
+"Depends on: #N" for each unfinished prerequisite, or "None". Set each as a relation too: `scripts/issue-links.sh blocked-by <this issue> <prerequisite>`.
 
 ## Readiness
 
