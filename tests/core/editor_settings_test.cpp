@@ -140,6 +140,21 @@ TEST(EditorSettings, AutoSaveIsOffWithADelayOfASecondUnlessTheSettingsSayOtherwi
     EXPECT_EQ(read(R"j({"files.autoSaveDelay": 0})j")->auto_save_delay, 0);
 }
 
+TEST(EditorSettings, WhitespaceIsRenderedInSelectionsAndControlCharactersAreShownByDefault) {
+    using anvil::core::RenderWhitespace;
+    EXPECT_EQ(read("{}")->render_whitespace, RenderWhitespace::selection);
+    EXPECT_TRUE(read("{}")->render_control_characters);
+    EXPECT_EQ(read(R"j({"editor.renderWhitespace": "none"})j")->render_whitespace,
+              RenderWhitespace::none);
+    EXPECT_EQ(read(R"j({"editor.renderWhitespace": "boundary"})j")->render_whitespace,
+              RenderWhitespace::boundary);
+    EXPECT_EQ(read(R"j({"editor": {"renderWhitespace": "trailing"}})j")->render_whitespace,
+              RenderWhitespace::trailing);
+    EXPECT_EQ(read(R"j({"editor.renderWhitespace": "all"})j")->render_whitespace,
+              RenderWhitespace::all);
+    EXPECT_FALSE(read(R"j({"editor.renderControlCharacters": false})j")->render_control_characters);
+}
+
 TEST(EditorSettings, TheAutoSaveDelayIsClamped) {
     EXPECT_EQ(read(R"j({"files.autoSaveDelay": -5})j")->auto_save_delay, 0);
     EXPECT_EQ(read(R"j({"files.autoSaveDelay": 1e12})j")->auto_save_delay,
@@ -157,6 +172,9 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"workbench.editor.focusRecentEditorAfterClose": "no"})j",
               "workbench.editor.focusRecentEditorAfterClose"},
              {R"j({"files.eol": 1})j", "files.eol"},
+             {R"j({"editor.renderWhitespace": true})j", "editor.renderWhitespace"},
+             {R"j({"editor.renderWhitespace": "All"})j", "editor.renderWhitespace"},
+             {R"j({"editor.renderControlCharacters": "yes"})j", "editor.renderControlCharacters"},
              {R"j({"files.autoSave": true})j", "files.autoSave"},
              {R"j({"files.autoSave": "afterdelay"})j", "files.autoSave"},
              {R"j({"files.autoSaveDelay": "1s"})j", "files.autoSaveDelay"},

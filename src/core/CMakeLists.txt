@@ -25,6 +25,7 @@ add_library(anvil_core STATIC
   workspace.cpp
   utf.cpp
   when_expression.cpp
+  whitespace.cpp
 )
 add_library(anvil::core ALIAS anvil_core)
 

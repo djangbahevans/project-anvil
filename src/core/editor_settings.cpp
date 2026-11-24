@@ -100,6 +100,30 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
                 "workbench.editor.focusRecentEditorAfterClose must be true or false");
         }
     }
+    if (settings.contains("editor.renderWhitespace")) {
+        const auto mode = settings.get<std::string>("editor.renderWhitespace");
+        if (mode == "none") {
+            result.render_whitespace = RenderWhitespace::none;
+        } else if (mode == "boundary") {
+            result.render_whitespace = RenderWhitespace::boundary;
+        } else if (mode == "selection") {
+            result.render_whitespace = RenderWhitespace::selection;
+        } else if (mode == "trailing") {
+            result.render_whitespace = RenderWhitespace::trailing;
+        } else if (mode == "all") {
+            result.render_whitespace = RenderWhitespace::all;
+        } else {
+            problems.emplace_back(
+                R"(editor.renderWhitespace must be "none", "boundary", "selection", "trailing" or "all")");
+        }
+    }
+    if (settings.contains("editor.renderControlCharacters")) {
+        if (const auto shown = settings.get<bool>("editor.renderControlCharacters")) {
+            result.render_control_characters = *shown;
+        } else {
+            problems.emplace_back("editor.renderControlCharacters must be true or false");
+        }
+    }
     if (settings.contains("files.autoSave")) {
         const auto mode = settings.get<std::string>("files.autoSave");
         if (mode == "off") {
