@@ -1,4 +1,5 @@
 add_library(anvil_core STATIC
+  brackets.cpp
   char_class.cpp
   color_theme.cpp
   document.cpp
@@ -7,6 +8,7 @@ add_library(anvil_core STATIC
   editor_settings.cpp
   fuzzy.cpp
   glob.cpp
+  go_to_line.cpp
   language_registry.cpp
   jsonc.cpp
   jsonc_edit.cpp
