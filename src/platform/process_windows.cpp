@@ -10,6 +10,11 @@ std::expected<Process, Error> Process::spawn(const ProcessSpec&) {
         Error{ErrorCode::unsupported, "starting processes is not implemented on Windows"});
 }
 
+std::expected<std::int64_t, Error> spawn_detached(const ProcessSpec&) {
+    return std::unexpected(
+        Error{ErrorCode::unsupported, "starting processes is not implemented on Windows"});
+}
+
 Process::Process(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Process::Process(Process&&) noexcept = default;
 Process& Process::operator=(Process&&) noexcept = default;
