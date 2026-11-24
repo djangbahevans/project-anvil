@@ -44,9 +44,13 @@ node scripts/generate-token-theme-cases.mjs
 node scripts/generate-key-table.mjs          # the keys, then the cases that use them
 node scripts/generate-key-chord-cases.mjs
 node scripts/generate-keybinding-cases.mjs
+node scripts/generate-languages.mjs          # the languages, then the cases that use them
+node scripts/generate-language-cases.mjs
 ```
 
 The key table (`src/core/include/anvil/core/key_table.hpp`) lists VS Code's `KeyCode` values with the names key bindings use for them, so a new key in the release is a new row. CI checks the three key scripts with `--check`.
+
+The language table (`src/core/include/anvil/core/language_table.hpp`) lists `plaintext` and the `contributes.languages` of the built-in extensions in `.deps/vscode/extensions`, in the order the extension scanner registers them. The recorded cases come from VS Code's own `LanguageService`, loaded with those contributions. A new built-in language or a changed rule is a diff in the table, and a change in how VS Code decides a file's language shows as a failing case in `language_registry_test`. CI checks both scripts with `--check`.
 
 The menu bar is generated too (`src/workbench/include/anvil/workbench/menu_table.hpp`). `generate-menus.mjs` loads the compiled workbench in Node, creates its workbench contributions and views service against inert services, and reads the menus back from `MenuRegistry`, with the `when`, `precondition` and `toggled` clause of each item and, from the configuration registry, the default of every setting that a clause reads as `config.<key>` (`menu_config_defaults`). It stops with a message when a menu it expects (File to Help, and a few items that stand for registrations the script must reach) is missing, when a clause reads a setting that no configuration registers, and when the menus or those defaults differ between Linux and Windows. CI checks it with `--check`.
 
