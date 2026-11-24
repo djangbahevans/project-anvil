@@ -564,6 +564,24 @@ void EditorView::select_all() {
     }
 }
 
+void EditorView::move_lines(bool down) {
+    if (controller_) {
+        apply(controller_->move_lines(down));
+    }
+}
+
+void EditorView::copy_lines(bool down) {
+    if (controller_) {
+        apply(controller_->copy_lines(down));
+    }
+}
+
+void EditorView::duplicate_selection() {
+    if (controller_) {
+        apply(controller_->duplicate_selection());
+    }
+}
+
 void EditorView::insert_tab() {
     if (!insert_spaces_) {
         apply(controller_->type("\t"));

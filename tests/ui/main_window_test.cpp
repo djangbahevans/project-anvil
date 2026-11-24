@@ -2566,6 +2566,11 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.revert",
                                           "workbench.action.files.openFile",
                                           "workbench.action.toggleAutoSave",
+                                          "editor.action.copyLinesUpAction",
+                                          "editor.action.copyLinesDownAction",
+                                          "editor.action.moveLinesUpAction",
+                                          "editor.action.moveLinesDownAction",
+                                          "editor.action.duplicateSelection",
                                           "workbench.action.toggleMultiCursorModifier",
                                           "editor.action.toggleColumnSelection",
                                           "editor.action.renderWhitespace.none",
@@ -2713,6 +2718,11 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "saveAll",
         "workbench.action.files.revert",
         "workbench.action.toggleAutoSave",
+        "editor.action.copyLinesUpAction",
+        "editor.action.copyLinesDownAction",
+        "editor.action.moveLinesUpAction",
+        "editor.action.moveLinesDownAction",
+        "editor.action.duplicateSelection",
         "workbench.action.toggleMultiCursorModifier",
         "editor.action.toggleColumnSelection",
         "editor.action.renderWhitespace.none",
@@ -4608,6 +4618,69 @@ protected:
         return window_->current_document()->selections().all();
     }
 };
+
+class MainWindowLinesTest : public MainWindowOccurrencesTest {
+protected:
+    void open_lines(const std::string& text) {
+        create_active_window();
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write("lines.txt", text).string())));
+        window_->view()->setFocus();
+    }
+};
+
+TEST_F(MainWindowLinesTest, AltUpAndAltDownMoveTheLineAndEachMoveIsOneUndoStep) {
+    open_lines("a\nb\nc\nd");
+    put_caret(2);
+    QTest::keyClick(window_->view(), Qt::Key_Down, Qt::AltModifier);
+    EXPECT_EQ(current_text(), "a\nc\nb\nd");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{core::Selection::caret(4)}));
+    QTest::keyClick(window_->view(), Qt::Key_Down, Qt::AltModifier);
+    EXPECT_EQ(current_text(), "a\nc\nd\nb");
+    QTest::keyClick(window_->view(), Qt::Key_Up, Qt::AltModifier);
+    EXPECT_EQ(current_text(), "a\nc\nb\nd");
+    window_->view()->undo();
+    EXPECT_EQ(current_text(), "a\nc\nd\nb");
+    window_->view()->undo();
+    EXPECT_EQ(current_text(), "a\nc\nb\nd");
+}
+
+TEST_F(MainWindowLinesTest, TheCopyKeysCopyTheLineUpOrDown) {
+    open_lines("a\nb\nc");
+    put_caret(2);
+    // VS Code's Linux keys add Ctrl to Shift+Alt, which other systems use for something else.
+    QTest::keyClick(window_->view(), Qt::Key_Down,
+                    Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier);
+    EXPECT_EQ(current_text(), "a\nb\nb\nc");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{core::Selection::caret(4)}));
+    QTest::keyClick(window_->view(), Qt::Key_Up,
+                    Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier);
+    EXPECT_EQ(current_text(), "a\nb\nb\nb\nc");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{core::Selection::caret(4)}));
+}
+
+TEST_F(MainWindowLinesTest,
+       DuplicateSelectionCopiesTheTextOrTheLineAndTheCommandsWorkOnEveryCursor) {
+    open_lines("one\ntwo");
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(core::SelectionSet::from({core::Selection{0, 3}}))
+                    .has_value());
+    window_->view()->document_changed_elsewhere();
+    window_->commands().execute("editor.action.duplicateSelection");
+    EXPECT_EQ(current_text(), "oneone\ntwo");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{{3, 6}}));
+    put_caret(8);
+    window_->commands().execute("editor.action.duplicateSelection");
+    EXPECT_EQ(current_text(), "oneone\ntwo\ntwo");
+    EXPECT_EQ(selections(), (std::vector<core::Selection>{core::Selection::caret(12)}));
+
+    ASSERT_TRUE(window_->current_document()
+                    ->set_selections(core::SelectionSet::from(
+                        {core::Selection::caret(1), core::Selection::caret(8)}))
+                    .has_value());
+    window_->view()->document_changed_elsewhere();
+    window_->commands().execute("editor.action.moveLinesDownAction");
+    EXPECT_EQ(current_text(), "two\noneone\ntwo");
+}
 
 TEST_F(MainWindowOccurrencesTest,
        ControlDSelectsTheWordThenAddsTheNextOccurrencesAndTypingRenamesThemAll) {
