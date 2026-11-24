@@ -272,6 +272,28 @@ TEST_F(ThemeStoreTest, EveryThemeSetsEveryKeyOfTheTable) {
     }
 }
 
+TEST_F(ThemeStoreTest, ThemesGiveTheEditorsTheirSyntaxStyles) {
+    open_shipped();
+    EXPECT_EQ(store_->token_theme(), nullptr);
+    const std::string_view keyword[] = {"source.cpp", "keyword.control"};
+
+    ASSERT_TRUE(store_->select("Dark Modern"));
+    const auto dark = store_->token_theme();
+    ASSERT_NE(dark, nullptr);
+    EXPECT_EQ(dark->style_for(keyword).foreground, (core::Rgba{0xC5, 0x86, 0xC0, 0xff}));
+    EXPECT_EQ(colors_.token_theme(), dark);
+
+    QSignalSpy colors_changed(&colors_, &WorkbenchColors::changed);
+    ASSERT_TRUE(store_->select("Light Modern"));
+    EXPECT_EQ(colors_changed.count(), 1);
+    EXPECT_NE(store_->token_theme(), dark);
+    EXPECT_EQ(store_->token_theme()->style_for(keyword).foreground,
+              (core::Rgba{0xAF, 0x00, 0xDB, 0xff}));
+
+    ASSERT_TRUE(store_->select("Light Modern"));
+    EXPECT_EQ(colors_changed.count(), 1);
+}
+
 TEST_F(ThemeStoreTest, AKeyWithoutADefaultStaysUnsetWhenTheThemeLeavesItOut) {
     open_shipped();
     ASSERT_TRUE(store_->select("Dark 2026"));

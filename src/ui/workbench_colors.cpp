@@ -241,7 +241,7 @@ QColor WorkbenchColors::resolve(std::size_t index, int depth) const {
                                           : palette_.color(entry.role);
 }
 
-void WorkbenchColors::set_colors(const Colors& theme) {
+std::vector<std::optional<QColor>> WorkbenchColors::themed_values(const Colors& theme) {
     std::vector<std::optional<QColor>> values(std::size(table));
     for (std::size_t i = 0; i < std::size(table); ++i) {
         if (const auto value = theme.find(std::string(table[i].key));
@@ -249,10 +249,26 @@ void WorkbenchColors::set_colors(const Colors& theme) {
             values[i] = value->second;
         }
     }
+    return values;
+}
+
+void WorkbenchColors::set_colors(const Colors& theme) {
+    auto values = themed_values(theme);
     if (values == themed_) {
         return;
     }
     themed_ = std::move(values);
+    emit changed();
+}
+
+void WorkbenchColors::set_theme(const Colors& theme,
+                                std::shared_ptr<const core::TokenTheme> token_theme) {
+    auto values = themed_values(theme);
+    if (values == themed_ && token_theme == token_theme_) {
+        return;
+    }
+    themed_ = std::move(values);
+    token_theme_ = std::move(token_theme);
     emit changed();
 }
 
@@ -261,6 +277,14 @@ void WorkbenchColors::set_palette(const QPalette& palette) {
         return;
     }
     palette_ = palette;
+    emit changed();
+}
+
+void WorkbenchColors::set_token_theme(std::shared_ptr<const core::TokenTheme> theme) {
+    if (theme == token_theme_) {
+        return;
+    }
+    token_theme_ = std::move(theme);
     emit changed();
 }
 

@@ -19,6 +19,9 @@
 #include <ctime>
 #include <gtest/gtest.h>
 #include <limits>
+#include <map>
+#include <memory>
+#include <nlohmann/json.hpp>
 
 using namespace anvil;
 using anvil::ui::EditorView;
@@ -1161,6 +1164,304 @@ TEST_F(RenderWhitespaceTest, MarkingEveryCharacterOfLongLinesStaysCheap) {
 }
 
 } // namespace
+
+namespace {
+
+// Gives the words of a document the scopes of a table, as a highlighter that is not a parser.
+class FakeHighlighter : public core::Highlighter {
+public:
+    FakeHighlighter(std::shared_ptr<core::Document> document,
+                    std::map<std::string, std::string> scopes)
+        : document_(std::move(document)), scopes_(std::move(scopes)) {}
+
+    std::vector<core::HighlightSpan> spans(std::size_t line) const override {
+        asked_.push_back(line);
+        std::vector<core::HighlightSpan> spans;
+        const std::string text = document_->text().line(line);
+        for (const auto& [word, scope] : scopes_) {
+            for (std::size_t at = text.find(word); at != std::string::npos;
+                 at = text.find(word, at + word.size())) {
+                spans.push_back({at, at + word.size(), scope});
+            }
+        }
+        std::ranges::sort(spans, {}, &core::HighlightSpan::begin);
+        return spans;
+    }
+    std::string_view root_scope() const override {
+        return "source.fake";
+    }
+    std::uint64_t version() const override {
+        return version_;
+    }
+    void bump() {
+        ++version_;
+    }
+    // The lines that were asked for since the last `clear_asked`.
+    mutable std::vector<std::size_t> asked_;
+    void clear_asked() const {
+        asked_.clear();
+    }
+
+private:
+    std::shared_ptr<core::Document> document_;
+    std::map<std::string, std::string> scopes_;
+    std::uint64_t version_ = 1;
+};
+
+const char* const syntax_rules = R"j([
+    {"settings": {"foreground": "#d4d4d4"}},
+    {"scope": "keyword.control", "settings": {"foreground": "#ff0000"}},
+    {"scope": "string", "settings": {"foreground": "#00ff00", "fontStyle": "italic"}},
+    {"scope": "markup.underline", "settings": {"foreground": "#0000ff", "fontStyle": "underline"}},
+    {"scope": "invalid", "settings": {"foreground": "#ffff00", "background": "#303030"}}
+])j";
+
+std::shared_ptr<const core::TokenTheme> token_theme_of(const char* rules) {
+    return std::make_shared<const core::TokenTheme>(
+        core::TokenTheme::from_json(nlohmann::json::parse(rules)));
+}
+
+class SyntaxHighlightingTest : public EditorViewTest {
+protected:
+    void SetUp() override {
+        colors_.set_colors({{"editor.background", QColor("#000000")},
+                            {"editor.foreground", QColor("#ffffff")},
+                            {"editor.selectionBackground", QColor("#000080")},
+                            {"editor.lineHighlightBackground", QColor("#000000")},
+                            {"editorGutter.background", QColor("#000000")},
+                            {"editorLineNumber.foreground", QColor("#888888")},
+                            {"editorLineNumber.activeForeground", QColor("#888888")},
+                            {"editorCursor.foreground", QColor("#000000")}});
+        colors_.set_token_theme(token_theme_of(syntax_rules));
+        view_.set_colors(&colors_);
+        core::EditorSettings settings;
+        settings.font_family = "monospace";
+        settings.font_size = 14;
+        view_.apply_settings(settings);
+    }
+
+    void highlight(std::map<std::string, std::string> scopes) {
+        highlighter_ = std::make_shared<FakeHighlighter>(document_, std::move(scopes));
+        view_.set_highlighter(highlighter_);
+        QApplication::processEvents();
+    }
+
+    QImage painted() {
+        QApplication::processEvents();
+        return view_.viewport()->grab().toImage();
+    }
+
+    // The pixels in the cells of the columns [from, to) of the first line that match.
+    template <class Match>
+    int count_in(const QImage& image, std::size_t from, std::size_t to, Match match) {
+        const QRect begin = view_.cursor_rect(from);
+        const QRect end = view_.cursor_rect(to);
+        int count = 0;
+        for (int y = 0; y < view_.line_height() && y < image.height(); ++y) {
+            for (int x = begin.x(); x < end.x() && x < image.width(); ++x) {
+                count += match(image.pixelColor(x, y)) ? 1 : 0;
+            }
+        }
+        return count;
+    }
+
+    static bool is_red(const QColor& c) {
+        return c.red() > 200 && c.green() < 80 && c.blue() < 80;
+    }
+    static bool is_green(const QColor& c) {
+        return c.green() > 200 && c.red() < 80 && c.blue() < 80;
+    }
+    static bool is_white(const QColor& c) {
+        return c.red() > 200 && c.green() > 200 && c.blue() > 200;
+    }
+
+    WorkbenchColors colors_{QApplication::palette()};
+    std::shared_ptr<FakeHighlighter> highlighter_;
+};
+
+} // namespace
+
+TEST_F(SyntaxHighlightingTest, TheTextOfAScopeTakesItsColorAndTheRestKeepsTheEditorsForeground) {
+    open("let name = 'hi';");
+    highlight({{"let", "keyword.control.fake"}, {"'hi'", "string.quoted.fake"}});
+    const QImage image = painted();
+    EXPECT_GT(count_in(image, 0, 3, is_red), 10) << "the keyword";
+    EXPECT_EQ(count_in(image, 0, 3, is_white), 0);
+    EXPECT_GT(count_in(image, 11, 15, is_green), 10) << "the string";
+    EXPECT_GT(count_in(image, 4, 8, is_white), 10) << "a word with no scope";
+    EXPECT_EQ(count_in(image, 4, 8, is_red), 0);
+}
+
+TEST_F(SyntaxHighlightingTest, RendersAHighlightedSample) {
+    colors_.set_token_theme(token_theme_of(R"j([
+        {"settings": {"foreground": "#d4d4d4"}},
+        {"scope": "keyword.control", "settings": {"foreground": "#c586c0"}},
+        {"scope": "storage.type", "settings": {"foreground": "#569cd6"}},
+        {"scope": "entity.name.function", "settings": {"foreground": "#dcdcaa"}},
+        {"scope": "string", "settings": {"foreground": "#ce9178", "fontStyle": "italic"}},
+        {"scope": "constant.numeric", "settings": {"foreground": "#b5cea8"}},
+        {"scope": "markup.underline", "settings": {"foreground": "#3794ff", "fontStyle": "underline"}}])j"));
+    open("int main() {\n    if (argc > 1) return 42;\n    puts(\"hello\");\n    // see docs\n}\n");
+    highlight({{"int", "storage.type.fake"},
+               {"main", "entity.name.function.fake"},
+               {"puts", "entity.name.function.fake"},
+               {"if", "keyword.control.fake"},
+               {"return", "keyword.control.fake"},
+               {"\"hello\"", "string.quoted.fake"},
+               {"42", "constant.numeric.fake"},
+               {"docs", "markup.underline.fake"}});
+    const QImage image = painted();
+    EXPECT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/editor_view_syntax.png");
+    }
+}
+
+TEST_F(SyntaxHighlightingTest, NoHighlighterShowsPlainText) {
+    open("let name = 'hi';");
+    const QImage image = painted();
+    EXPECT_EQ(count_in(image, 0, 3, is_red), 0);
+    EXPECT_GT(count_in(image, 0, 3, is_white), 10);
+}
+
+TEST_F(SyntaxHighlightingTest, ARuleThatHasNoColorForAScopeLeavesTheEditorsForeground) {
+    open("let");
+    highlight({{"let", "storage.type.fake"}});
+    EXPECT_GT(count_in(painted(), 0, 3, is_white), 10);
+}
+
+TEST_F(SyntaxHighlightingTest, ItalicUnderlineAndABackgroundComeFromTheFontStyleAndTheRule) {
+    open("see link and bad");
+    highlight({{"link", "markup.underline.fake"}, {"bad", "invalid.fake"}});
+    const QImage image = painted();
+    const auto blue = [](const QColor& c) { return c.blue() > 200 && c.red() < 80; };
+    // Under the text of the underlined word there is a line of its color, which plain words lack.
+    int underline_rows = 0;
+    for (int y = view_.line_height() / 2; y < view_.line_height(); ++y) {
+        int blue_in_row = 0;
+        for (int x = view_.cursor_rect(4).x(); x < view_.cursor_rect(8).x(); ++x) {
+            blue_in_row += blue(image.pixelColor(x, y)) ? 1 : 0;
+        }
+        underline_rows +=
+            blue_in_row >= 3 * (view_.cursor_rect(8).x() - view_.cursor_rect(4).x()) / 4;
+    }
+    EXPECT_GE(underline_rows, 1);
+    // The background of a rule fills the cells of its word.
+    const QRect cell = view_.cursor_rect(13);
+    EXPECT_EQ(image.pixelColor(cell.x() + 1, 1), QColor("#303030"));
+    EXPECT_EQ(image.pixelColor(view_.cursor_rect(9).x() + 1, 1), QColor("#000000"));
+}
+
+TEST_F(SyntaxHighlightingTest, ItalicChangesHowTheTextIsDrawn) {
+    open("'hi hi hi'");
+    highlight({{"'hi hi hi'", "string.quoted.fake"}});
+    const QImage italic = painted();
+    colors_.set_token_theme(token_theme_of(R"j([
+        {"settings": {"foreground": "#d4d4d4"}},
+        {"scope": "string", "settings": {"foreground": "#00ff00"}}])j"));
+    const QImage upright = painted();
+    EXPECT_NE(italic, upright);
+    EXPECT_GT(count_in(upright, 0, 10, is_green), 10);
+}
+
+TEST_F(SyntaxHighlightingTest, ASelectionChangesTheBackgroundAndKeepsTheSyntaxColor) {
+    open("let name = 'hi';");
+    highlight({{"let", "keyword.control.fake"}});
+    set_selections({{0, 3}});
+    const QImage image = painted();
+    const auto selection = [](const QColor& c) { return c.blue() > 100 && c.red() < 30; };
+    EXPECT_GT(count_in(image, 0, 3, selection), 100) << "the selection background";
+    EXPECT_GT(count_in(image, 0, 3, is_red), 10) << "the keyword keeps its color";
+    EXPECT_EQ(count_in(image, 0, 3, is_white), 0);
+}
+
+TEST_F(SyntaxHighlightingTest, ANewTokenThemePaintsOnceAndTheNewColorShows) {
+    open("let");
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+    colors_.set_token_theme(token_theme_of(R"j([
+        {"settings": {"foreground": "#d4d4d4"}},
+        {"scope": "keyword.control", "settings": {"foreground": "#00ff00"}}])j"));
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 1);
+    const QImage image = painted();
+    EXPECT_GT(count_in(image, 0, 3, is_green), 10);
+    EXPECT_EQ(count_in(image, 0, 3, is_red), 0);
+}
+
+TEST_F(SyntaxHighlightingTest, RefreshingPaintsOnlyWhenTheHighlighterHasNewSpans) {
+    open("let");
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 1);
+}
+
+TEST_F(SyntaxHighlightingTest, OnlyTheLinesInViewAreAskedForSpans) {
+    std::string text;
+    for (int line = 0; line < 50000; ++line) {
+        text += "let x = 1;\n";
+    }
+    open(text);
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    ASSERT_FALSE(highlighter_->asked_.empty());
+    const std::size_t visible =
+        static_cast<std::size_t>(view_.viewport()->height() / view_.line_height()) + 2;
+    EXPECT_LE(*std::ranges::max_element(highlighter_->asked_), visible);
+    highlighter_->clear_asked();
+    view_.verticalScrollBar()->setValue(view_.line_height() * 30000);
+    painted();
+    EXPECT_GE(*std::ranges::min_element(highlighter_->asked_), 29999U);
+    EXPECT_LE(*std::ranges::max_element(highlighter_->asked_), 30000U + visible);
+}
+
+TEST_F(SyntaxHighlightingTest,
+       APaintAsksForTheSpansOfEachLineInViewAtMostTwiceWhateverTheDocument) {
+    // The cost of highlighting is the spans of the lines in view, so what is counted is the lines
+    // that are asked for, not the time, which depends on the machine.
+    const auto asked_while_painting = [&](const std::string& text) {
+        open(text);
+        highlight({{"let", "keyword.control.fake"}});
+        highlighter_->clear_asked();
+        view_.viewport()->grab();
+        std::map<std::size_t, int> times;
+        for (const std::size_t line : highlighter_->asked_) {
+            ++times[line];
+        }
+        return times;
+    };
+
+    std::string many_lines;
+    for (int line = 0; line < 50000; ++line) {
+        many_lines += "let x = 1;\n";
+    }
+    const auto lines = asked_while_painting(many_lines);
+    const std::size_t visible =
+        static_cast<std::size_t>(view_.viewport()->height() / view_.line_height()) + 2;
+    EXPECT_LE(lines.size(), visible);
+    for (const auto& [line, times] : lines) {
+        EXPECT_LE(times, 2) << "line " << line;
+    }
+
+    std::string one_long_line;
+    for (int word = 0; word < 12000; ++word) {
+        one_long_line += "let x ";
+    }
+    const auto long_line = asked_while_painting(one_long_line);
+    EXPECT_EQ(long_line.size(), 1U);
+    EXPECT_LE(long_line.at(0), 2);
+}
 
 namespace {
 
