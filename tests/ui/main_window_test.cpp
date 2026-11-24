@@ -1462,7 +1462,27 @@ TEST_F(MainWindowTest, ExtensionsEditingAnotherDocumentUpdateItsTab) {
     EXPECT_EQ(window_->tab_strip()->current_index(), 2);
 }
 
-TEST_F(MainWindowTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
+class TypingCostTest : public MainWindowTest {
+protected:
+    // Typing into a window with 500 tabs in four groups costs about as much as with one tab, with
+    // the settings given.
+    void check_typing_cost(const std::string& settings);
+};
+
+TEST_F(TypingCostTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
+    check_typing_cost("{}");
+}
+
+TEST_F(TypingCostTest, TypingCostDoesNotGrowWithTheNumberOfTabsInSingleTabMode) {
+    check_typing_cost(R"j({"workbench.editor.showTabs": "single"})j");
+}
+
+TEST_F(TypingCostTest, TypingCostDoesNotGrowWithTheNumberOfTabsWithTheTabBarHidden) {
+    check_typing_cost(R"j({"workbench.editor.showTabs": "none"})j");
+}
+
+void TypingCostTest::check_typing_cost(const std::string& settings) {
+    settings_file_ = write("settings.json", settings);
     create_window();
     constexpr int keystrokes = 200;
     const auto time_typing = [&] {
@@ -2694,6 +2714,12 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.toggleZenMode",
                                           "workbench.action.exitZenMode",
                                           "workbench.action.toggleCenteredLayout",
+                                          "workbench.action.showMultipleEditorTabs",
+                                          "workbench.action.showEditorTab",
+                                          "workbench.action.hideEditorTabs",
+                                          "workbench.action.zenShowMultipleEditorTabs",
+                                          "workbench.action.zenShowEditorTab",
+                                          "workbench.action.zenHideEditorTabs",
                                           "editor.action.addSelectionToNextFindMatch",
                                           "editor.action.selectHighlights",
                                           "editor.action.selectAllMatches",
@@ -2858,6 +2884,9 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleFullScreen",
         "workbench.action.toggleZenMode",
         "workbench.action.toggleCenteredLayout",
+        "workbench.action.showMultipleEditorTabs",
+        "workbench.action.showEditorTab",
+        "workbench.action.hideEditorTabs",
         "undo",
         "redo",
         "editor.action.clipboardCutAction",
@@ -8043,4 +8072,208 @@ TEST_F(CenteredLayoutTest, TheMarginsHaveTheBackgroundOfTheEditor) {
     ASSERT_GT(window_->editor_area()->margin(), 10);
     EXPECT_EQ(image.pixelColor(5, image.height() / 2), QColor("#336699"));
     EXPECT_EQ(image.pixelColor(image.width() - 5, image.height() / 2), QColor("#336699"));
+}
+
+class TabBarModeTest : public PartPositionsTest {
+protected:
+    void open_tabs(int count) {
+        for (int i = 0; i < count; ++i) {
+            ASSERT_TRUE(window_->open_file(
+                QString::fromStdString(write("t" + std::to_string(i) + ".txt", "abc\n").string())));
+        }
+        QApplication::processEvents();
+    }
+    ui::TabStrip* strip() {
+        return window_->editor_area()->focused_group()->tabs();
+    }
+    void run(const char* id) {
+        window_->commands().execute(id);
+        QApplication::processEvents();
+    }
+    bool checked(const char* command) {
+        QAction* action = menu_action(command);
+        return action && action->isChecked();
+    }
+    // Every tab of the strip has an area.
+    bool all_tabs_shown() {
+        for (int i = 0; i < strip()->count(); ++i) {
+            if (strip()->tab_rect(i).isEmpty()) {
+                return false;
+            }
+        }
+        return strip()->count() > 0;
+    }
+    int tabs_with_an_area() {
+        int shown = 0;
+        for (int i = 0; i < strip()->count(); ++i) {
+            shown += strip()->tab_rect(i).isEmpty() ? 0 : 1;
+        }
+        return shown;
+    }
+};
+
+TEST_F(TabBarModeTest, TheTabBarMenuItemsAreEnabledAndCheckTheModeThatIsOn) {
+    start_with("{}");
+    for (const char* id : {"workbench.action.showMultipleEditorTabs",
+                           "workbench.action.showEditorTab", "workbench.action.hideEditorTabs"}) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_TRUE(item->isEnabled()) << id;
+    }
+    EXPECT_EQ(title_of("workbench.action.showMultipleEditorTabs"), "Multiple Tabs");
+    EXPECT_EQ(title_of("workbench.action.showEditorTab"), "Single Tab");
+    EXPECT_EQ(title_of("workbench.action.hideEditorTabs"), "Hidden");
+    EXPECT_TRUE(checked("workbench.action.showMultipleEditorTabs"));
+    EXPECT_FALSE(checked("workbench.action.showEditorTab"));
+    EXPECT_FALSE(checked("workbench.action.hideEditorTabs"));
+}
+
+TEST_F(TabBarModeTest, EachModeShowsTheTabsItNames) {
+    start_with("{}");
+    open_tabs(4);
+    ASSERT_GE(strip()->count(), 4);
+    EXPECT_TRUE(all_tabs_shown());
+    EXPECT_TRUE(strip()->isVisible());
+
+    menu_action("workbench.action.showEditorTab")->trigger();
+    EXPECT_TRUE(strip()->isVisible());
+    EXPECT_TRUE(strip()->single());
+    EXPECT_EQ(tabs_with_an_area(), 1);
+    EXPECT_FALSE(strip()->tab_rect(strip()->current_index()).isEmpty());
+    EXPECT_NE(settings_text().find("\"workbench.editor.showTabs\": \"single\""), std::string::npos);
+    EXPECT_TRUE(checked("workbench.action.showEditorTab"));
+    EXPECT_FALSE(checked("workbench.action.showMultipleEditorTabs"));
+
+    menu_action("workbench.action.hideEditorTabs")->trigger();
+    EXPECT_TRUE(strip()->isHidden());
+    EXPECT_TRUE(window_->view()->isVisible());
+    EXPECT_NE(settings_text().find("\"workbench.editor.showTabs\": \"none\""), std::string::npos);
+    EXPECT_TRUE(checked("workbench.action.hideEditorTabs"));
+
+    menu_action("workbench.action.showMultipleEditorTabs")->trigger();
+    EXPECT_FALSE(strip()->isHidden());
+    EXPECT_FALSE(strip()->single());
+    EXPECT_TRUE(all_tabs_shown());
+    EXPECT_TRUE(checked("workbench.action.showMultipleEditorTabs"));
+}
+
+TEST_F(TabBarModeTest, TheSingleTabFollowsTheActiveEditor) {
+    start_with(R"j({"workbench.editor.showTabs": "single"})j");
+    open_tabs(3);
+    const int last = strip()->count() - 1;
+    EXPECT_EQ(tabs_with_an_area(), 1);
+    EXPECT_EQ(strip()->current_index(), last);
+    run("workbench.action.previousEditor");
+    EXPECT_EQ(strip()->current_index(), last - 1);
+    EXPECT_EQ(tabs_with_an_area(), 1);
+    EXPECT_FALSE(strip()->tab_rect(last - 1).isEmpty());
+}
+
+TEST_F(TabBarModeTest, TheModesApplyAtStartupAndToEveryGroupIncludingNewOnes) {
+    start_with(R"j({"workbench.editor.showTabs": "none"})j");
+    open_tabs(2);
+    EXPECT_TRUE(strip()->isHidden());
+    run("workbench.action.splitEditor");
+    ASSERT_EQ(window_->editor_layout().group_ids().size(), 2U);
+    for (ui::EditorGroupWidget* group : window_->editor_area()->groups()) {
+        EXPECT_TRUE(group->tabs()->isHidden());
+        EXPECT_TRUE(group->view()->isVisible() || group->is_empty());
+    }
+    run("workbench.action.showEditorTab");
+    for (ui::EditorGroupWidget* group : window_->editor_area()->groups()) {
+        EXPECT_FALSE(group->tabs()->isHidden());
+        EXPECT_TRUE(group->tabs()->single());
+    }
+}
+
+TEST_F(TabBarModeTest, ASettingsFileEditedByHandChangesTheMode) {
+    start_with("{}");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(settings_file_.string())));
+    window_->change_setting("workbench.editor.showTabs", "none");
+    EXPECT_TRUE(strip()->isHidden());
+    window_->change_setting("workbench.editor.showTabs", "single");
+    EXPECT_FALSE(strip()->isHidden());
+    EXPECT_TRUE(strip()->single());
+}
+
+TEST_F(TabBarModeTest, AGroupWithoutTheStripKeepsItsEditorAndItsTabs) {
+    start_with(R"j({"workbench.editor.showTabs": "none"})j");
+    open_tabs(3);
+    EXPECT_GE(strip()->count(), 3);
+    EXPECT_EQ(window_->current_document()->text().to_string(), "abc\n");
+    run("workbench.action.previousEditor");
+    EXPECT_EQ(window_->current_uri().path.substr(window_->current_uri().path.rfind('/') + 1),
+              "t1.txt");
+    EXPECT_TRUE(window_->view()->isVisible());
+}
+
+class ZenTabBarModeTest : public TabBarModeTest {};
+
+TEST_F(ZenTabBarModeTest, ZenModeShowsTabsAsZenModeShowTabsSaysAndTheTabBarModeComesBack) {
+    start_with(R"j({"zenMode.showTabs": "single"})j");
+    open_tabs(3);
+    ASSERT_TRUE(all_tabs_shown());
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(strip()->isHidden());
+    EXPECT_TRUE(strip()->single());
+    EXPECT_EQ(tabs_with_an_area(), 1);
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(strip()->single());
+    EXPECT_TRUE(all_tabs_shown());
+}
+
+TEST_F(ZenTabBarModeTest, ZenModeCanHideTheTabsWhileTheNormalModeShowsThem) {
+    start_with(R"j({"zenMode.showTabs": "none"})j");
+    open_tabs(2);
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(strip()->isHidden());
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(strip()->isHidden());
+}
+
+TEST_F(ZenTabBarModeTest, TheModeOfTheTabBarDoesNotChangeWhatZenModeShows) {
+    start_with(R"j({"workbench.editor.showTabs": "none"})j");
+    open_tabs(2);
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(strip()->isHidden());
+    EXPECT_TRUE(all_tabs_shown());
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(strip()->isHidden());
+}
+
+TEST_F(ZenTabBarModeTest, TheZenCommandsWriteTheZenSettingAndCheckTheirItems) {
+    start_with("{}");
+    open_tabs(2);
+    run("workbench.action.toggleZenMode");
+    for (const char* id :
+         {"workbench.action.zenShowMultipleEditorTabs", "workbench.action.zenShowEditorTab",
+          "workbench.action.zenHideEditorTabs"}) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_TRUE(item->isEnabled()) << id;
+    }
+    EXPECT_TRUE(checked("workbench.action.zenShowMultipleEditorTabs"));
+
+    menu_action("workbench.action.zenShowEditorTab")->trigger();
+    EXPECT_NE(settings_text().find("\"zenMode.showTabs\": \"single\""), std::string::npos);
+    EXPECT_EQ(settings_text().find("workbench.editor.showTabs"), std::string::npos);
+    EXPECT_TRUE(strip()->single());
+    EXPECT_TRUE(checked("workbench.action.zenShowEditorTab"));
+
+    menu_action("workbench.action.zenHideEditorTabs")->trigger();
+    EXPECT_TRUE(strip()->isHidden());
+    run("workbench.action.toggleZenMode");
+    EXPECT_FALSE(strip()->isHidden());
+    EXPECT_FALSE(strip()->single());
+}
+
+TEST_F(ZenTabBarModeTest, TheNormalCommandsWriteTheNormalSettingEvenInZenMode) {
+    start_with("{}");
+    open_tabs(2);
+    run("workbench.action.toggleZenMode");
+    run("workbench.action.hideEditorTabs");
+    EXPECT_NE(settings_text().find("\"workbench.editor.showTabs\": \"none\""), std::string::npos);
+    EXPECT_FALSE(strip()->isHidden());
+    run("workbench.action.toggleZenMode");
+    EXPECT_TRUE(strip()->isHidden());
 }

@@ -74,6 +74,8 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `workbench.statusBar.visible` | Shows the status bar | `true` |
 | `workbench.sideBar.location` | The edge of the window the primary side bar and the activity bar are at: `"left"` or `"right"` | `"left"` |
 | `workbench.activityBar.location` | `"default"` shows the activity bar beside the side bar and `"hidden"` hides it; `"top"` and `"bottom"` are accepted and show it as `"default"` | `"default"` |
+| `workbench.editor.showTabs` | How a group shows its editors: `"multiple"` (a tab for each), `"single"` (only the active one, as a tab as wide as the group) or `"none"` (no strip of tabs; the group keeps its editor). View > Appearance > Tab Bar sets it | `"multiple"` |
+| `zenMode.showTabs` | The same, while Zen Mode is on | `"multiple"` |
 | `zenMode.fullScreen` | Zen Mode also puts the window into full screen (and leaves it when Zen Mode ends, unless the window was full screen before) | `true` |
 | `zenMode.centerLayout` | Zen Mode also centers the editor area | `true` |
 | `zenMode.hideStatusBar` | Zen Mode also hides the status bar | `true` |

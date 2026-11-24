@@ -429,7 +429,8 @@ private:
     void set_up_title_bar();
     void update_chrome();
     void toggle_zen_mode();
-    // Shows the status bar and the activity bar as the settings say, and as Zen Mode lets them.
+    // Shows the status bar, the activity bar and the tabs as the settings say, and as Zen Mode
+    // lets them.
     void apply_part_visibility();
     void update_title_bar_tooltips();
     QString title_text() const;

@@ -29,6 +29,11 @@ EditorGroupWidget::EditorGroupWidget(workbench::GroupId id, const WorkbenchColor
     connect(&colors_, &WorkbenchColors::changed, this, qOverload<>(&QWidget::update));
 }
 
+void EditorGroupWidget::set_tabs_mode(core::TabsMode mode) {
+    tabs_->set_single(mode == core::TabsMode::single);
+    tabs_->setVisible(mode != core::TabsMode::none);
+}
+
 void EditorGroupWidget::set_empty(bool empty) {
     if (empty_ == empty) {
         return;
@@ -208,6 +213,7 @@ EditorGroupWidget* EditorArea::add_group(workbench::GroupId id) {
     connect(widget->view(), &EditorView::selections_changed, this,
             [this, id] { emit selections_changed(id); });
 
+    widget->set_tabs_mode(tabs_mode_);
     sync_tabs(*widget);
     sync_document(*widget);
     widget->tabs()->set_focused(layout_.focused() == id);
@@ -333,6 +339,16 @@ void EditorArea::structure_changed() {
     update_margins();
 }
 
+void EditorArea::set_tabs_mode(core::TabsMode mode) {
+    if (mode == tabs_mode_) {
+        return;
+    }
+    tabs_mode_ = mode;
+    for (EditorGroupWidget* widget : groups_) {
+        widget->set_tabs_mode(mode);
+    }
+}
+
 void EditorArea::set_centered(bool centered) {
     if (centered == centered_) {
         return;
@@ -419,7 +435,7 @@ EditorArea::DropTarget EditorArea::drop_target_at(workbench::GroupId from,
             continue;
         }
         target.group = widget;
-        const QRect strip = widget->tabs()->geometry();
+        const QRect strip = widget->tabs()->isHidden() ? QRect() : widget->tabs()->geometry();
         if (strip.contains(local)) {
             target.kind = DropTarget::Kind::strip;
             target.position = widget->tabs()->insertion_index_at(local.x() - strip.left());

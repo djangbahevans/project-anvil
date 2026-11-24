@@ -559,3 +559,53 @@ TEST_F(EditorAreaTest, ADragWithinTheStripReordersAndShowsNoPicture) {
     EXPECT_GE(moved.count(), 1);
     release_at(first_, strip->mapToGlobal(QPoint(150, 10)));
 }
+
+TEST_F(EditorAreaTest, TheTabsModeHidesOrShrinksTheStripOfEveryGroupAndOfGroupsToCome) {
+    two_groups();
+    area_->set_tabs_mode(anvil::core::TabsMode::none);
+    for (EditorGroupWidget* group : area_->groups()) {
+        EXPECT_TRUE(group->tabs()->isHidden());
+        EXPECT_FALSE(group->tabs()->single());
+        EXPECT_EQ(group->tabs()->count(), group->id() == first_ ? 3 : 2);
+    }
+    const GroupId third = *layout_.split(second_, Direction::right);
+    layout_.open(third, doc("f"));
+    QApplication::processEvents();
+    EXPECT_TRUE(area_->group(third)->tabs()->isHidden());
+
+    area_->set_tabs_mode(anvil::core::TabsMode::single);
+    for (EditorGroupWidget* group : area_->groups()) {
+        EXPECT_FALSE(group->tabs()->isHidden());
+        EXPECT_TRUE(group->tabs()->single());
+    }
+    area_->set_tabs_mode(anvil::core::TabsMode::multiple);
+    for (EditorGroupWidget* group : area_->groups()) {
+        EXPECT_FALSE(group->tabs()->isHidden());
+        EXPECT_FALSE(group->tabs()->single());
+    }
+}
+
+TEST_F(EditorAreaTest, AGroupWithoutAStripGivesItsWholeHeightToTheEditor) {
+    two_groups();
+    EditorGroupWidget* group = area_->group(first_);
+    const int with_strip = group->view()->height();
+    area_->set_tabs_mode(anvil::core::TabsMode::none);
+    QApplication::processEvents();
+    EXPECT_EQ(group->view()->height(), with_strip + TabStrip::height_pixels);
+    EXPECT_EQ(group->view()->geometry().top(), 0);
+}
+
+TEST_F(EditorAreaTest, WhereTheStripWasIsPartOfTheEditorWhenTheStripIsHidden) {
+    two_groups();
+    QSignalSpy strip(area_.get(), &EditorArea::tab_dropped_on_strip);
+    QSignalSpy edge(area_.get(), &EditorArea::tab_dropped_on_edge);
+    press_tab(first_, 1);
+    const QPoint where = point_in_strip(second_, 130);
+    area_->set_tabs_mode(anvil::core::TabsMode::none);
+    QApplication::processEvents();
+    drag_to(first_, where);
+    EXPECT_FALSE(area_->drop_shade().isEmpty());
+    release_at(first_, where);
+    EXPECT_EQ(strip.count(), 0);
+    EXPECT_EQ(edge.count(), 1);
+}
