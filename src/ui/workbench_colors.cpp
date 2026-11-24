@@ -95,6 +95,7 @@ constexpr WorkbenchColorKey table[] = {
                  "Border of the focused control; the default of other focus-related borders.",
                  QPalette::Highlight),
     from_palette("input.background", "Background of an input field.", QPalette::Base),
+    chained("input.border", "Border of an input field.", "widget.border", QPalette::WindowText),
     from_palette("input.foreground", "Text of an input field.", QPalette::Text),
     from_palette("input.placeholderForeground", "Placeholder text of an input field.",
                  QPalette::PlaceholderText),
@@ -117,6 +118,8 @@ constexpr WorkbenchColorKey table[] = {
                  QPalette::Text),
     from_palette("panelTitle.inactiveForeground", "The inactive titles in the panel header.",
                  QPalette::PlaceholderText),
+    from_palette("pickerGroup.border", "Line above a group of items of the quick pick.",
+                 QPalette::Mid),
     from_palette("quickInput.background", "Background of the quick pick and the command palette.",
                  QPalette::Base),
     from_palette("quickInput.foreground", "Text of the quick pick and the command palette.",
@@ -185,6 +188,13 @@ constexpr WorkbenchColorKey table[] = {
         "Background of a small button, such as the close button of a tab, under the mouse.",
         QPalette::Midlight),
     from_palette("widget.border", "Border of popups such as the quick pick.", QPalette::WindowText),
+    // No shadow where the theme and the registry give none, as in the high contrast themes.
+    {"widget.shadow",
+     "Shadow around popups such as the quick pick.",
+     {},
+     QPalette::NoRole,
+     0,
+     true},
 };
 
 constexpr int max_chain = 4;

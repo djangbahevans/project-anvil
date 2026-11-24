@@ -26,6 +26,10 @@ struct QuickPickItem {
     QString keybinding;
     // Shown dimmed; choosing it does nothing and the popup stays open.
     bool disabled = false;
+    // Not an item but a divider: with no filter, a line above the next item and `label` at the
+    // right end of its row. It is never shown as a row of its own, is never chosen, and is left
+    // out while a filter is typed, which ranks the items of every group together.
+    bool separator = false;
 };
 
 // A popup list with a filter field, over the top center of a window: VS Code's quick pick, used
@@ -41,6 +45,8 @@ class QuickPick : public QFrame {
 
 public:
     static constexpr int row_height = 22;
+    // The list shows this many rows at most, fewer in a window that is not high enough.
+    static constexpr int max_visible_rows = 20;
 
     // `window` is the window the popup overlays and the parent of the widget. The colors, which
     // must outlive the popup, come from the `quickInput`, `quickInputList`, `input` and `widget`
@@ -93,10 +99,15 @@ signals:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class Model;
     class Delegate;
+    class Shadow;
     struct Cached {
         std::string label;
         std::string description;
@@ -109,10 +120,13 @@ private:
     void close_popup(bool restore_focus);
     void on_focus_changed(QWidget* now);
     void apply_colors();
+    void sync_shadow();
 
     const WorkbenchColors& colors_;
+    QWidget* header_ = nullptr;
     QLineEdit* filter_ = nullptr;
     QListView* list_ = nullptr;
+    Shadow* shadow_ = nullptr;
     QLabel* empty_ = nullptr;
     Model* model_ = nullptr;
     std::vector<QuickPickItem> items_;

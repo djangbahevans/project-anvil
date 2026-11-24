@@ -221,7 +221,11 @@ bool DocumentsService::language_is_fixed(const core::Uri& uri) const {
 
 void DocumentsService::language_changed(const core::Uri& uri, std::string language_id) {
     const auto found = entries_.find(uri.to_string());
-    if (found == entries_.end() || found->second.language_id == language_id) {
+    if (found == entries_.end()) {
+        return;
+    }
+    found->second.language_fixed = false;
+    if (found->second.language_id == language_id) {
         return;
     }
     found->second.language_id = std::move(language_id);

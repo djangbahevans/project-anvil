@@ -6366,7 +6366,7 @@ protected:
     }
 };
 
-TEST_F(ChangeLanguageModeTest, ListsTheNamedLanguagesByNameWithTheIdAndTheCurrentOneMarked) {
+TEST_F(ChangeLanguageModeTest, ListsTheEntriesThenTheLanguagesByNameWithTheCurrentOneMarked) {
     create_window();
     ASSERT_TRUE(open(write("a.ts", "abc")));
     window_->commands().execute(command);
@@ -6375,13 +6375,21 @@ TEST_F(ChangeLanguageModeTest, ListsTheNamedLanguagesByNameWithTheIdAndTheCurren
 
     const auto& items = pick->items();
     ASSERT_GT(items.size(), 70U);
-    EXPECT_EQ(items.back().label, "Configure File Association for '.ts'…");
-    for (std::size_t i = 0; i + 1 < items.size(); ++i) {
+    EXPECT_EQ(items[0].label, "Auto Detect");
+    EXPECT_EQ(items[1].label, "Configure File Association for '.ts'…");
+    EXPECT_TRUE(items[2].separator);
+    EXPECT_EQ(items[2].label, "languages (identifier)");
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_FALSE(items[i].separator);
+        EXPECT_TRUE(items[i].description.isEmpty());
+    }
+    for (std::size_t i = 3; i < items.size(); ++i) {
         const ui::QuickPickItem& item = items[i];
+        EXPECT_FALSE(item.separator) << item.label.toStdString();
         EXPECT_TRUE(item.detail.isEmpty()) << item.label.toStdString();
         EXPECT_TRUE(item.description.startsWith("(") && item.description.contains(")"))
             << item.label.toStdString();
-        if (i > 0) {
+        if (i > 3) {
             EXPECT_LE(items[i - 1].label.compare(item.label, Qt::CaseInsensitive), 0)
                 << item.label.toStdString();
         }
@@ -6398,18 +6406,86 @@ TEST_F(ChangeLanguageModeTest, ListsTheNamedLanguagesByNameWithTheIdAndTheCurren
     EXPECT_EQ(pick->filter_field()->text(), "");
 }
 
-TEST_F(ChangeLanguageModeTest, ADocumentWithoutAFileHasNoAssociationEntry) {
+TEST_F(ChangeLanguageModeTest,
+       AnEmptyDocumentHasNoAutoDetectAndADocumentWithoutAFileNoAssociation) {
     create_window();
     window_->commands().execute(command);
     const auto& items = window_->command_palette()->items();
+    ASSERT_GT(items.size(), 70U);
+    EXPECT_TRUE(items[0].separator) << "no Auto Detect for an empty document, no association";
     const auto plain = std::ranges::find(items, QString("Plain Text"), &ui::QuickPickItem::label);
     ASSERT_NE(plain, items.end());
     EXPECT_EQ(plain->description, "(plaintext) - Configured Language");
-    EXPECT_FALSE(labels().back().startsWith("Configure"));
+    const auto starts_with_configure = [&] {
+        return std::ranges::any_of(
+            labels(), [](const QString& label) { return label.startsWith("Configure"); });
+    };
+    EXPECT_FALSE(starts_with_configure());
+
+    type("x");
+    window_->command_palette()->cancel();
+    window_->commands().execute(command);
+    EXPECT_EQ(window_->command_palette()->items()[0].label, "Auto Detect");
+    EXPECT_FALSE(starts_with_configure()) << "an untitled document has no file extension";
     ASSERT_TRUE(open(write("Makefile", "all:")));
     window_->command_palette()->cancel();
     window_->commands().execute(command);
-    EXPECT_FALSE(labels().back().startsWith("Configure"));
+    EXPECT_FALSE(starts_with_configure()) << "a file without an extension";
+}
+
+TEST_F(ChangeLanguageModeTest, AutoDetectGivesUpAPickedLanguageAndTheFileDecidesAgain) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    choose("Python");
+    ASSERT_TRUE(host_language_becomes("python"));
+
+    window_->commands().execute(command);
+    choose("Auto Detect");
+    EXPECT_TRUE(host_language_becomes("typescript"));
+    EXPECT_EQ(shown_language(), "TypeScript");
+
+    // It follows the associations again.
+    window_->change_setting("files.associations", json{{"*.ts", "markdown"}});
+    EXPECT_TRUE(host_language_becomes("markdown"));
+    EXPECT_EQ(shown_language(), "Markdown");
+}
+
+TEST_F(ChangeLanguageModeTest, APickedLanguageThatSurvivedSaveAsIsGivenUpByAutoDetectToo) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("a.txt", "abc")));
+    window_->commands().execute(command);
+    choose("Python");
+    ASSERT_TRUE(host_language_becomes("python"));
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.ts").string())));
+    ASSERT_EQ(host_language(), "python");
+
+    window_->commands().execute(command);
+    choose("Auto Detect");
+    EXPECT_TRUE(host_language_becomes("typescript"));
+    window_->change_setting("files.associations", json{{"*.ts", "markdown"}});
+    EXPECT_TRUE(host_language_becomes("markdown"));
+}
+
+TEST_F(ChangeLanguageModeTest, AutoDetectReadsTheFirstLineOfAFileWithoutAKnownName) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open(write("script", "#!/usr/bin/env python3\nx")));
+    ASSERT_EQ(host_language(), "python");
+    window_->commands().execute(command);
+    choose("Markdown");
+    ASSERT_TRUE(host_language_becomes("markdown"));
+    window_->commands().execute(command);
+    choose("Auto Detect");
+    EXPECT_TRUE(host_language_becomes("python"));
 }
 
 TEST_F(ChangeLanguageModeTest, ChoosingALanguageChangesItForExtensionsAndTheStatusBar) {
@@ -6518,10 +6594,12 @@ TEST_F(ChangeLanguageModeTest,
     ASSERT_TRUE(open(write("c.txt", "abc")));
     ASSERT_TRUE(open(scratch_ / "a.ts"));
     window_->commands().execute(command);
+    const std::size_t listed = labels().size();
     choose("Configure");
     // The second list opens once the first has closed.
     ASSERT_TRUE(wait_until([&] { return window_->command_palette()->isVisible(); }));
-    EXPECT_EQ(window_->command_palette()->items().size(), labels().size());
+    EXPECT_EQ(window_->command_palette()->items().size(), listed - 3)
+        << "the languages, without the entries and the separator";
     EXPECT_EQ(window_->command_palette()->filter_field()->placeholderText(),
               "Select Language Mode to Associate with '.ts'");
     choose("Python");

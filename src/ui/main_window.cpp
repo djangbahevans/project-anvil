@@ -649,6 +649,18 @@ void MainWindow::choose_language(const core::Uri& uri, const std::string& id) {
     update_status();
 }
 
+void MainWindow::auto_detect_language(const core::Uri& uri) {
+    const auto document = documents_.find(uri);
+    if (document == documents_.end()) {
+        return;
+    }
+    chosen_languages_.erase(uri);
+    const std::string id = resolve_language(uri, document->second->text().line(0));
+    document_languages_.insert_or_assign(uri, describe_language(id));
+    bridge_.language_changed(uri, id);
+    update_status();
+}
+
 void MainWindow::change_language_mode() {
     const core::Uri* shown = current_uri_ptr();
     if (!shown) {
@@ -656,54 +668,66 @@ void MainWindow::change_language_mode() {
     }
     // The pick is not modal: the document can be closed or renamed before the user chooses.
     const core::Uri uri = *shown;
-    auto ids = std::make_shared<std::vector<std::string>>();
-    std::vector<QuickPickItem> items = language_picks(language_of_document(uri).id, *ids);
+    std::vector<QuickPickItem> items;
+    auto actions = std::make_shared<std::vector<std::function<void()>>>();
+    const auto add = [&](QuickPickItem item, std::function<void()> action) {
+        items.push_back(std::move(item));
+        actions->push_back(std::move(action));
+    };
+
+    if (documents_.at(uri)->text().size() > 0) {
+        add({tr("Auto Detect"), {}, {}, {}, false}, [this, uri] {
+            auto_detect_language(uri);
+            focus_current_editor();
+        });
+    }
     const auto file = uri.file_path();
     const std::string extension = file ? file->extension().string() : std::string();
     const std::string base = file ? file->filename().string() : std::string();
     if (!extension.empty()) {
-        items.push_back(
-            {tr("Configure File Association for '%1'…").arg(QString::fromStdString(extension)),
+        add({tr("Configure File Association for '%1'…").arg(QString::fromStdString(extension)),
              {},
              {},
              {},
-             false});
+             false},
+            [this, extension, base] {
+                // The quick pick is still closing, and opening it again at once loses the focus.
+                QTimer::singleShot(0, this,
+                                   [this, extension, base] { pick_association(extension, base); });
+            });
     }
-    const std::size_t associate = ids->size();
-    pick_from(tr("Select Language Mode"), std::move(items),
-              [this, uri, ids, associate, extension, base](std::size_t item) {
-                  if (item < associate) {
-                      choose_language(uri, (*ids)[item]);
-                      focus_current_editor();
-                      return;
-                  }
-                  if (item != associate || extension.empty()) {
-                      return;
-                  }
-                  // The quick pick is still closing, and opening it again at once loses the focus.
-                  QTimer::singleShot(0, this, [this, extension, base] {
-                      std::vector<std::string> languages;
-                      std::vector<QuickPickItem> picks = language_picks({}, languages);
-                      const std::string key = base.starts_with('.') ? base : "*" + extension;
-                      pick_from(tr("Select Language Mode to Associate with '%1'")
-                                    .arg(QString::fromStdString(extension)),
-                                std::move(picks),
-                                [this, key, languages = std::move(languages)](std::size_t pick) {
-                                    if (pick >= languages.size()) {
-                                        return;
-                                    }
-                                    const core::Settings& settings = settings_->settings();
-                                    const nlohmann::json* known =
-                                        settings.find("files.associations");
-                                    nlohmann::json associations = known && known->is_object()
-                                                                      ? *known
-                                                                      : nlohmann::json::object();
-                                    associations[key] = languages[pick];
-                                    change_setting("files.associations", std::move(associations),
-                                                   tr("File Associations"));
-                                });
-                  });
-              });
+    add({tr("languages (identifier)"), {}, {}, {}, false, true}, nullptr);
+    std::vector<std::string> ids;
+    std::vector<QuickPickItem> languages = language_picks(language_of_document(uri).id, ids);
+    for (std::size_t i = 0; i < languages.size(); ++i) {
+        add(std::move(languages[i]), [this, uri, id = std::move(ids[i])] {
+            choose_language(uri, id);
+            focus_current_editor();
+        });
+    }
+    pick_from(tr("Select Language Mode"), std::move(items), [actions](std::size_t item) {
+        if (item < actions->size() && (*actions)[item]) {
+            (*actions)[item]();
+        }
+    });
+}
+
+void MainWindow::pick_association(const std::string& extension, const std::string& base) {
+    std::vector<std::string> ids;
+    std::vector<QuickPickItem> picks = language_picks({}, ids);
+    const std::string key = base.starts_with('.') ? base : "*" + extension;
+    pick_from(
+        tr("Select Language Mode to Associate with '%1'").arg(QString::fromStdString(extension)),
+        std::move(picks), [this, key, ids = std::move(ids)](std::size_t pick) {
+            if (pick >= ids.size()) {
+                return;
+            }
+            const nlohmann::json* known = settings_->settings().find("files.associations");
+            nlohmann::json associations =
+                known && known->is_object() ? *known : nlohmann::json::object();
+            associations[key] = ids[pick];
+            change_setting("files.associations", std::move(associations), tr("File Associations"));
+        });
 }
 
 void MainWindow::apply_extension_host_options() {
