@@ -2579,6 +2579,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.clipboardPasteAction",
                                           "workbench.action.files.save",
                                           "workbench.action.files.saveAs",
+                                          "workbench.action.editor.changeLanguageMode",
                                           "saveAll",
                                           "workbench.action.files.revert",
                                           "workbench.action.files.openFile",
