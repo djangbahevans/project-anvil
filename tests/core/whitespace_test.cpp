@@ -137,5 +137,43 @@ TEST(Whitespace, EveryShortLineAgreesWithVSCodesLoop) {
     }
 }
 
+TEST(Whitespace, EveryWindowIsTheWholeLineCutToTheWindow) {
+    const char16_t alphabet[] = {u'a', u' ', u'\t'};
+    const std::vector<std::vector<ColumnRange>> selection_sets = {{}, {{0, 3}}, {{1, 2}, {4, 6}}};
+    for (std::size_t length = 0; length <= 6; ++length) {
+        std::size_t combinations = 1;
+        for (std::size_t i = 0; i < length; ++i) {
+            combinations *= 3;
+        }
+        for (std::size_t n = 0; n < combinations; ++n) {
+            std::u16string line;
+            for (std::size_t i = 0, rest = n; i < length; ++i, rest /= 3) {
+                line.push_back(alphabet[rest % 3]);
+            }
+            for (const RenderWhitespace mode :
+                 {RenderWhitespace::none, RenderWhitespace::boundary, RenderWhitespace::selection,
+                  RenderWhitespace::trailing, RenderWhitespace::all}) {
+                for (const auto& selections : selection_sets) {
+                    const Columns whole = marks(line, mode, selections);
+                    for (std::size_t from = 0; from <= length + 1; ++from) {
+                        for (std::size_t to = 0; to <= length + 1; ++to) {
+                            Columns expected;
+                            for (const std::size_t column : whole) {
+                                if (column >= from && column < to) {
+                                    expected.push_back(column);
+                                }
+                            }
+                            ASSERT_EQ(whitespace_columns(line, mode, selections, from, to),
+                                      expected)
+                                << "line #" << n << " of length " << length << ", mode "
+                                << static_cast<int>(mode) << ", window " << from << ".." << to;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 } // namespace
 } // namespace anvil::core
