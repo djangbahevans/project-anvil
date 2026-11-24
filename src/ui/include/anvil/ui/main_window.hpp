@@ -350,6 +350,10 @@ private:
     void navigate(std::optional<workbench::NavigationEntry> place, bool to_edit);
     void save_as_dialog();
     void open_dialog();
+    // Opens a file of the user's configuration in the editor, creating it with `initial` when it
+    // is missing. Says so in the status bar when the window has no such file, or it cannot be
+    // created.
+    bool open_user_file(const std::filesystem::path& file, std::string_view initial);
     // Shows the command palette, unless a dialog is open.
     void show_command_palette();
     // Opens Go to Line/Column over the shown document: the caret follows the text typed, Enter

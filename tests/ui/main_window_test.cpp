@@ -2654,6 +2654,10 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.navigateToLastEditLocation",
                                           "workbench.action.gotoLine",
                                           "editor.action.jumpToBracket",
+                                          "workbench.action.openSettings",
+                                          "workbench.action.openSettingsJson",
+                                          "workbench.action.openGlobalKeybindings",
+                                          "workbench.action.openGlobalKeybindingsFile",
                                           "workbench.action.activityBarLocation.default",
                                           "workbench.action.activityBarLocation.hide",
                                           "workbench.action.toggleStatusbarVisibility",
@@ -2853,6 +2857,8 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleSidebarPosition",
         "workbench.action.gotoLine",
         "editor.action.jumpToBracket",
+        "workbench.action.openSettings",
+        "workbench.action.openGlobalKeybindings",
         "workbench.action.activityBarLocation.default",
         "workbench.action.activityBarLocation.hide",
         "workbench.action.positionPanelTop",
@@ -6880,4 +6886,147 @@ TEST_F(GoToTest, GoToBracketOnEveryCursorAndTheShortcut) {
     ASSERT_EQ(carets.size(), 2U);
     EXPECT_EQ(carets[0], core::Selection::caret(2));
     EXPECT_EQ(carets[1], core::Selection::caret(6));
+}
+
+class UserFilesTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        settings_file_ = scratch_ / "config" / "settings.json";
+        keybindings_file_ = scratch_ / "config" / "keybindings.json";
+    }
+
+    std::string shown_text() const {
+        return current_text();
+    }
+    std::string shown_name() const {
+        return window_->current_uri().file_path()->filename().string();
+    }
+    std::size_t tabs_of(const std::filesystem::path& file) {
+        return window_->editor_layout().locations(core::Uri::file(file)).size();
+    }
+};
+
+TEST_F(UserFilesTest, TheItemsOfThePreferencesMenuAreEnabledAndShowTheirKeys) {
+    create_window();
+    QAction* settings = menu_action("workbench.action.openSettings");
+    ASSERT_NE(settings, nullptr);
+    EXPECT_TRUE(settings->isEnabled());
+    EXPECT_TRUE(settings->text().endsWith("\tCtrl+,")) << settings->text().toStdString();
+    QAction* shortcuts = menu_action("workbench.action.openGlobalKeybindings");
+    ASSERT_NE(shortcuts, nullptr);
+    EXPECT_TRUE(shortcuts->isEnabled());
+    EXPECT_TRUE(shortcuts->text().endsWith("\tCtrl+K Ctrl+S")) << shortcuts->text().toStdString();
+}
+
+TEST_F(UserFilesTest, SettingsOpensTheSettingsFileWithItsText) {
+    std::filesystem::create_directories(settings_file_.parent_path());
+    write("config/settings.json", R"j({"editor.tabSize": 2})j");
+    create_window();
+    menu_action("workbench.action.openSettings")->trigger();
+    EXPECT_EQ(shown_name(), "settings.json");
+    EXPECT_EQ(shown_text(), R"j({"editor.tabSize": 2})j");
+}
+
+TEST_F(UserFilesTest, AMissingSettingsFileIsCreatedWithAnEmptyObjectEvenInAMissingDirectory) {
+    create_window();
+    ASSERT_FALSE(std::filesystem::exists(settings_file_.parent_path()));
+    menu_action("workbench.action.openSettings")->trigger();
+    EXPECT_EQ(*platform::read_file(settings_file_), "{}\n");
+    EXPECT_EQ(shown_name(), "settings.json");
+    EXPECT_EQ(shown_text(), "{}\n");
+    EXPECT_FALSE(window_->current_document()->is_dirty());
+}
+
+TEST_F(UserFilesTest, KeyboardShortcutsOpensTheKeybindingsFileAndCreatesItWithAnEmptyArray) {
+    create_window();
+    menu_action("workbench.action.openGlobalKeybindings")->trigger();
+    EXPECT_EQ(*platform::read_file(keybindings_file_), "[]\n");
+    EXPECT_EQ(shown_name(), "keybindings.json");
+    EXPECT_EQ(shown_text(), "[]\n");
+}
+
+TEST_F(UserFilesTest, AnExistingFileIsNotOverwritten) {
+    std::filesystem::create_directories(keybindings_file_.parent_path());
+    write("config/keybindings.json", "[ // mine\n]");
+    create_window();
+    window_->commands().execute("workbench.action.openGlobalKeybindings");
+    EXPECT_EQ(*platform::read_file(keybindings_file_), "[ // mine\n]");
+    EXPECT_EQ(shown_text(), "[ // mine\n]");
+}
+
+TEST_F(UserFilesTest, OpeningTheFileAgainShowsTheTabItHas) {
+    create_window();
+    window_->commands().execute("workbench.action.openSettings");
+    type("x");
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    window_->commands().execute("workbench.action.openSettings");
+    EXPECT_EQ(tabs_of(settings_file_), 1U);
+    EXPECT_EQ(shown_name(), "settings.json");
+    EXPECT_EQ(shown_text().front(), 'x');
+}
+
+TEST_F(UserFilesTest, TheJsonCommandsOpenTheSameFilesAndAreInThePalette) {
+    create_window();
+    window_->commands().execute("workbench.action.openSettingsJson");
+    EXPECT_EQ(shown_name(), "settings.json");
+    window_->commands().execute("workbench.action.openGlobalKeybindingsFile");
+    EXPECT_EQ(shown_name(), "keybindings.json");
+
+    window_->commands().execute("workbench.action.showCommands");
+    const auto& items = window_->command_palette()->items();
+    for (const char* title : {"Open Settings", "Open User Settings (JSON)",
+                              "Open Keyboard Shortcuts", "Open Keyboard Shortcuts (JSON)"}) {
+        EXPECT_NE(std::ranges::find(items, QString(title), &ui::QuickPickItem::label), items.end())
+            << title;
+    }
+}
+
+TEST_F(UserFilesTest, WithoutAConfigurationFileTheWindowSaysSoAndOpensNothing) {
+    settings_file_.clear();
+    keybindings_file_.clear();
+    create_window();
+    const std::size_t tabs =
+        window_->editor_layout().group(window_->editor_layout().focused())->tabs.size();
+    window_->commands().execute("workbench.action.openSettings");
+    window_->commands().execute("workbench.action.openGlobalKeybindings");
+    EXPECT_EQ(window_->editor_layout().group(window_->editor_layout().focused())->tabs.size(),
+              tabs);
+    EXPECT_EQ(window_->status_bar().message(), "This window has no configuration directory");
+}
+
+TEST_F(UserFilesTest, AFileThatCannotBeCreatedIsReportedInTheStatusBar) {
+    write("config", "this is a file, not a directory");
+    create_window();
+    window_->commands().execute("workbench.action.openSettings");
+    EXPECT_TRUE(window_->status_bar().message().contains("cannot be created"));
+    EXPECT_FALSE(std::filesystem::exists(settings_file_));
+}
+
+TEST_F(UserFilesTest, SavingTheSettingsFileChangesTheRunningWindow) {
+    create_window();
+    ASSERT_NE(window_->settings().editor().tab_size, 8);
+    window_->commands().execute("workbench.action.openSettings");
+    const core::Document& document = *window_->current_document();
+    const std::vector<core::Edit> edits = {
+        {0, document.text().size(), R"j({"editor.tabSize": 8})j"}};
+    ASSERT_TRUE(window_->current_document()->apply_edits(edits).has_value());
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_TRUE(QTest::qWaitFor([&] { return window_->settings().editor().tab_size == 8; }, 5000));
+}
+
+TEST_F(UserFilesTest, SavingTheKeybindingsFileChangesTheMenusOfTheRunningWindow) {
+    create_window();
+    window_->commands().execute("workbench.action.openGlobalKeybindings");
+    const core::Document& document = *window_->current_document();
+    const std::vector<core::Edit> edits = {
+        {0, document.text().size(),
+         R"j([{"key": "ctrl+shift+9", "command": "workbench.action.togglePanel"}])j"}};
+    ASSERT_TRUE(window_->current_document()->apply_edits(edits).has_value());
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_TRUE(QTest::qWaitFor(
+        [&] {
+            return menu_action("workbench.action.togglePanel")->text().endsWith("\tCtrl+Shift+9");
+        },
+        5000));
 }

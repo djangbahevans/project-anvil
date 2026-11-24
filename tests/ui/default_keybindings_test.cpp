@@ -165,6 +165,17 @@ TEST(DefaultKeybindingsTest, GoToLineAndGoToBracketHaveVSCodesKeys) {
               chords({"cmd+shift+\\"}));
 }
 
+TEST(DefaultKeybindingsTest, SettingsAndKeyboardShortcutsHaveVSCodesKeys) {
+    for (const KeyPlatform platform : platforms) {
+        const auto bindings = default_keybindings(platform);
+        const bool macos = platform == KeyPlatform::macos;
+        EXPECT_EQ(keys_of(bindings, "workbench.action.openSettings"),
+                  chords({macos ? "cmd+," : "ctrl+,"}));
+        EXPECT_EQ(keys_of(bindings, "workbench.action.openGlobalKeybindings"),
+                  chords({macos ? "cmd+k cmd+s" : "ctrl+k ctrl+s"}));
+    }
+}
+
 TEST(DefaultKeybindingsTest, TheLineCommandsHaveVSCodesKeysAndLinuxAddsCtrlToTheCopyKeys) {
     for (const KeyPlatform platform : platforms) {
         const auto bindings = default_keybindings(platform);
