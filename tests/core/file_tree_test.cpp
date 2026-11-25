@@ -1,7 +1,9 @@
+#include "../timing.hpp"
 #include "anvil/core/file_name_order.hpp"
 #include "anvil/core/file_tree.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <gtest/gtest.h>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -13,6 +15,7 @@
 
 using namespace anvil;
 using namespace anvil::core;
+using anvil::test::timing_is_meaningful;
 using Kind = FileTreeChange::Kind;
 namespace fs = std::filesystem;
 
@@ -534,4 +537,142 @@ TEST(FileTree, ChangingTheExcludesTakesEffectWhenADirectoryIsReadAgain) {
     EXPECT_EQ(tree.refresh("/w"), (std::vector<FileTreeChange>{{Kind::added, dir(".git")},
                                                                {Kind::removed, dir("build")}}));
     EXPECT_EQ(names(tree.children("/w")), (Names{".git", "a"}));
+}
+
+TEST(DirectoryReader, ReadsADirectoryAsTheTreeHoldsIt) {
+    FakeFileSystem files;
+    files.set("/w", {file("zeta.txt"), dir("src"), file("a10.txt"), file("a9.txt"), dir(".git"),
+                     dir("build")});
+    FileTree tree("/w", files.lister());
+    const DirectoryReader reader = tree.reader();
+
+    const std::optional<FileTreeListing> listing = reader.read("/w");
+    ASSERT_TRUE(listing.has_value());
+    EXPECT_FALSE(listing->error.has_value());
+    EXPECT_EQ(listing->entries, tree.children("/w"));
+    EXPECT_EQ(names(listing->entries), (Names{"build", "src", "a9.txt", "a10.txt", "zeta.txt"}));
+    EXPECT_EQ(files.listings("/w"), 2) << "the reader listed once, and so did the tree";
+}
+
+TEST(DirectoryReader, ADirectoryThatCannotBeListedHasItsErrorAndNoEntries) {
+    FakeFileSystem files;
+    files.fail("/w", "permission denied");
+    const DirectoryReader reader = FileTree("/w", files.lister()).reader();
+    const std::optional<FileTreeListing> listing = reader.read("/w");
+    ASSERT_TRUE(listing.has_value());
+    EXPECT_TRUE(listing->entries.empty());
+    ASSERT_TRUE(listing->error.has_value());
+    EXPECT_EQ(listing->error->message, "permission denied");
+}
+
+TEST(DirectoryReader, NothingIsListedForAPathOutsideTheRootOrExcluded) {
+    FakeFileSystem files;
+    files.set("/w", {dir(".git")});
+    files.set("/w/.git", {file("config")});
+    files.set("/other", {file("x")});
+    const DirectoryReader reader = FileTree("/w", files.lister()).reader();
+    for (const char* path : {"/other", "/w/../other", "/w/.git", "/w/.git/objects", "relative"}) {
+        const std::optional<FileTreeListing> listing = reader.read(path);
+        ASSERT_TRUE(listing.has_value()) << path;
+        EXPECT_TRUE(listing->entries.empty()) << path;
+        EXPECT_FALSE(listing->error.has_value()) << path;
+    }
+    EXPECT_EQ(files.total_listings(), 0);
+}
+
+TEST(DirectoryReader, ARequestToStopGivesNothing) {
+    FakeFileSystem files;
+    files.set("/w", {file("a"), file("b")});
+    const DirectoryReader reader = FileTree("/w", files.lister()).reader();
+
+    std::stop_source stopped;
+    stopped.request_stop();
+    EXPECT_FALSE(reader.read("/w", stopped.get_token()).has_value());
+    EXPECT_EQ(files.listings("/w"), 1) << "the listing was one call and was not interrupted";
+
+    std::stop_source running;
+    EXPECT_TRUE(reader.read("/w", running.get_token()).has_value());
+}
+
+TEST(DirectoryReader, AReaderKeepsTheExcludesItWasMadeWith) {
+    FakeFileSystem files;
+    files.set("/w", {dir("build"), file("a")});
+    FileTree tree("/w", files.lister(), FileExcludes{.patterns = {"build"}, .problems = {}});
+    const DirectoryReader reader = tree.reader();
+    tree.set_excludes(FileExcludes{});
+
+    EXPECT_EQ(names(reader.read("/w")->entries), (Names{"a"}));
+    EXPECT_EQ(names(tree.reader().read("/w")->entries), (Names{"build", "a"}));
+}
+
+TEST(FileTreeAdopt, ATakenListingIsNotListedAgainAndForgettingMakesItListedAgain) {
+    FakeFileSystem files;
+    files.set("/w", {dir("src"), file("a")});
+    files.set("/w/src", {file("main.cpp")});
+    FileTree tree("/w", files.lister());
+
+    std::optional<FileTreeListing> listing = tree.reader().read("/w/src");
+    ASSERT_TRUE(listing.has_value());
+    ASSERT_TRUE(tree.adopt("/w/src", std::move(*listing)));
+    EXPECT_TRUE(tree.is_loaded("/w/src"));
+    EXPECT_EQ(names(tree.children("/w/src")), (Names{"main.cpp"}));
+    EXPECT_EQ(files.listings("/w/src"), 1) << "children() used what was adopted";
+
+    tree.forget("/w/src");
+    EXPECT_FALSE(tree.is_loaded("/w/src"));
+    EXPECT_EQ(names(tree.children("/w/src")), (Names{"main.cpp"}));
+    EXPECT_EQ(files.listings("/w/src"), 2);
+}
+
+TEST(FileTreeAdopt, ForgettingADirectoryForgetsTheOnesBelowIt) {
+    FakeFileSystem files;
+    files.set("/w", {dir("a"), dir("ab")});
+    files.set("/w/a", {dir("b")});
+    files.set("/w/a/b", {file("x")});
+    files.set("/w/ab", {file("y")});
+    FileTree tree("/w", files.lister());
+    tree.children("/w/a");
+    tree.children("/w/a/b");
+    tree.children("/w/ab");
+
+    tree.forget("/w/a");
+    EXPECT_FALSE(tree.is_loaded("/w/a"));
+    EXPECT_FALSE(tree.is_loaded("/w/a/b"));
+    EXPECT_TRUE(tree.is_loaded("/w/ab")) << "a name that only starts the same is not below it";
+}
+
+TEST(FileTreeAdopt, ADirectoryThatIsOutsideOrExcludedTakesNothing) {
+    FakeFileSystem files;
+    FileTree tree("/w", files.lister());
+    EXPECT_FALSE(tree.adopt("/other", FileTreeListing{}));
+    EXPECT_FALSE(tree.adopt("/w/.git", FileTreeListing{}));
+    EXPECT_FALSE(tree.is_loaded("/other"));
+}
+
+TEST(FileTreeRefresh, ADirectoryOfTensOfThousandsOfEntriesIsComparedInOnePass) {
+    FakeFileSystem files;
+    std::vector<FileTreeEntry> before;
+    std::vector<FileTreeEntry> after;
+    for (int i = 0; i < 50000; ++i) {
+        before.push_back(file("f" + std::to_string(i) + ".txt"));
+        if (i % 2 == 0) {
+            after.push_back(before.back());
+        }
+    }
+    for (int i = 0; i < 25000; ++i) {
+        after.push_back(file("g" + std::to_string(i) + ".txt"));
+    }
+    files.set("/w", before);
+    FileTree tree("/w", files.lister());
+    tree.children("/w");
+    files.set("/w", after);
+
+    const auto begin = std::chrono::steady_clock::now();
+    const std::vector<FileTreeChange> changes = tree.refresh("/w");
+    const double took =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    EXPECT_EQ(changes.size(), 25000U + 25000U);
+    if (timing_is_meaningful) {
+        EXPECT_LT(took, 3000.0) << "comparing 50,000 entries with 50,000 took " << took << " ms";
+    }
 }
