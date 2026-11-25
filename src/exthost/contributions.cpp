@@ -297,7 +297,8 @@ std::optional<std::vector<std::string>> text_list(const json& entry, const std::
 }
 
 void read_languages(const json& contributes, const SectionReader& reader,
-                    const std::string& extension, Contributions& out) {
+                    const std::filesystem::path& directory, const std::string& extension,
+                    Contributions& out) {
     const json* section = reader.array(contributes, "languages");
     if (!section) {
         return;
@@ -315,8 +316,9 @@ void read_languages(const json& contributes, const SectionReader& reader,
         const auto filenames = text_list(entry, "filenames", reader, at);
         const auto patterns = text_list(entry, "filenamePatterns", reader, at);
         const auto mime_types = text_list(entry, "mimetypes", reader, at);
+        const auto configuration = reader.text(entry, "configuration", "languages", at);
         if (!id || !first_line || !aliases || !extensions || !filenames || !patterns ||
-            !mime_types) {
+            !mime_types || !configuration) {
             continue;
         }
         if (id->empty()) {
@@ -334,7 +336,19 @@ void read_languages(const json& contributes, const SectionReader& reader,
         if (entry.contains("aliases") && !entry["aliases"].is_null()) {
             language.aliases = *aliases;
         }
-        out.languages.push_back({extension, std::move(language)});
+        std::optional<std::filesystem::path> configuration_file;
+        if (!configuration->empty()) {
+            const std::filesystem::path path = (directory / *configuration).lexically_normal();
+            const std::filesystem::path inside =
+                path.lexically_relative(directory.lexically_normal());
+            if (inside.empty() || *inside.begin() == "..") {
+                reader.problem("contributes.languages[" + std::to_string(at) +
+                               "].configuration is outside the extension's directory");
+            } else {
+                configuration_file = path;
+            }
+        }
+        out.languages.push_back({extension, std::move(language), std::move(configuration_file)});
     }
 }
 
@@ -370,7 +384,7 @@ Contributions read_contributions(std::span<const std::filesystem::path> director
         read_keybindings(*found, reader, extension, contributions);
         read_palette_rules(*found, reader, extension, contributions);
         read_themes(*found, reader, translations, directory, extension, contributions);
-        read_languages(*found, reader, extension, contributions);
+        read_languages(*found, reader, directory, extension, contributions);
     }
     return contributions;
 }

@@ -345,11 +345,37 @@ TEST_F(ContributionsTest, LanguagesCarryEveryRuleOfTheirEntry) {
     EXPECT_EQ(alpha.language.filename_patterns, (std::vector<std::string>{"alpha-*.cfg"}));
     EXPECT_EQ(alpha.language.first_line, "^#!alpha");
     EXPECT_EQ(alpha.language.mime_types, (std::vector<std::string>{"text/x-alpha"}));
+    EXPECT_EQ(alpha.configuration, dir / "language-configuration.json");
     const auto& beta = contributions.languages[1];
+    EXPECT_FALSE(beta.configuration.has_value());
     EXPECT_EQ(beta.language.id, "beta");
     EXPECT_FALSE(beta.language.aliases.has_value());
     EXPECT_TRUE(beta.language.extensions.empty());
     EXPECT_TRUE(logger_->entries().empty());
+}
+
+TEST_F(ContributionsTest, ALanguageConfigurationOutsideTheExtensionIsDroppedAndLogged) {
+    const auto dir = extension("a", "one",
+                               {{"languages",
+                                 {{{"id", "up"}, {"configuration", "../outside.json"}},
+                                  {{"id", "absolute"}, {"configuration", "/etc/passwd"}},
+                                  {{"id", "number"}, {"configuration", 3}},
+                                  {{"id", "empty"}, {"configuration", ""}},
+                                  {{"id", "nested"}, {"configuration", "sub/../conf.json"}}}}});
+    const Contributions contributions = read({dir});
+    ASSERT_EQ(contributions.languages.size(), 4U);
+    EXPECT_EQ(contributions.languages[0].language.id, "up");
+    EXPECT_FALSE(contributions.languages[0].configuration.has_value());
+    EXPECT_EQ(contributions.languages[1].language.id, "absolute");
+    EXPECT_FALSE(contributions.languages[1].configuration.has_value());
+    EXPECT_FALSE(contributions.languages[2].configuration.has_value());
+    EXPECT_EQ(contributions.languages[3].configuration, dir / "conf.json");
+    EXPECT_TRUE(logger_->contains(
+        LogLevel::warning, "contributes.languages[0].configuration is outside", "extensions"));
+    EXPECT_TRUE(logger_->contains(
+        LogLevel::warning, "contributes.languages[1].configuration is outside", "extensions"));
+    EXPECT_TRUE(logger_->contains(
+        LogLevel::warning, "contributes.languages[2].configuration is not a string", "extensions"));
 }
 
 TEST_F(ContributionsTest, AnEmptyListOfAliasesIsKeptApartFromNoAliases) {

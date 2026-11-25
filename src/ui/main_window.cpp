@@ -571,6 +571,52 @@ void MainWindow::rebuild_languages() {
     }
     languages_.set_user_associations(file_associations_);
     refresh_document_languages();
+    rebuild_language_comments();
+}
+
+void MainWindow::rebuild_language_comments() {
+    core::NullLogger discarded;
+    core::Logger& logger = options_.logger ? *options_.logger : discarded;
+    language_comments_.clear();
+    for (const std::string& id : languages_.language_ids()) {
+        if (const core::LanguageComments* builtin = core::builtin_language_comments(id)) {
+            language_comments_.emplace(id, *builtin);
+        }
+    }
+    const auto report = [&](const std::string& extension, const std::filesystem::path& file,
+                            const std::string& problem) {
+        const std::string message = extension + ": " + file.string() + ": " + problem;
+        if (reported_language_configurations_.insert(message).second) {
+            logger.log(core::LogLevel::warning, "extensions", message);
+        }
+    };
+    for (const exthost::ContributedLanguage& contributed : bridge_.contributions().languages) {
+        if (!contributed.configuration) {
+            continue;
+        }
+        const auto text = platform::read_file(*contributed.configuration);
+        if (!text) {
+            report(contributed.extension, *contributed.configuration, text.error().message);
+            continue;
+        }
+        const core::ReadComments read = core::read_language_comments(*text);
+        for (const std::string& problem : read.problems) {
+            report(contributed.extension, *contributed.configuration, problem);
+        }
+        if (!read.comments.empty()) {
+            core::LanguageComments& tokens = language_comments_[contributed.language.id];
+            tokens = tokens.overlaid_with(read.comments);
+        }
+    }
+}
+
+std::optional<core::LanguageComments>
+MainWindow::language_comments(std::string_view language_id) const {
+    const auto found = language_comments_.find(language_id);
+    if (found == language_comments_.end()) {
+        return std::nullopt;
+    }
+    return found->second;
 }
 
 void MainWindow::apply_file_associations() {

@@ -103,6 +103,7 @@ jobs:
         run: |
           node scripts/generate-languages.mjs --check
           node scripts/generate-language-cases.mjs --check
+          node scripts/generate-language-comments.mjs --check
 
       - name: Check the menu table
         run: node scripts/generate-menus.mjs --check

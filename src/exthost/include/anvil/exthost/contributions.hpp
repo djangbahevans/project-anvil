@@ -6,6 +6,7 @@
 #include "anvil/core/log.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -62,10 +63,13 @@ struct ContributedTheme {
     std::filesystem::path path;
 };
 
-// A language from `contributes.languages`. The `configuration` file is not read.
+// A language from `contributes.languages`.
 struct ContributedLanguage {
     std::string extension;
     core::LanguageContribution language;
+    // The language configuration file the entry names, inside the extension's directory. It is
+    // not read here, and the file may not exist.
+    std::optional<std::filesystem::path> configuration;
 };
 
 struct Contributions {
