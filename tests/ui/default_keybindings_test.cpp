@@ -191,6 +191,13 @@ TEST(DefaultKeybindingsTest, SettingsAndKeyboardShortcutsHaveVSCodesKeys) {
     }
 }
 
+TEST(DefaultKeybindingsTest, TheKeyboardShortcutsReferenceIsCtrlKCtrlR) {
+    for (const KeyPlatform platform : platforms) {
+        EXPECT_EQ(keys_of(default_keybindings(platform), "workbench.action.keybindingsReference"),
+                  chords({platform == KeyPlatform::macos ? "cmd+k cmd+r" : "ctrl+k ctrl+r"}));
+    }
+}
+
 TEST(DefaultKeybindingsTest, ReopenClosedEditorIsCtrlShiftT) {
     EXPECT_EQ(
         keys_of(default_keybindings(KeyPlatform::linux), "workbench.action.reopenClosedEditor"),

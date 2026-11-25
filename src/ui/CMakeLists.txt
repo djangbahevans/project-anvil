@@ -14,6 +14,7 @@ add_library(anvil_ui STATIC
   highlighting.cpp
   key_translation.cpp
   keybinding_service.cpp
+  keybindings_reference.cpp
   keybindings_store.cpp
   menu_style.cpp
   include/anvil/ui/about.hpp
@@ -29,6 +30,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/highlighting.hpp
   include/anvil/ui/key_translation.hpp
   include/anvil/ui/keybinding_service.hpp
+  include/anvil/ui/keybindings_reference.hpp
   include/anvil/ui/keybindings_store.hpp
   include/anvil/ui/main_window.hpp
   include/anvil/ui/menu_style.hpp

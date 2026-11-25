@@ -356,7 +356,11 @@ private:
     // Whether the `enablement` of the extension command allows it to run now.
     bool command_enabled(const std::string& id) const;
     // Adds an untitled document and shows it in `group`, or in the focused group.
-    void add_untitled_document(std::optional<workbench::GroupId> group = std::nullopt);
+    void add_untitled_document(std::optional<workbench::GroupId> group = std::nullopt,
+                               core::Text text = {});
+    // Opens a new untitled document with the key table as it is now: the default bindings with
+    // the ones of extensions and of the user's file applied.
+    void show_keybindings_reference();
     // Makes the document the shown one of the focused group, or of the group that has it already,
     // adding it to the open documents when it is new.
     void show_document(const core::Uri& uri, std::shared_ptr<core::Document> document);

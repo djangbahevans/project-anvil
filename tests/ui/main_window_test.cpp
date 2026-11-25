@@ -2739,6 +2739,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.openIssueReporter",
                                           "workbench.action.openLicenseUrl",
                                           "workbench.action.showAboutDialog",
+                                          "workbench.action.keybindingsReference",
                                           "workbench.action.showMultipleEditorTabs",
                                           "workbench.action.showEditorTab",
                                           "workbench.action.hideEditorTabs",
@@ -2915,6 +2916,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.openIssueReporter",
         "workbench.action.openLicenseUrl",
         "workbench.action.showAboutDialog",
+        "workbench.action.keybindingsReference",
         "workbench.action.showMultipleEditorTabs",
         "workbench.action.showEditorTab",
         "workbench.action.hideEditorTabs",
@@ -9285,4 +9287,96 @@ TEST_F(ExplorerWindowTest, AWatchThatCannotStartIsReportedOnceInTheStatusBar) {
         << window_->status_bar().message().toStdString();
     EXPECT_TRUE(window_->status_bar().message().contains("Explorer"));
     EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
+}
+
+class KeyboardShortcutsReferenceTest : public MainWindowKeysTest {
+protected:
+    void SetUp() override {
+        MainWindowKeysTest::SetUp();
+        keybindings_file_ = scratch_ / "config" / "keybindings.json";
+        std::filesystem::create_directories(keybindings_file_.parent_path());
+    }
+
+    std::vector<std::string> lines() const {
+        std::vector<std::string> result;
+        std::istringstream stream(current_text());
+        for (std::string line; std::getline(stream, line);) {
+            result.push_back(line);
+        }
+        return result;
+    }
+    bool has_line(const std::string& line) const {
+        const auto all = lines();
+        return std::ranges::find(all, line) != all.end();
+    }
+    bool has_title(const std::string& title) const {
+        return std::ranges::any_of(
+            lines(), [&](const std::string& line) { return line.starts_with(title + '\t'); });
+    }
+};
+
+TEST_F(KeyboardShortcutsReferenceTest, TheItemIsEnabledAndShowsItsKey) {
+    create_window();
+    QAction* item = menu_action("workbench.action.keybindingsReference");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_TRUE(item->text().endsWith("\tCtrl+K Ctrl+R")) << item->text().toStdString();
+}
+
+TEST_F(KeyboardShortcutsReferenceTest, TheItemOpensAnUntitledDocumentWithTheBoundCommands) {
+    create_window();
+    const std::size_t before = window_->open_document_count();
+    menu_action("workbench.action.keybindingsReference")->trigger();
+    EXPECT_EQ(window_->open_document_count(), before + 1);
+    EXPECT_EQ(window_->current_uri().scheme, "untitled");
+    const auto all = lines();
+    ASSERT_GE(all.size(), 3U);
+    EXPECT_EQ(all[0], "Keyboard Shortcuts Reference");
+    EXPECT_EQ(all[1], "");
+    EXPECT_TRUE(has_line("Save\tCtrl+S"));
+    EXPECT_TRUE(has_line("Keyboard Shortcuts Reference\tCtrl+K Ctrl+R"));
+    EXPECT_FALSE(has_title("View License"));
+}
+
+TEST_F(KeyboardShortcutsReferenceTest, TheDocumentIsOrdinaryAndAsksToBeSavedOnceEdited) {
+    create_window();
+    window_->commands().execute("workbench.action.keybindingsReference");
+    const auto document = window_->current_document();
+    EXPECT_FALSE(document->is_dirty());
+    type("x");
+    EXPECT_TRUE(document->is_dirty());
+    EXPECT_TRUE(current_text().starts_with("xKeyboard Shortcuts Reference"));
+}
+
+TEST_F(KeyboardShortcutsReferenceTest, AUserBindingIsListedAndARemovedOneIsNot) {
+    write("config/keybindings.json",
+          R"j([{"key": "f9", "command": "workbench.action.files.save"},
+               {"key": "ctrl+s", "command": "-workbench.action.files.save"},
+               {"key": "ctrl+shift+n", "command": "-workbench.action.newWindow"}])j");
+    create_window();
+    window_->commands().execute("workbench.action.keybindingsReference");
+    EXPECT_TRUE(has_line("Save\tF9")) << current_text();
+    EXPECT_FALSE(has_line("Save\tCtrl+S"));
+    EXPECT_FALSE(has_title("New Window")) << current_text();
+}
+
+TEST_F(KeyboardShortcutsReferenceTest, EachRunOpensAnotherDocument) {
+    create_window();
+    const std::size_t before = window_->open_document_count();
+    window_->commands().execute("workbench.action.keybindingsReference");
+    const core::Uri first = window_->current_uri();
+    const std::string first_text = current_text();
+    window_->commands().execute("workbench.action.keybindingsReference");
+    EXPECT_EQ(window_->open_document_count(), before + 2);
+    EXPECT_NE(window_->current_uri(), first);
+    EXPECT_EQ(current_text(), first_text);
+}
+
+TEST_F(KeyboardShortcutsReferenceTest, TheKeyOpensItInAShownWindow) {
+    create_active_window();
+    const std::size_t before = window_->open_document_count();
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_R, Qt::ControlModifier);
+    EXPECT_EQ(window_->open_document_count(), before + 1);
+    EXPECT_TRUE(current_text().starts_with("Keyboard Shortcuts Reference\n\n"));
 }
