@@ -9221,7 +9221,7 @@ TEST_F(AboutDialogTest, TheItemOpensADialogWithTheVersionsWithoutRunningANestedL
     const auto open = dialogs();
     ASSERT_EQ(open.size(), 1U);
     EXPECT_EQ(open[0]->windowTitle(), "About");
-    EXPECT_TRUE(open[0]->isModal());
+    EXPECT_EQ(open[0]->windowModality(), Qt::WindowModal);
     EXPECT_EQ(open[0]->parentWidget(), window_.get());
     const QString text = open[0]->text();
     EXPECT_TRUE(text.contains(QString::fromStdString("Version: " + ui::anvil_version())))
