@@ -11,6 +11,7 @@
 #include "anvil/ui/command_registry.hpp"
 #include "anvil/ui/editor_area.hpp"
 #include "anvil/ui/editor_view.hpp"
+#include "anvil/ui/explorer_view.hpp"
 #include "anvil/ui/extension_host_bridge.hpp"
 #include "anvil/ui/find_bar.hpp"
 #include "anvil/ui/highlighting.hpp"
@@ -34,6 +35,7 @@
 #include "anvil/workbench/navigation_history.hpp"
 
 #include <QMainWindow>
+#include <QPointer>
 #include <QTimer>
 #include <filesystem>
 #include <functional>
@@ -268,6 +270,10 @@ private:
     void rebuild_languages();
     // Reads `files.associations` and, when it changed, applies it to the registry.
     void apply_file_associations();
+    // Registers the explorer as the first container of the sidebar.
+    void register_explorer();
+    // Reads `files.exclude` and, when it changed, gives it to the explorer.
+    void apply_file_excludes();
     // Builds the comment tokens of the registered languages from the built-in table and from the
     // language configuration files that extensions contribute.
     void rebuild_language_comments();
@@ -493,6 +499,9 @@ private:
     core::LanguageRegistry languages_ = core::LanguageRegistry::with_builtin_languages();
     std::vector<core::FileAssociation> file_associations_;
     std::vector<std::string> file_association_problems_;
+    // Null until the explorer is first shown.
+    QPointer<ExplorerView> explorer_;
+    core::FileExcludes file_excludes_ = core::FileExcludes::defaults();
     std::map<std::string, core::LanguageComments, std::less<>> language_comments_;
     // The problems of language configuration files that were logged, so that a restart of the
     // extension host that reads the same files again does not log them again.
