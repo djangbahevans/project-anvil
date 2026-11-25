@@ -72,6 +72,7 @@ protected:
         options.custom_title_bar = custom_title_bar_;
         options.workspace = workspace_;
         options.choose_folder = choose_folder_;
+        options.explorer_watch = explorer_watch_;
         options.logger = logger_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
@@ -279,6 +280,7 @@ protected:
     std::filesystem::path scratch_;
     std::optional<core::Workspace> workspace_;
     std::function<std::optional<std::filesystem::path>()> choose_folder_;
+    std::optional<ui::DirectoryWatchFactory> explorer_watch_;
     std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
@@ -9264,4 +9266,23 @@ TEST_F(AboutDialogTest, TheRunningExtensionHostsVersionIsShown) {
     EXPECT_TRUE(dialogs()[0]->text().contains(
         QString::fromStdString("VS Code extension host: " + *version)))
         << dialogs()[0]->text().toStdString();
+}
+
+TEST_F(ExplorerWindowTest, AWatchThatCannotStartIsReportedOnceInTheStatusBar) {
+    open_project();
+    int started = 0;
+    explorer_watch_ = [&](const std::filesystem::path&)
+        -> std::expected<std::unique_ptr<ui::DirectoryWatch>, Error> {
+        ++started;
+        return std::unexpected(
+            Error{ErrorCode::limit_exceeded, "the system limit of watches is reached"});
+    };
+    create_window();
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_EQ(started, 1);
+    EXPECT_TRUE(window_->status_bar().message().contains("the system limit of watches"))
+        << window_->status_bar().message().toStdString();
+    EXPECT_TRUE(window_->status_bar().message().contains("Explorer"));
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
 }

@@ -20,6 +20,13 @@ std::expected<std::vector<FileEvent>, Error> FileWatcher::poll(std::chrono::mill
     return std::vector<FileEvent>{};
 }
 
+std::expected<void, Error> FileWatcher::add_directory(const std::filesystem::path&) {
+    return std::unexpected(
+        Error{ErrorCode::unsupported, "watching files is not supported on this platform yet"});
+}
+
+void FileWatcher::remove_directory(const std::filesystem::path&) {}
+
 void FileWatcher::stop() {}
 
 } // namespace anvil::platform

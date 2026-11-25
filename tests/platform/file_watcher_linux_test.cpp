@@ -6,6 +6,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -369,4 +370,125 @@ TEST_F(FileWatcherTest, ADirectoryBeyondTheLimitIsReportedAsAnErrorAndTheWatchGo
 
     write(watched_ / "later.txt", "x");
     EXPECT_TRUE(wait_for_event(created, watched_ / "later.txt"));
+}
+
+TEST_F(FileWatcherTest, AnAddedDirectoryReportsItsEventsWithoutTheDirectoriesBelowIt) {
+    fs::create_directories(watched_ / "sub" / "deep");
+    start({.recursive = false});
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "sub").has_value());
+
+    write(watched_ / "sub" / "a.txt", "x");
+    ASSERT_TRUE(wait_for_event(created, watched_ / "sub" / "a.txt"));
+    events_.clear();
+
+    write(watched_ / "sub" / "deep" / "hidden.txt", "x");
+    write(watched_ / "top.txt", "x");
+    ASSERT_TRUE(wait_for_event(created, watched_ / "top.txt"));
+    EXPECT_FALSE(has(events_, created, watched_ / "sub" / "deep" / "hidden.txt"));
+}
+
+TEST_F(FileWatcherTest, ADirectoryThatIsNotAddedIsNotWatched) {
+    fs::create_directories(watched_ / "sub");
+    start({.recursive = false});
+
+    write(watched_ / "sub" / "a.txt", "x");
+    write(watched_ / "top.txt", "x");
+    ASSERT_TRUE(wait_for_event(created, watched_ / "top.txt"));
+    EXPECT_FALSE(has(events_, created, watched_ / "sub" / "a.txt"));
+}
+
+TEST_F(FileWatcherTest, AddingADirectoryTwiceWatchesItOnce) {
+    fs::create_directories(watched_ / "sub");
+    start({.recursive = false, .max_directories = 2});
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "sub").has_value());
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "sub").has_value());
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "sub" / ".").has_value());
+    ASSERT_TRUE(watcher_->add_directory(watched_).has_value());
+
+    write(watched_ / "sub" / "a.txt", "x");
+    ASSERT_TRUE(wait_for_event(created, watched_ / "sub" / "a.txt"));
+    EXPECT_EQ(count(events_, watched_ / "sub" / "a.txt"), 1U);
+}
+
+TEST_F(FileWatcherTest, ARemovedDirectoryReportsNothingMoreAndTheOthersDo) {
+    fs::create_directories(watched_ / "gone");
+    fs::create_directories(watched_ / "kept");
+    start({.recursive = false});
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "gone").has_value());
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "kept").has_value());
+
+    watcher_->remove_directory(watched_ / "gone");
+    watcher_->remove_directory(watched_ / "never-added");
+    write(watched_ / "gone" / "a.txt", "x");
+    write(watched_ / "kept" / "b.txt", "x");
+    ASSERT_TRUE(wait_for_event(created, watched_ / "kept" / "b.txt"));
+    EXPECT_FALSE(has(events_, created, watched_ / "gone" / "a.txt"));
+    EXPECT_TRUE(take_for(milliseconds(300)).empty());
+
+    watcher_->remove_directory(watched_);
+    write(watched_ / "top.txt", "x");
+    EXPECT_TRUE(wait_for_event(created, watched_ / "top.txt")) << "the watched path stays";
+}
+
+TEST_F(FileWatcherTest, AddingADirectoryThatCannotBeWatchedFailsAndKeepsTheWatch) {
+    fs::create_directories(watched_ / "a");
+    fs::create_directories(watched_ / "b");
+    start({.recursive = false, .max_directories = 2});
+
+    const auto missing = watcher_->add_directory(watched_ / "missing");
+    ASSERT_FALSE(missing.has_value());
+    EXPECT_EQ(missing.error().code, ErrorCode::not_found);
+    const auto outside = watcher_->add_directory(root_);
+    ASSERT_FALSE(outside.has_value());
+    EXPECT_EQ(outside.error().code, ErrorCode::invalid_argument);
+    const auto sibling = watcher_->add_directory(root_ / "watched-other");
+    ASSERT_FALSE(sibling.has_value());
+    EXPECT_EQ(sibling.error().code, ErrorCode::invalid_argument);
+
+    ASSERT_TRUE(watcher_->add_directory(watched_ / "a").has_value());
+    const auto too_many = watcher_->add_directory(watched_ / "b");
+    ASSERT_FALSE(too_many.has_value());
+    EXPECT_EQ(too_many.error().code, ErrorCode::limit_exceeded);
+
+    write(watched_ / "a" / "x.txt", "x");
+    EXPECT_TRUE(wait_for_event(created, watched_ / "a" / "x.txt"));
+}
+
+TEST_F(FileWatcherTest, DirectoriesCanOnlyBeAddedToAWatcherThatIsNotRecursive) {
+    fs::create_directories(watched_ / "sub");
+    start({.recursive = true});
+    const auto added = watcher_->add_directory(watched_ / "sub");
+    ASSERT_FALSE(added.has_value());
+    EXPECT_EQ(added.error().code, ErrorCode::invalid_argument);
+
+    write(watched_ / "file.txt", "x");
+    auto file_watcher = FileWatcher::start(watched_ / "file.txt");
+    ASSERT_TRUE(file_watcher.has_value());
+    const auto to_file = (*file_watcher)->add_directory(watched_ / "sub");
+    ASSERT_FALSE(to_file.has_value());
+    EXPECT_EQ(to_file.error().code, ErrorCode::invalid_argument);
+}
+
+TEST_F(FileWatcherTest, DirectoriesAddedWhileEventsFlowAreAllWatched) {
+    constexpr int count_of_directories = 200;
+    for (int i = 0; i < count_of_directories; ++i) {
+        fs::create_directories(watched_ / ("d" + std::to_string(i)));
+    }
+    start({.recursive = false});
+
+    std::thread writer([&] {
+        for (int i = 0; i < 400; ++i) {
+            write(watched_ / ("burst" + std::to_string(i) + ".txt"), "x");
+        }
+    });
+    for (int i = 0; i < count_of_directories; ++i) {
+        ASSERT_TRUE(watcher_->add_directory(watched_ / ("d" + std::to_string(i))).has_value());
+        if (i % 3 == 0) {
+            watcher_->remove_directory(watched_ / ("d" + std::to_string(i / 2)));
+        }
+    }
+    writer.join();
+
+    write(watched_ / "d199" / "last.txt", "x");
+    EXPECT_TRUE(wait_for_event(created, watched_ / "d199" / "last.txt"));
 }

@@ -22,12 +22,16 @@ namespace anvil::ui {
 // Open Folder button instead.
 //
 // The tree is a `QTreeView` over an `ExplorerModel`, drawn with the colors of the theme (`list.*`).
+// It follows the disk: files and folders that other programs create, delete and rename in the
+// directories that are open appear and disappear, and the rest of the tree and the selection stay.
+// A selected row that disappears moves the selection to the row that took its place.
 class ExplorerView : public QWidget {
     Q_OBJECT
 
 public:
     ExplorerView(const WorkbenchColors& colors, QWidget* parent = nullptr,
-                 core::DirectoryLister lister = platform_directory_lister());
+                 core::DirectoryLister lister = platform_directory_lister(),
+                 DirectoryWatchFactory watch = platform_directory_watch());
     ~ExplorerView() override;
 
     // Shows the folder with `name` above it, or the Open Folder offer for none.
@@ -53,6 +57,8 @@ public:
     }
 
 signals:
+    // The watch of the folder could not start or lost events: a sentence for the status bar.
+    void watch_problem(const QString& message);
     // A file was activated with Enter or a double click.
     void file_activated(const QString& path);
     // The Open Folder button was pressed.

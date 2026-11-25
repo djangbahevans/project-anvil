@@ -65,6 +65,19 @@ public:
     // on, and the error is returned once.
     std::expected<std::vector<FileEvent>, Error> poll(std::chrono::milliseconds timeout);
 
+    // Watches one more directory, without the directories below it, together with the ones that
+    // are watched already: the events of all of them come out of poll() with the other events. For
+    // a watcher that is not recursive and was started on a directory; `directory` is that
+    // directory or below it. Watching a directory again changes nothing. Fails with `not_found`
+    // when the directory does not exist, `limit_exceeded` as `start` does, and `invalid_argument`
+    // for a recursive watcher, a watcher of a file, or a directory outside the watched one.
+    // Windows and macOS fail with `unsupported`.
+    std::expected<void, Error> add_directory(const std::filesystem::path& directory);
+
+    // Stops watching a directory that `add_directory` added. The watched path itself stays, and so
+    // does what was collected already.
+    void remove_directory(const std::filesystem::path& directory);
+
     // Ends the watch; later polls return nothing. Also done by the destructor.
     void stop();
 
