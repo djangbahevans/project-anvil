@@ -5,6 +5,7 @@
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/ui/codicons.hpp"
 #include "anvil/ui/default_keybindings.hpp"
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/resources.hpp"
@@ -217,6 +218,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     }
     sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
     panel_ = new Panel(*workbench_, view_containers_, colors_, this);
+    register_explorer();
 
     register_commands();
     keys_ = new KeybindingService(
@@ -430,6 +432,28 @@ void MainWindow::open_folder_dialog() {
     }
 }
 
+void MainWindow::register_explorer() {
+    ViewContainer explorer;
+    explorer.id = "workbench.view.explorer";
+    explorer.title = tr("Explorer");
+    explorer.icon = codicon_icon("files", Qt::white, 24);
+    explorer.order = 0;
+    explorer.create = [this]() -> QWidget* {
+        auto* view = new ExplorerView(colors_);
+        connect(view, &ExplorerView::file_activated, this,
+                [this](const QString& path) { open_file(path); });
+        connect(view, &ExplorerView::open_folder_requested, this,
+                [this] { commands_.execute("workbench.action.files.openFolder"); });
+        view->set_excludes(file_excludes_);
+        view->set_workspace(
+            options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
+            options_.workspace ? QString::fromStdString(options_.workspace->name) : QString());
+        explorer_ = view;
+        return view;
+    };
+    view_containers_.add(std::move(explorer));
+}
+
 void MainWindow::workspace_changed() {
     if (options_.extension_host) {
         core::NullLogger discarded;
@@ -456,6 +480,11 @@ void MainWindow::workspace_changed() {
             read_extension_keybindings(logger);
             add_extension_themes();
         }
+    }
+    if (explorer_) {
+        explorer_->set_workspace(
+            options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
+            options_.workspace ? QString::fromStdString(options_.workspace->name) : QString());
     }
     if (title_bar_) {
         title_bar_->set_command_center_text(workspace_label());
@@ -556,6 +585,7 @@ void MainWindow::apply_settings() {
     }
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     apply_file_associations();
+    apply_file_excludes();
     apply_extension_host_options();
 }
 
@@ -635,6 +665,25 @@ void MainWindow::apply_file_associations() {
     if (associations_changed) {
         languages_.set_user_associations(file_associations_);
         refresh_document_languages();
+    }
+}
+
+void MainWindow::apply_file_excludes() {
+    core::FileExcludes read = core::FileExcludes::from_settings(settings_->settings());
+    if (read.patterns == file_excludes_.patterns && read.problems == file_excludes_.problems) {
+        return;
+    }
+    core::NullLogger discarded;
+    core::Logger& logger = options_.logger ? *options_.logger : discarded;
+    if (read.problems != file_excludes_.problems) {
+        for (const std::string& problem : read.problems) {
+            logger.log(core::LogLevel::warning, "settings", problem);
+        }
+    }
+    const bool patterns_changed = read.patterns != file_excludes_.patterns;
+    file_excludes_ = std::move(read);
+    if (patterns_changed && explorer_) {
+        explorer_->set_excludes(file_excludes_);
     }
 }
 

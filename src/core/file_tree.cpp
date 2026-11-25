@@ -49,23 +49,54 @@ FileExcludes FileExcludes::defaults() {
     };
 }
 
-FileExcludes FileExcludes::from_setting(const nlohmann::json& setting) {
-    FileExcludes result;
+namespace {
+
+// The entries of the setting that say on or off, in the order of the setting.
+std::vector<std::pair<std::string, bool>> switches_of(const nlohmann::json& setting,
+                                                      std::vector<std::string>& problems) {
+    std::vector<std::pair<std::string, bool>> result;
     if (!setting.is_object()) {
-        result.problems.push_back("files.exclude is not an object");
+        problems.push_back("files.exclude is not an object");
         return result;
     }
     for (const auto& [pattern, value] : setting.items()) {
         if (value.is_boolean()) {
-            if (value.get<bool>()) {
-                result.patterns.push_back(pattern);
-            }
+            result.emplace_back(pattern, value.get<bool>());
         } else if (value.is_object()) {
-            result.problems.push_back("files.exclude: the condition of \"" + pattern +
-                                      "\" is not supported");
+            problems.push_back("files.exclude: the condition of \"" + pattern +
+                               "\" is not supported");
         } else {
-            result.problems.push_back("files.exclude: the value of \"" + pattern +
-                                      "\" is not true or false");
+            problems.push_back("files.exclude: the value of \"" + pattern +
+                               "\" is not true or false");
+        }
+    }
+    return result;
+}
+
+} // namespace
+
+FileExcludes FileExcludes::from_setting(const nlohmann::json& setting) {
+    FileExcludes result;
+    for (auto& [pattern, on] : switches_of(setting, result.problems)) {
+        if (on) {
+            result.patterns.push_back(std::move(pattern));
+        }
+    }
+    return result;
+}
+
+FileExcludes FileExcludes::from_settings(const Settings& settings) {
+    FileExcludes result = defaults();
+    const nlohmann::json* setting = settings.find("files.exclude");
+    if (setting == nullptr) {
+        return result;
+    }
+    for (auto& [pattern, on] : switches_of(*setting, result.problems)) {
+        const auto present = std::ranges::find(result.patterns, pattern);
+        if (on && present == result.patterns.end()) {
+            result.patterns.push_back(std::move(pattern));
+        } else if (!on && present != result.patterns.end()) {
+            result.patterns.erase(present);
         }
     }
     return result;

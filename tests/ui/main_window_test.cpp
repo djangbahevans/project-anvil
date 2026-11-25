@@ -1,6 +1,7 @@
 #include "anvil/core/live_highlighter.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/ui/activity_bar.hpp"
 #include "anvil/ui/main_window.hpp"
 #include "anvil/ui/menu_style.hpp"
 
@@ -24,6 +25,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeView>
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -4180,7 +4182,8 @@ TEST_F(MainWindowTest, TheWindowIsAWorkbenchWithTheEditorInItsEditorArea) {
 
     EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));
     EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
-    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_NE(window_->view_containers().find("workbench.view.explorer"), nullptr);
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
     EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::status_bar));
     EXPECT_GT(window_->workbench()->size(ui::Part::status_bar), 0);
 }
@@ -4266,6 +4269,9 @@ TEST_F(MainWindowTest, RendersTheWindowWithTheSidebarAndThePanelShown) {
 
 TEST_F(MainWindowTest, ARegisteredViewContainerShowsTheActivityBarAndOpensInTheSidebar) {
     create_window();
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    window_->view_containers().remove("workbench.view.explorer");
+    QApplication::processEvents();
     EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
 
     QPixmap pixmap(24, 24);
@@ -4346,7 +4352,7 @@ TEST_F(MainWindowTest, APanelContainerOpensInThePanelAndTheCommandsMaximizeIt) {
     window_->view_containers().add(std::move(container));
     QApplication::processEvents();
     EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::panel));
-    EXPECT_FALSE(window_->workbench()->is_visible(ui::Part::activity_bar));
+    EXPECT_EQ(window_->sidebar()->activity_bar().button_count(), 1U);
     EXPECT_EQ(created, 0);
 
     window_->commands().execute("workbench.action.togglePanel");
@@ -8949,4 +8955,155 @@ TEST_F(HelpMenuTest, TheOtherMenusAreAsTheyWere) {
     EXPECT_NE(menu_action("workbench.action.files.save"), nullptr);
     EXPECT_NE(menu_action("workbench.action.togglePanel"), nullptr);
     EXPECT_NE(menu_action("editor.action.selectAll"), nullptr);
+}
+
+// --- explorer ---
+
+class ExplorerWindowTest : public MainWindowTest {
+protected:
+    void open_project() {
+        const auto folder = scratch_ / "project";
+        std::filesystem::create_directories(folder / "src");
+        std::filesystem::create_directories(folder / "build");
+        EXPECT_TRUE(platform::write_file(folder / "a.txt", "alpha").has_value());
+        EXPECT_TRUE(platform::write_file(folder / "src" / "main.cpp", "int main;").has_value());
+        EXPECT_TRUE(platform::write_file(folder / "build" / "out.o", "obj").has_value());
+        workspace_ = *core::Workspace::open(folder);
+    }
+
+    ui::ExplorerView* show_explorer() {
+        window_->resize(1000, 700);
+        window_->sidebar()->activate("workbench.view.explorer");
+        QApplication::processEvents();
+        return qobject_cast<ui::ExplorerView*>(
+            window_->sidebar()->container_widget("workbench.view.explorer"));
+    }
+
+    static std::vector<std::string> names_of(const ui::ExplorerView* view) {
+        std::vector<std::string> names;
+        for (int row = 0; row < view->model()->rowCount(); ++row) {
+            names.push_back(view->model()->index(row, 0).data().toString().toStdString());
+        }
+        return names;
+    }
+};
+
+TEST_F(ExplorerWindowTest, TheExplorerIsTheFirstContainerOfTheSideBarAndIsMadeWhenFirstShown) {
+    open_project();
+    create_window();
+    const std::vector<const ui::ViewContainer*> containers =
+        window_->view_containers().containers(ui::ViewContainerLocation::sidebar);
+    ASSERT_FALSE(containers.empty());
+    EXPECT_EQ(containers.front()->id, "workbench.view.explorer");
+    EXPECT_EQ(containers.front()->title, "Explorer");
+    EXPECT_FALSE(containers.front()->icon.isNull());
+    EXPECT_EQ(window_->sidebar()->container_widget("workbench.view.explorer"), nullptr);
+
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_EQ(window_->sidebar()->title(), "EXPLORER");
+    EXPECT_EQ(explorer->folder_name(), "project");
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
+
+    explorer->tree()->expand(explorer->model()->index_of(workspace_->folder / "src"));
+    explorer->tree()->setCurrentIndex(
+        explorer->model()->index_of(workspace_->folder / "src" / "main.cpp"));
+    QApplication::processEvents();
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/explorer_window.png");
+    }
+}
+
+TEST_F(ExplorerWindowTest, EnterOnAFileOpensItInATabThatIsTheActiveOne) {
+    open_project();
+    create_window();
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    const std::size_t tabs_before = window_->open_document_count();
+
+    explorer->tree()->setCurrentIndex(explorer->model()->index_of(workspace_->folder / "a.txt"));
+    explorer->tree()->setFocus();
+    QTest::keyClick(explorer->tree(), Qt::Key_Return);
+    QApplication::processEvents();
+
+    EXPECT_EQ(window_->open_document_count(), tabs_before + 1);
+    EXPECT_EQ(window_->current_uri(), core::Uri::file(workspace_->folder / "a.txt"));
+    EXPECT_EQ(current_text(), "alpha");
+}
+
+TEST_F(ExplorerWindowTest, AClickOnAFileSelectsItWithoutOpeningIt) {
+    open_project();
+    create_window();
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    const std::size_t documents = window_->open_document_count();
+    const QModelIndex a = explorer->model()->index_of(workspace_->folder / "a.txt");
+    QTest::mouseClick(explorer->tree()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      explorer->tree()->visualRect(a).center());
+    QApplication::processEvents();
+    EXPECT_EQ(explorer->tree()->currentIndex(), a);
+    EXPECT_EQ(window_->open_document_count(), documents);
+}
+
+TEST_F(ExplorerWindowTest, TheExcludeSettingHidesAFolderAndShowsItAgainWhenItChanges) {
+    open_project();
+    settings_file_ = write("settings.json", "{}");
+    create_window();
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
+    explorer->tree()->expand(explorer->model()->index_of(workspace_->folder / "src"));
+
+    window_->change_setting("files.exclude", json{{"**/build", true}});
+    QApplication::processEvents();
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"src", "a.txt"}));
+    EXPECT_TRUE(
+        explorer->tree()->isExpanded(explorer->model()->index_of(workspace_->folder / "src")));
+
+    window_->change_setting("files.exclude", json{{"**/build", false}, {"**/src", true}});
+    QApplication::processEvents();
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "a.txt"}));
+
+    window_->change_setting("files.exclude", json::object());
+    QApplication::processEvents();
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
+}
+
+TEST_F(ExplorerWindowTest, TheExcludeSettingThatIsSetBeforeTheExplorerIsShownApplies) {
+    open_project();
+    settings_file_ = write("settings.json", R"j({"files.exclude": {"**/build": true}})j");
+    create_window();
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"src", "a.txt"}));
+}
+
+TEST_F(ExplorerWindowTest, WithNoFolderTheExplorerOffersToOpenOneAndFollowsTheWorkspace) {
+    open_project();
+    int asked = 0;
+    choose_folder_ = [&]() -> std::optional<std::filesystem::path> {
+        ++asked;
+        return std::nullopt;
+    };
+    workspace_.reset();
+    create_window();
+    ui::ExplorerView* explorer = show_explorer();
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_FALSE(explorer->shows_folder());
+    EXPECT_EQ(explorer->message()->text(), "You have not yet opened a folder.");
+
+    QTest::mouseClick(explorer->open_folder_button(), Qt::LeftButton);
+    QApplication::processEvents();
+    EXPECT_EQ(asked, 1);
+
+    ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
+    QApplication::processEvents();
+    EXPECT_TRUE(explorer->shows_folder());
+    EXPECT_EQ(explorer->folder_name(), "project");
+    EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
+
+    window_->close_folder();
+    QApplication::processEvents();
+    EXPECT_FALSE(explorer->shows_folder());
+    EXPECT_EQ(explorer->model()->rowCount(), 0);
 }

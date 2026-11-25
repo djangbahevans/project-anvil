@@ -143,6 +143,7 @@ if(TARGET anvil_ui)
     ui/default_keybindings_test.cpp
     ui/editor_area_test.cpp
     ui/editor_view_test.cpp
+    ui/explorer_view_test.cpp
     ui/find_bar_test.cpp
     ui/key_translation_test.cpp
     ui/keybinding_service_test.cpp

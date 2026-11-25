@@ -493,3 +493,45 @@ TEST(FileTreeRefresh, ADirectoryThatStopsBeingListableLosesAllItsEntries) {
     EXPECT_EQ(tree.refresh("/w/d"), (std::vector<FileTreeChange>{{Kind::added, file("c")}}));
     EXPECT_EQ(tree.error("/w/d"), nullptr);
 }
+
+TEST(FileExcludes, TheSettingIsLaidOverTheDefaultsAsVsCodeMergesThem) {
+    const FileExcludes defaults = FileExcludes::defaults();
+    EXPECT_EQ(FileExcludes::from_settings(Settings{}).patterns, defaults.patterns);
+
+    const auto settings = Settings::parse(R"j({
+        "files.exclude": {"**/.git": false, "**/node_modules": true, "**/.svn": true, "**/x": false}
+    })j");
+    ASSERT_TRUE(settings.has_value());
+    const FileExcludes merged = FileExcludes::from_settings(*settings);
+    EXPECT_EQ(merged.patterns, (Names{"**/.svn", "**/.hg", "**/.jj", "**/.DS_Store", "**/Thumbs.db",
+                                      "**/node_modules"}));
+    EXPECT_TRUE(merged.problems.empty());
+}
+
+TEST(FileExcludes, TheSettingMayBeWrittenNestedAndItsProblemsAreReported) {
+    const auto settings =
+        Settings::parse(R"j({"files": {"exclude": {"a": true, "b": {"when": "c"}}}})j");
+    ASSERT_TRUE(settings.has_value());
+    const FileExcludes merged = FileExcludes::from_settings(*settings);
+    EXPECT_EQ(merged.patterns.back(), "a");
+    EXPECT_EQ(merged.problems.size(), 1U);
+
+    const auto wrong = Settings::parse(R"j({"files.exclude": ["a"]})j");
+    ASSERT_TRUE(wrong.has_value());
+    const FileExcludes fallback = FileExcludes::from_settings(*wrong);
+    EXPECT_EQ(fallback.patterns, FileExcludes::defaults().patterns);
+    EXPECT_EQ(fallback.problems.size(), 1U);
+}
+
+TEST(FileTree, ChangingTheExcludesTakesEffectWhenADirectoryIsReadAgain) {
+    FakeFileSystem files;
+    files.set("/w", {dir("build"), dir(".git"), file("a")});
+    FileTree tree("/w", files.lister());
+    EXPECT_EQ(names(tree.children("/w")), (Names{"build", "a"}));
+
+    tree.set_excludes(FileExcludes{.patterns = {"build"}, .problems = {}});
+    EXPECT_EQ(names(tree.children("/w")), (Names{"build", "a"}));
+    EXPECT_EQ(tree.refresh("/w"), (std::vector<FileTreeChange>{{Kind::added, dir(".git")},
+                                                               {Kind::removed, dir("build")}}));
+    EXPECT_EQ(names(tree.children("/w")), (Names{".git", "a"}));
+}

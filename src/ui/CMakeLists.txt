@@ -6,6 +6,8 @@ add_library(anvil_ui STATIC
   default_keybindings.cpp
   editor_area.cpp
   editor_view.cpp
+  explorer_model.cpp
+  explorer_view.cpp
   extension_host_bridge.cpp
   find_bar.cpp
   highlighting.cpp
@@ -19,6 +21,8 @@ add_library(anvil_ui STATIC
   include/anvil/ui/default_keybindings.hpp
   include/anvil/ui/editor_area.hpp
   include/anvil/ui/editor_view.hpp
+  include/anvil/ui/explorer_model.hpp
+  include/anvil/ui/explorer_view.hpp
   include/anvil/ui/find_bar.hpp
   include/anvil/ui/highlighting.hpp
   include/anvil/ui/key_translation.hpp
