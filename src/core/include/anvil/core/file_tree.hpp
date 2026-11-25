@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/error.hpp"
+#include "anvil/core/settings.hpp"
 
 #include <expected>
 #include <filesystem>
@@ -43,6 +44,12 @@ struct FileExcludes {
     // `false` off. A value that is an object (a `when` condition) is not supported and is reported
     // as a problem, as is any other value or a setting that is not an object.
     static FileExcludes from_setting(const nlohmann::json& setting);
+
+    // The patterns that are on once the user's `files.exclude` is laid over VS Code's default
+    // object, as VS Code merges the two: an entry of the setting turns a default pattern on or off
+    // and adds the others, and a default that the setting does not mention stays. Without the
+    // setting that is `defaults()`. A value that is not usable is reported as in `from_setting`.
+    static FileExcludes from_settings(const Settings& settings);
 };
 
 // A change that reading a directory again found.
@@ -85,6 +92,12 @@ public:
     // Why the last listing of `directory` failed; null when it was listed, is not loaded or lies
     // outside the tree.
     const Error* error(const std::filesystem::path& directory) const;
+
+    // Replaces the patterns without listing anything. What was listed under the old ones stays as
+    // it is until `refresh` reads it again.
+    void set_excludes(FileExcludes excludes) {
+        excludes_ = std::move(excludes);
+    }
 
     // Whether `children` has listed `directory` and the listing has not been dropped.
     bool is_loaded(const std::filesystem::path& directory) const;
