@@ -1,9 +1,11 @@
 #include "anvil/exthost/documents_service.hpp"
 
 #include "anvil/exthost/vscode_types.hpp"
+#include "anvil/exthost/workspace_file_edit.hpp"
 #include "anvil/platform/file.hpp"
 
 #include <algorithm>
+#include <set>
 
 namespace anvil::exthost {
 namespace {
@@ -529,49 +531,244 @@ std::optional<HandlerResult> DocumentsService::try_show_text_document(const json
     return OkJson{json(id).dump()};
 }
 
+std::vector<std::string> DocumentsService::keys_within(const std::filesystem::path& root) const {
+    std::vector<std::string> keys;
+    for (const auto& [key, entry] : entries_) {
+        if (const auto path = entry.uri.file_path(); path && is_path_within(*path, root)) {
+            keys.push_back(key);
+        }
+    }
+    return keys;
+}
+
+bool DocumentsService::has_dirty_document_within(const std::filesystem::path& root) const {
+    return std::ranges::any_of(keys_within(root), [&](const std::string& key) {
+        return entries_.at(key).document->is_dirty();
+    });
+}
+
+void DocumentsService::files_deleted(const std::filesystem::path& root) {
+    for (const std::string& key : keys_within(root)) {
+        const Entry& entry = entries_.at(key);
+        if (entry.document->is_dirty()) {
+            continue;
+        }
+        const core::Uri uri = entry.uri;
+        remove_document(uri);
+        if (observer_.deleted) {
+            observer_.deleted(uri);
+        }
+    }
+}
+
+bool DocumentsService::rekey(const core::Uri& from, const core::Uri& to) {
+    const Entry* entry = entry_for(from);
+    if (entry == nullptr || entries_.contains(to.to_string())) {
+        return false;
+    }
+    const std::shared_ptr<core::Document> document = entry->document;
+    const std::optional<std::string> language =
+        entry->language_fixed ? std::optional(entry->language_id) : std::nullopt;
+    const std::optional<std::string> editor = editor_for(from);
+    const bool was_active = editor && *editor == active_editor_;
+    remove_document(from);
+    if (!add_document(to, document, language)) {
+        return false;
+    }
+    if (editor) {
+        if (const auto added = add_editor(to); added && was_active) {
+            set_active_editor(*added);
+        }
+    }
+    return true;
+}
+
+std::vector<std::pair<core::Uri, core::Uri>>
+DocumentsService::files_renamed(const std::filesystem::path& from,
+                                const std::filesystem::path& to) {
+    files_deleted(to);
+    std::vector<std::pair<core::Uri, core::Uri>> renamed;
+    for (const std::string& key : keys_within(from)) {
+        const core::Uri old_uri = entries_.at(key).uri;
+        const core::Uri new_uri = core::Uri::file(path_moved(*old_uri.file_path(), from, to));
+        if (rekey(old_uri, new_uri)) {
+            renamed.emplace_back(old_uri, new_uri);
+            if (observer_.renamed) {
+                observer_.renamed(old_uri, new_uri);
+            }
+        }
+    }
+    return renamed;
+}
+
+void DocumentsService::undo_document(const core::Uri& uri) {
+    Entry* entry = entry_for(uri);
+    if (entry == nullptr) {
+        return;
+    }
+    const core::SelectionSet selections_before = entry->document->selections();
+    auto undone = entry->document->undo();
+    if (!undone || !*undone) {
+        return;
+    }
+    document_changed(uri, **undone);
+    if (!(entry->document->selections() == selections_before)) {
+        selections_changed(uri);
+    }
+    if (observer_.edited) {
+        observer_.edited(uri, **undone);
+    }
+}
+
 std::optional<HandlerResult> DocumentsService::try_apply_workspace_edit(const json& args) {
-    struct Batch {
-        Entry* entry = nullptr;
+    struct DocumentEdits {
+        core::Uri uri;
+        std::vector<std::uint64_t> versions;
         json edits = json::array();
-        std::vector<core::Edit> converted;
     };
-    std::vector<Batch> batches;
-    std::map<std::string, std::size_t> batch_index;
+    // A step is either a file operation or the text edits that lie between two of them.
+    struct Step {
+        std::optional<FileOperation> operation;
+        std::vector<DocumentEdits> documents;
+    };
+    std::vector<Step> steps;
 
     for (const json& item : args.at(0).at("edits")) {
-        if (!item.contains("textEdit")) {
-            return boolean(false); // file operations are not supported
-        }
-        auto uri = uri_from_json(item.at("resource"));
-        if (!uri) {
-            return failed(uri.error());
-        }
-        auto entry = open_or_load(*uri);
-        if (!entry) {
+        if (item.contains("textEdit")) {
+            auto uri = uri_from_json(item.at("resource"));
+            if (!uri) {
+                return failed(uri.error());
+            }
+            if (steps.empty() || steps.back().operation) {
+                steps.emplace_back();
+            }
+            auto& documents = steps.back().documents;
+            auto found = std::ranges::find(documents, *uri, &DocumentEdits::uri);
+            if (found == documents.end()) {
+                documents.push_back(DocumentEdits{*uri, {}, json::array()});
+                found = documents.end() - 1;
+            }
+            if (item.contains("versionId") && item["versionId"].is_number_integer()) {
+                found->versions.push_back(item["versionId"].get<std::uint64_t>());
+            }
+            found->edits.push_back(item["textEdit"]);
+        } else if (item.contains("oldResource") || item.contains("newResource")) {
+            auto operation = parse_file_operation(item);
+            if (!operation) {
+                return boolean(false);
+            }
+            steps.push_back(Step{std::move(*operation), {}});
+        } else {
             return boolean(false);
         }
-        const json& version = item.contains("versionId") ? item["versionId"] : json();
-        if (version.is_number_integer() &&
-            version.get<std::uint64_t>() != (*entry)->document->version()) {
-            return boolean(false);
-        }
-        const auto [slot, inserted] = batch_index.emplace(uri->to_string(), batches.size());
-        if (inserted) {
-            batches.push_back(Batch{*entry, json::array(), {}});
-        }
-        batches[slot->second].edits.push_back(item["textEdit"]);
     }
 
-    // Check every document before changing any, so the edit applies completely or not at all.
-    for (Batch& batch : batches) {
-        auto converted = to_core_edits(batch.entry->document->text(), batch.edits);
-        if (!converted || !batch.entry->document->validate_edits(*converted)) {
-            return boolean(false);
+    const auto converted_edits =
+        [](const Entry& entry,
+           const DocumentEdits& edits) -> std::expected<std::vector<core::Edit>, Error> {
+        if (!std::ranges::all_of(edits.versions, [&](std::uint64_t version) {
+                return version == entry.document->version();
+            })) {
+            return std::unexpected(failure("the document changed"));
+        }
+        auto converted = to_core_edits(entry.document->text(), edits.edits);
+        if (!converted) {
+            return std::unexpected(converted.error());
+        }
+        if (auto valid = entry.document->validate_edits(*converted); !valid) {
+            return std::unexpected(valid.error());
+        }
+        return converted;
+    };
+
+    // Check everything that can be checked before anything changes. A document that no earlier
+    // step of the edit touches is complete here; the others are checked when their step runs.
+    FileOperationPlanner planner;
+    std::vector<std::filesystem::path> touched;
+    std::set<std::string> seen;
+    for (const Step& step : steps) {
+        if (step.operation) {
+            const FileOperation& operation = *step.operation;
+            if (operation.kind != FileOperation::Kind::remove &&
+                has_dirty_document_within(operation.destination())) {
+                return boolean(false);
+            }
+            if (!planner.check(operation)) {
+                return boolean(false);
+            }
+            touched.push_back(operation.path);
+            if (operation.kind == FileOperation::Kind::rename) {
+                touched.push_back(operation.target);
+            }
+            continue;
+        }
+        for (const DocumentEdits& edits : step.documents) {
+            const auto path = edits.uri.file_path();
+            const bool settled =
+                seen.insert(edits.uri.to_string()).second &&
+                (!path || std::ranges::none_of(touched, [&](const std::filesystem::path& other) {
+                    return is_path_within(*path, other) || is_path_within(other, *path);
+                }));
+            if (!settled) {
+                continue;
+            }
+            auto entry = open_or_load(edits.uri);
+            if (!entry || !converted_edits(**entry, edits)) {
+                return boolean(false);
+            }
         }
     }
-    for (const Batch& batch : batches) {
-        if (!apply_protocol_edits(*batch.entry, batch.edits, false)) {
-            return boolean(false);
+
+    std::vector<std::function<void()>> undo;
+    const auto roll_back = [&] {
+        for (auto step = undo.rbegin(); step != undo.rend(); ++step) {
+            (*step)();
+        }
+        return boolean(false);
+    };
+    for (const Step& step : steps) {
+        if (step.operation) {
+            const FileOperation& operation = *step.operation;
+            auto performed = perform(operation);
+            if (!performed) {
+                return roll_back();
+            }
+            if (!performed->ran) {
+                continue;
+            }
+            std::vector<std::pair<core::Uri, core::Uri>> renamed;
+            if (operation.kind == FileOperation::Kind::rename) {
+                renamed = files_renamed(operation.path, operation.target);
+            } else {
+                files_deleted(operation.path);
+            }
+            undo.push_back([this, undo_file = std::move(performed->undo),
+                            renamed = std::move(renamed), kind = operation.kind,
+                            path = operation.path] {
+                for (auto pair = renamed.rbegin(); pair != renamed.rend(); ++pair) {
+                    if (rekey(pair->second, pair->first) && observer_.renamed) {
+                        observer_.renamed(pair->second, pair->first);
+                    }
+                }
+                if (undo_file) {
+                    undo_file();
+                }
+                if (kind == FileOperation::Kind::create) {
+                    files_deleted(path);
+                }
+            });
+            continue;
+        }
+        for (const DocumentEdits& edits : step.documents) {
+            auto entry = open_or_load(edits.uri);
+            if (!entry) {
+                return roll_back();
+            }
+            auto converted = converted_edits(**entry, edits);
+            if (!converted || !apply_protocol_edits(**entry, edits.edits, false)) {
+                return roll_back();
+            }
+            undo.push_back([this, uri = edits.uri] { undo_document(uri); });
         }
     }
     return boolean(true);

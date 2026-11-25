@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -45,6 +46,14 @@ public:
         // An extension saved the document to its file. The service has written the file, marked
         // the document saved and told the extension host.
         std::function<void(const core::Uri&)> saved;
+        // An extension renamed the file of a document, or the directory that contains it. The
+        // service has registered the same document under its new URI and told the extension
+        // host, which saw the old one close and the new one open.
+        std::function<void(const core::Uri& from, const core::Uri& to)> renamed;
+        // An extension deleted the file of a document that has no unsaved changes, or the
+        // directory that contains it. The service has removed the document. A document with
+        // unsaved changes stays registered, and no callback is made for it.
+        std::function<void(const core::Uri&)> deleted;
     };
     void set_observer(Observer observer) {
         observer_ = std::move(observer);
@@ -141,6 +150,22 @@ private:
     std::optional<HandlerResult> try_set_selections(const nlohmann::json& args);
     std::optional<HandlerResult> try_show_text_document(const nlohmann::json& args);
     std::optional<HandlerResult> try_apply_workspace_edit(const nlohmann::json& args);
+
+    // The keys of `entries_` whose files are `root` or below it.
+    std::vector<std::string> keys_within(const std::filesystem::path& root) const;
+    bool has_dirty_document_within(const std::filesystem::path& root) const;
+    // Removes the documents of the files at and below `root` that have no unsaved changes.
+    void files_deleted(const std::filesystem::path& root);
+    // Registers the documents of the files at and below `from` under their new URIs, after the
+    // files moved to `to`, and returns the pairs of old and new URI. Documents without unsaved
+    // changes that are registered at and below `to` are removed first, as the move replaced their
+    // files.
+    std::vector<std::pair<core::Uri, core::Uri>> files_renamed(const std::filesystem::path& from,
+                                                               const std::filesystem::path& to);
+    // Moves a document, and its editor, to another URI. False when `to` is taken.
+    bool rekey(const core::Uri& from, const core::Uri& to);
+    // Reverts the latest change of the document, for a workspace edit that has to be undone.
+    void undo_document(const core::Uri& uri);
 
     // Applies edits given as protocol ranges; returns the change.
     std::expected<core::DocumentChange, Error>

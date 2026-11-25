@@ -73,6 +73,62 @@ struct Sent {
     }
 };
 
+// An edit that inserts `text` at the zero-based position, as an item of a workspace edit.
+json text_item(const core::Uri& uri, int line, int column, std::string text,
+               std::optional<int> version = std::nullopt) {
+    json item = {{"resource", uri_to_json(uri)},
+                 {"textEdit",
+                  {{"range",
+                    {{"startLineNumber", line + 1},
+                     {"startColumn", column + 1},
+                     {"endLineNumber", line + 1},
+                     {"endColumn", column + 1}}},
+                   {"text", std::move(text)}}}};
+    if (version) {
+        item["versionId"] = *version;
+    }
+    return item;
+}
+
+// An edit that replaces the columns [first, last) of a line.
+json replace_item(const core::Uri& uri, int line, int first, int last, std::string text) {
+    return {{"resource", uri_to_json(uri)},
+            {"textEdit",
+             {{"range",
+               {{"startLineNumber", line + 1},
+                {"startColumn", first + 1},
+                {"endLineNumber", line + 1},
+                {"endColumn", last + 1}}},
+              {"text", std::move(text)}}}};
+}
+
+json create_item(const std::filesystem::path& path, json options = json::object(),
+                 std::string_view base64_contents = "") {
+    if (!base64_contents.empty()) {
+        options["contents"] = {{"type", "base64"}, {"value", std::string(base64_contents)}};
+    }
+    return {{"newResource", uri_to_json(core::Uri::file(path))}, {"options", std::move(options)}};
+}
+
+json delete_item(const std::filesystem::path& path, json options = json::object()) {
+    return {{"oldResource", uri_to_json(core::Uri::file(path))}, {"options", std::move(options)}};
+}
+
+json rename_item(const std::filesystem::path& from, const std::filesystem::path& to,
+                 json options = json::object()) {
+    return {{"oldResource", uri_to_json(core::Uri::file(from))},
+            {"newResource", uri_to_json(core::Uri::file(to))},
+            {"options", std::move(options)}};
+}
+
+std::string slurp(const std::filesystem::path& path) {
+    return *anvil::platform::read_file(path);
+}
+
+bool is_on_disk(const std::filesystem::path& path) {
+    return std::filesystem::exists(path);
+}
+
 class DocumentsServiceTest : public ::testing::Test {
 protected:
     DocumentsServiceTest() : session_("{}"), host_(session_), service_(session_, router_) {
@@ -114,6 +170,23 @@ protected:
                                           std::move(method), JsonArgs{args.dump()}})
                         .has_value());
         return sent();
+    }
+
+    // Applies a workspace edit made of `items` and returns what the service wrote back; the reply
+    // is request number `req`.
+    Sent apply_edit(std::vector<json> items, std::uint32_t req = 1) {
+        return request(ProxyId::MainThreadBulkEdits, "$tryApplyWorkspaceEdit",
+                       json::array({json{{"edits", std::move(items)}}}), req);
+    }
+
+    std::filesystem::path path(std::string_view name) const {
+        return scratch_ / name;
+    }
+    std::filesystem::path write(std::string_view name, std::string_view bytes) {
+        const auto file = path(name);
+        std::filesystem::create_directories(file.parent_path());
+        EXPECT_TRUE(anvil::platform::write_file(file, bytes).has_value());
+        return file;
     }
 
     Session session_;
@@ -722,26 +795,389 @@ TEST_F(DocumentsServiceTest, WorkspaceEditsAreAtomicAcrossDocuments) {
     EXPECT_EQ(service_.find(b)->text().to_string(), "bbb");
 }
 
-TEST_F(DocumentsServiceTest, WorkspaceEditsWithStaleVersionsOrFileOperationsAreRejected) {
+TEST_F(DocumentsServiceTest, WorkspaceEditsWithStaleVersionsAreRejected) {
     const core::Uri a = open("a.txt", "aaa");
     synchronize();
-    const json range = {
-        {"startLineNumber", 1}, {"startColumn", 1}, {"endLineNumber", 1}, {"endColumn", 1}};
-    const json stale = {
-        {"edits", json::array({{{"resource", uri_to_json(a)},
-                                {"versionId", 9},
-                                {"textEdit", {{"range", range}, {"text", "X"}}}}})}};
+    const json stale = {{"edits", json::array({text_item(a, 0, 0, "X", 9)})}};
     EXPECT_EQ(request(ProxyId::MainThreadBulkEdits, "$tryApplyWorkspaceEdit", json::array({stale}))
                   .reply_to(1),
               "false");
-
-    const json rename = {
-        {"edits",
-         json::array({{{"oldResource", uri_to_json(a)},
-                       {"newResource", uri_to_json(core::Uri::file(scratch_ / "z.txt"))}}})}};
-    EXPECT_EQ(
-        request(ProxyId::MainThreadBulkEdits, "$tryApplyWorkspaceEdit", json::array({rename}), 2)
-            .reply_to(2),
-        "false");
     EXPECT_EQ(service_.find(a)->text().to_string(), "aaa");
+}
+
+TEST_F(DocumentsServiceTest, ACreateWritesTheContentsAndTheMissingParentDirectories) {
+    synchronize();
+    const auto file = path("deep/er/new.txt");
+    EXPECT_EQ(apply_edit({create_item(file, json::object(), "aGVsbG8=")}).reply_to(1), "true");
+    EXPECT_EQ(slurp(file), "hello");
+
+    const auto empty = path("empty.txt");
+    EXPECT_EQ(apply_edit({create_item(empty)}, 2).reply_to(2), "true");
+    EXPECT_EQ(slurp(empty), "");
+
+    const auto folder = path("folder/inner");
+    EXPECT_EQ(apply_edit({create_item(folder, {{"folder", true}})}, 3).reply_to(3), "true");
+    EXPECT_TRUE(std::filesystem::is_directory(folder));
+}
+
+TEST_F(DocumentsServiceTest, ACreateOfAnExistingFileFollowsTheOptions) {
+    const auto file = write("a.txt", "old");
+    synchronize();
+    EXPECT_EQ(apply_edit({create_item(file)}).reply_to(1), "false");
+    EXPECT_EQ(slurp(file), "old");
+
+    EXPECT_EQ(apply_edit({create_item(file, {{"ignoreIfExists", true}})}, 2).reply_to(2), "true");
+    EXPECT_EQ(slurp(file), "old");
+
+    // An explicit `overwrite` decides, whatever `ignoreIfExists` says.
+    EXPECT_EQ(apply_edit({create_item(file, {{"overwrite", false}, {"ignoreIfExists", true}})}, 3)
+                  .reply_to(3),
+              "false");
+    EXPECT_EQ(slurp(file), "old");
+
+    EXPECT_EQ(apply_edit({create_item(file, {{"overwrite", true}}, "bmV3")}, 4).reply_to(4),
+              "true");
+    EXPECT_EQ(slurp(file), "new");
+}
+
+TEST_F(DocumentsServiceTest, ACreateWhereAFileIsInTheWayOfADirectoryIsRefused) {
+    const auto file = write("a.txt", "x");
+    synchronize();
+    EXPECT_EQ(apply_edit({create_item(file / "inner.txt")}).reply_to(1), "false");
+    EXPECT_EQ(slurp(file), "x");
+}
+
+TEST_F(DocumentsServiceTest, ADeleteRemovesAFileOrWithRecursiveADirectory) {
+    const auto file = write("a.txt", "x");
+    const auto full = write("dir/inner/b.txt", "y");
+    synchronize();
+    EXPECT_EQ(apply_edit({delete_item(file)}).reply_to(1), "true");
+    EXPECT_FALSE(is_on_disk(file));
+
+    EXPECT_EQ(apply_edit({delete_item(path("dir"))}, 2).reply_to(2), "false");
+    EXPECT_TRUE(is_on_disk(full));
+    EXPECT_EQ(apply_edit({delete_item(path("dir"), {{"recursive", true}})}, 3).reply_to(3), "true");
+    EXPECT_FALSE(is_on_disk(path("dir")));
+}
+
+TEST_F(DocumentsServiceTest, ADeleteOfAMissingFileFailsUnlessItIsToBeIgnored) {
+    synchronize();
+    EXPECT_EQ(apply_edit({delete_item(path("none.txt"))}).reply_to(1), "false");
+    EXPECT_EQ(
+        apply_edit({delete_item(path("none.txt"), {{"ignoreIfNotExists", true}})}, 2).reply_to(2),
+        "true");
+}
+
+TEST_F(DocumentsServiceTest, ARenameMovesAFileOrADirectory) {
+    const auto file = write("a.txt", "x");
+    write("dir/inner.txt", "y");
+    synchronize();
+    EXPECT_EQ(apply_edit({rename_item(file, path("new/place/b.txt"))}).reply_to(1), "true");
+    EXPECT_FALSE(is_on_disk(file));
+    EXPECT_EQ(slurp(path("new/place/b.txt")), "x");
+
+    EXPECT_EQ(apply_edit({rename_item(path("dir"), path("moved"))}, 2).reply_to(2), "true");
+    EXPECT_FALSE(is_on_disk(path("dir")));
+    EXPECT_EQ(slurp(path("moved/inner.txt")), "y");
+}
+
+TEST_F(DocumentsServiceTest, ARenameOntoAnExistingFileNeedsOverwrite) {
+    const auto from = write("a.txt", "from");
+    const auto to = write("b.txt", "to");
+    synchronize();
+    EXPECT_EQ(apply_edit({rename_item(from, to)}).reply_to(1), "false");
+    EXPECT_EQ(slurp(to), "to");
+    EXPECT_EQ(apply_edit({rename_item(from, to, {{"ignoreIfExists", true}})}, 2).reply_to(2),
+              "true");
+    EXPECT_TRUE(is_on_disk(from));
+    EXPECT_EQ(slurp(to), "to");
+    EXPECT_EQ(apply_edit({rename_item(from, to, {{"overwrite", true}})}, 3).reply_to(3), "true");
+    EXPECT_FALSE(is_on_disk(from));
+    EXPECT_EQ(slurp(to), "from");
+}
+
+TEST_F(DocumentsServiceTest, ARenameOfAMissingFileOrIntoItselfIsRefused) {
+    const auto dir = write("dir/a.txt", "x");
+    synchronize();
+    EXPECT_EQ(apply_edit({rename_item(path("none.txt"), path("b.txt"))}).reply_to(1), "false");
+    EXPECT_EQ(apply_edit({rename_item(path("dir"), path("dir/inside"))}, 2).reply_to(2), "false");
+    EXPECT_EQ(apply_edit({rename_item(dir, path("dir"), {{"overwrite", true}})}, 3).reply_to(3),
+              "false");
+    EXPECT_EQ(slurp(dir), "x");
+}
+
+TEST_F(DocumentsServiceTest, OperationsLaterInAnEditSeeWhatEarlierOnesDid) {
+    write("a.txt", "x");
+    synchronize();
+    EXPECT_EQ(apply_edit({create_item(path("n.txt")), rename_item(path("n.txt"), path("m.txt")),
+                          rename_item(path("a.txt"), path("b.txt")), delete_item(path("b.txt"))})
+                  .reply_to(1),
+              "true");
+    EXPECT_TRUE(is_on_disk(path("m.txt")));
+    EXPECT_FALSE(is_on_disk(path("n.txt")));
+    EXPECT_FALSE(is_on_disk(path("b.txt")));
+}
+
+TEST_F(DocumentsServiceTest, OperationsInsideARenamedDirectoryAreForecastAtTheirNewPlace) {
+    write("dir/a.txt", "x");
+    synchronize();
+    EXPECT_EQ(
+        apply_edit({rename_item(path("dir"), path("moved")), delete_item(path("moved/a.txt"))})
+            .reply_to(1),
+        "true");
+    EXPECT_FALSE(is_on_disk(path("moved/a.txt")));
+}
+
+TEST_F(DocumentsServiceTest, AnEditWithAnotherSchemeOrAnUnsupportedOptionChangesNothing) {
+    synchronize();
+    const json foreign = {{"newResource", uri_to_json(core::Uri{"untitled", "", "x", "", ""})}};
+    EXPECT_EQ(apply_edit({create_item(path("a.txt")), foreign}).reply_to(1), "false");
+    EXPECT_FALSE(is_on_disk(path("a.txt")));
+
+    write("b.txt", "x");
+    EXPECT_EQ(
+        apply_edit({rename_item(path("b.txt"), path("c.txt"), {{"copy", true}})}, 2).reply_to(2),
+        "false");
+    EXPECT_FALSE(is_on_disk(path("c.txt")));
+
+    const json transfer =
+        create_item(path("d.txt"), {{"contents", {{"type", "dataTransferItem"}, {"id", "1"}}}});
+    EXPECT_EQ(apply_edit({transfer}, 3).reply_to(3), "false");
+    EXPECT_FALSE(is_on_disk(path("d.txt")));
+}
+
+TEST_F(DocumentsServiceTest, NothingChangesWhenAnyPreconditionOfTheEditFails) {
+    const auto keep = write("keep.txt", "k");
+    synchronize();
+    // The delete could not be taken back, so it must not run when a later operation cannot.
+    EXPECT_EQ(apply_edit({delete_item(keep), create_item(path("new.txt")),
+                          delete_item(path("missing.txt"))})
+                  .reply_to(1),
+              "false");
+    EXPECT_TRUE(is_on_disk(keep));
+    EXPECT_FALSE(is_on_disk(path("new.txt")));
+}
+
+TEST_F(DocumentsServiceTest, TextEditsApplyAfterTheCreateAndTheRenameBeforeThem) {
+    const auto a = write("a.txt", "hello");
+    const core::Uri a_uri = core::Uri::file(a);
+    ASSERT_TRUE(service_.add_document(a_uri, make_document("hello")).has_value());
+    synchronize();
+    const core::Uri b_uri = core::Uri::file(path("b.txt"));
+    const core::Uri c_uri = core::Uri::file(path("c.txt"));
+    EXPECT_EQ(apply_edit({rename_item(a, path("b.txt")), text_item(b_uri, 0, 0, ">>"),
+                          create_item(path("c.txt"), json::object(), "YWJj"),
+                          text_item(c_uri, 0, 3, "!")})
+                  .reply_to(1),
+              "true");
+    EXPECT_EQ(service_.find(b_uri)->text().to_string(), ">>hello");
+    EXPECT_EQ(slurp(path("b.txt")), "hello");
+    EXPECT_EQ(service_.find(c_uri)->text().to_string(), "abc!");
+}
+
+TEST_F(DocumentsServiceTest, AFailureDuringTheEditUndoesWhatWasDone) {
+    const auto a = write("a.txt", "A");
+    const core::Uri a_uri = core::Uri::file(a);
+    const core::Uri c_uri = core::Uri::file(path("sub/c.txt"));
+    ASSERT_TRUE(service_.add_document(a_uri, make_document("A")).has_value());
+    const auto document = service_.find(a_uri);
+    synchronize();
+    // The two edits of the new file overlap, which is known only once the file exists.
+    EXPECT_EQ(apply_edit({rename_item(a, path("b.txt")),
+                          create_item(path("sub/c.txt"), json::object(), "YWJj"),
+                          replace_item(c_uri, 0, 0, 2, "x"), replace_item(c_uri, 0, 1, 3, "y")})
+                  .reply_to(1),
+              "false");
+    EXPECT_EQ(slurp(a), "A");
+    EXPECT_FALSE(is_on_disk(path("b.txt")));
+    EXPECT_FALSE(is_on_disk(path("sub")));
+    EXPECT_EQ(service_.find(a_uri), document);
+    EXPECT_EQ(service_.find(c_uri), nullptr);
+}
+
+TEST_F(DocumentsServiceTest, AFailureDuringTheEditUndoesTheTextEditsThatWereApplied) {
+    write("a.txt", "abc");
+    const core::Uri a_uri = core::Uri::file(path("a.txt"));
+    ASSERT_TRUE(service_.add_document(a_uri, make_document("abc")).has_value());
+    const auto c = path("c.txt");
+    const core::Uri c_uri = core::Uri::file(c);
+    synchronize();
+    EXPECT_EQ(apply_edit({text_item(a_uri, 0, 0, "X"), create_item(c, json::object(), "YWJj"),
+                          replace_item(c_uri, 0, 0, 2, "x"), replace_item(c_uri, 0, 1, 3, "y")})
+                  .reply_to(1),
+              "false");
+    EXPECT_EQ(service_.find(a_uri)->text().to_string(), "abc");
+    EXPECT_FALSE(service_.find(a_uri)->is_dirty());
+    EXPECT_FALSE(is_on_disk(c));
+}
+
+TEST_F(DocumentsServiceTest, ARenamedFileKeepsItsDocumentUnderTheNewUri) {
+    const auto a = write("a.txt", "hello");
+    const core::Uri a_uri = core::Uri::file(a);
+    const core::Uri b_uri = core::Uri::file(path("b.txt"));
+    ASSERT_TRUE(service_.add_document(a_uri, make_document("hello")).has_value());
+    const auto document = service_.find(a_uri);
+    ASSERT_TRUE(document->apply_edits(std::vector<core::Edit>{{0, 0, "x"}}).has_value());
+    const std::string editor = *service_.add_editor(a_uri);
+    service_.set_active_editor(editor);
+    synchronize();
+    std::vector<std::string> events;
+    DocumentsService::Observer observer;
+    observer.renamed = [&](const core::Uri& from, const core::Uri& to) {
+        events.push_back("renamed " + from.path + " " + to.path);
+    };
+    observer.deleted = [&](const core::Uri& uri) { events.push_back("deleted " + uri.path); };
+    service_.set_observer(observer);
+
+    const Sent out = apply_edit({rename_item(a, path("b.txt"))});
+    EXPECT_EQ(out.reply_to(1), "true");
+    EXPECT_EQ(service_.find(a_uri), nullptr);
+    EXPECT_EQ(service_.find(b_uri), document);
+    EXPECT_TRUE(document->is_dirty());
+    EXPECT_TRUE(document->can_undo());
+    EXPECT_EQ(events, (std::vector<std::string>{"renamed " + a_uri.path + " " + b_uri.path}));
+
+    // The extension host sees the old document close and the new one open, with its editor.
+    json removed, added, added_editors;
+    for (const auto& [name, args] : out.calls()) {
+        if (name != "ExtHostDocumentsAndEditors.$acceptDocumentsAndEditorsDelta") {
+            continue;
+        }
+        const json& delta = args[0];
+        if (delta.contains("removedDocuments")) {
+            removed = delta["removedDocuments"];
+        }
+        if (delta.contains("addedDocuments")) {
+            added = delta["addedDocuments"];
+        }
+        if (delta.contains("addedEditors")) {
+            added_editors = delta["addedEditors"];
+        }
+    }
+    ASSERT_EQ(removed.size(), 1u);
+    EXPECT_EQ(removed[0]["path"], a_uri.path);
+    ASSERT_EQ(added.size(), 1u);
+    EXPECT_EQ(added[0]["uri"]["path"], b_uri.path);
+    EXPECT_EQ(added[0]["lines"], json::parse(R"j(["xhello"])j"));
+    EXPECT_TRUE(added[0]["isDirty"].get<bool>());
+    ASSERT_EQ(added_editors.size(), 1u);
+    EXPECT_EQ(added_editors[0]["documentUri"]["path"], b_uri.path);
+    EXPECT_TRUE(service_.editor_for(b_uri).has_value());
+}
+
+TEST_F(DocumentsServiceTest, ARenamedDirectoryMovesTheDocumentsBelowIt) {
+    const auto x = write("dir/x.txt", "x");
+    const auto y = write("dir/sub/y.txt", "y");
+    const auto other = write("dir2/z.txt", "z");
+    for (const auto& file : {x, y, other}) {
+        ASSERT_TRUE(service_.add_document(core::Uri::file(file), make_document("t")).has_value());
+    }
+    synchronize();
+    std::vector<std::string> events;
+    DocumentsService::Observer observer;
+    observer.renamed = [&](const core::Uri& from, const core::Uri& to) {
+        events.push_back(from.path + " -> " + to.path);
+    };
+    service_.set_observer(observer);
+
+    EXPECT_EQ(apply_edit({rename_item(path("dir"), path("moved"))}).reply_to(1), "true");
+    EXPECT_EQ(service_.find(core::Uri::file(x)), nullptr);
+    EXPECT_NE(service_.find(core::Uri::file(path("moved/x.txt"))), nullptr);
+    EXPECT_NE(service_.find(core::Uri::file(path("moved/sub/y.txt"))), nullptr);
+    EXPECT_NE(service_.find(core::Uri::file(other)), nullptr);
+    EXPECT_EQ(events.size(), 2u);
+}
+
+TEST_F(DocumentsServiceTest, ADeletedFileClosesItsCleanDocumentAndKeepsADirtyOne) {
+    const auto clean = write("clean.txt", "c");
+    const auto dirty = write("dirty.txt", "d");
+    const core::Uri clean_uri = core::Uri::file(clean);
+    const core::Uri dirty_uri = core::Uri::file(dirty);
+    ASSERT_TRUE(service_.add_document(clean_uri, make_document("c")).has_value());
+    ASSERT_TRUE(service_.add_document(dirty_uri, make_document("d")).has_value());
+    ASSERT_TRUE(service_.find(dirty_uri)->apply_edits(std::vector<core::Edit>{{1, 1, "!"}}));
+    synchronize();
+    std::vector<std::string> events;
+    DocumentsService::Observer observer;
+    observer.deleted = [&](const core::Uri& uri) { events.push_back(uri.path); };
+    service_.set_observer(observer);
+
+    const Sent out = apply_edit({delete_item(clean), delete_item(dirty)});
+    EXPECT_EQ(out.reply_to(1), "true");
+    EXPECT_EQ(service_.find(clean_uri), nullptr);
+    ASSERT_NE(service_.find(dirty_uri), nullptr);
+    EXPECT_TRUE(service_.find(dirty_uri)->is_dirty());
+    EXPECT_EQ(events, (std::vector<std::string>{clean_uri.path}));
+    EXPECT_FALSE(is_on_disk(dirty));
+
+    // Saving the document that was kept writes the file again.
+    EXPECT_EQ(request(ProxyId::MainThreadDocuments, "$trySaveDocument",
+                      json::array({uri_to_json(dirty_uri)}), 2)
+                  .reply_to(2),
+              "true");
+    EXPECT_EQ(slurp(dirty), "d!");
+    EXPECT_FALSE(service_.find(dirty_uri)->is_dirty());
+}
+
+TEST_F(DocumentsServiceTest, ADeletedDirectoryClosesTheCleanDocumentsBelowIt) {
+    const auto x = write("dir/x.txt", "x");
+    const core::Uri x_uri = core::Uri::file(x);
+    ASSERT_TRUE(service_.add_document(x_uri, make_document("x")).has_value());
+    synchronize();
+    EXPECT_EQ(apply_edit({delete_item(path("dir"), {{"recursive", true}})}).reply_to(1), "true");
+    EXPECT_EQ(service_.find(x_uri), nullptr);
+}
+
+TEST_F(DocumentsServiceTest, AnEditThatWouldReplaceADocumentWithUnsavedChangesIsRefused) {
+    const auto from = write("a.txt", "from");
+    const auto target = write("b.txt", "target");
+    const core::Uri target_uri = core::Uri::file(target);
+    ASSERT_TRUE(service_.add_document(target_uri, make_document("target")).has_value());
+    ASSERT_TRUE(service_.find(target_uri)->apply_edits(std::vector<core::Edit>{{0, 0, "!"}}));
+    synchronize();
+    EXPECT_EQ(apply_edit({rename_item(from, target, {{"overwrite", true}})}).reply_to(1), "false");
+    EXPECT_EQ(apply_edit({create_item(target, {{"overwrite", true}})}, 2).reply_to(2), "false");
+    EXPECT_EQ(slurp(from), "from");
+    EXPECT_EQ(slurp(target), "target");
+    EXPECT_TRUE(service_.find(target_uri)->is_dirty());
+}
+
+TEST_F(DocumentsServiceTest, AReplacedFileClosesItsCleanDocument) {
+    const auto from = write("a.txt", "from");
+    const auto target = write("b.txt", "target");
+    const core::Uri from_uri = core::Uri::file(from);
+    const core::Uri target_uri = core::Uri::file(target);
+    ASSERT_TRUE(service_.add_document(from_uri, make_document("from")).has_value());
+    ASSERT_TRUE(service_.add_document(target_uri, make_document("target")).has_value());
+    const auto moved = service_.find(from_uri);
+    synchronize();
+    EXPECT_EQ(apply_edit({rename_item(from, target, {{"overwrite", true}})}).reply_to(1), "true");
+    EXPECT_EQ(service_.find(target_uri), moved);
+    EXPECT_EQ(service_.find(from_uri), nullptr);
+}
+
+TEST_F(DocumentsServiceTest, AFailedEditPutsRenamedDocumentsBack) {
+    const auto a = write("a.txt", "A");
+    const core::Uri a_uri = core::Uri::file(a);
+    const core::Uri b_uri = core::Uri::file(path("b.txt"));
+    const core::Uri c_uri = core::Uri::file(path("c.txt"));
+    ASSERT_TRUE(service_.add_document(a_uri, make_document("A")).has_value());
+    const auto document = service_.find(a_uri);
+    synchronize();
+    std::vector<std::string> events;
+    DocumentsService::Observer observer;
+    observer.renamed = [&](const core::Uri& from, const core::Uri& to) {
+        events.push_back(from.path + " -> " + to.path);
+    };
+    service_.set_observer(observer);
+
+    EXPECT_EQ(apply_edit({rename_item(a, path("b.txt")),
+                          create_item(path("c.txt"), json::object(), "YWJj"),
+                          replace_item(c_uri, 0, 0, 2, "x"), replace_item(c_uri, 0, 1, 3, "y")})
+                  .reply_to(1),
+              "false");
+    EXPECT_EQ(service_.find(a_uri), document);
+    EXPECT_EQ(service_.find(b_uri), nullptr);
+    EXPECT_EQ(events, (std::vector<std::string>{a_uri.path + " -> " + b_uri.path,
+                                                b_uri.path + " -> " + a_uri.path}));
 }

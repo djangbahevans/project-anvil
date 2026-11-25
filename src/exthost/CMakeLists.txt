@@ -18,6 +18,7 @@ add_library(anvil_exthost STATIC
   session.cpp
   session_logs.cpp
   vscode_types.cpp
+  workspace_file_edit.cpp
 )
 add_library(anvil::exthost ALIAS anvil_exthost)
 
