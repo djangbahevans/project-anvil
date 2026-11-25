@@ -2,6 +2,7 @@
 
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QIcon>
 #include <QString>
@@ -21,6 +22,7 @@ class ActivityBar : public QWidget {
     Q_OBJECT
 
 public:
+    // The sizes at zoom level 0.
     static constexpr int button_size = 48;
     static constexpr int icon_size = 24;
 
@@ -31,6 +33,10 @@ public:
     };
 
     ActivityBar(const WorkbenchColors& colors, QWidget* parent);
+
+    // The zoom that the sizes of the buttons are read through, which must outlive the bar. The
+    // buttons follow it when it changes. Null means level 0.
+    void set_zoom(const Zoom* zoom);
 
     // Replaces the buttons.
     void set_entries(const std::vector<Entry>& entries);
@@ -56,6 +62,12 @@ signals:
 
 private:
     class Button;
+
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    void apply_zoom();
+    const Zoom* zoom_ = nullptr;
 
     const WorkbenchColors& colors_;
     QVBoxLayout* layout_ = nullptr;

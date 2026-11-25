@@ -4,6 +4,7 @@
 
 #include <QAbstractButton>
 #include <QEnterEvent>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -26,9 +27,14 @@ constexpr int command_center_margin = 8;
 constexpr int command_center_min_width = 120;
 constexpr int command_center_max_width = 450;
 constexpr int radius = 5;
+constexpr int text_pixels = 13;
+constexpr int command_center_glyph = 14;
+constexpr int command_center_padding = 8;
+constexpr int layout_spacer_width = 6;
+constexpr int menu_item_padding = 8;
 
 void draw_glyph(QPainter& painter, const QRect& rect, std::string_view name, const QColor& color,
-                int size = icon_size) {
+                int size) {
     const auto code = codicon(name);
     if (!code) {
         return;
@@ -46,13 +52,18 @@ void draw_glyph(QPainter& painter, const QRect& rect, std::string_view name, con
 // before the editor would be in the way.
 class TitleBar::ControlButton : public QAbstractButton {
 public:
-    ControlButton(const WorkbenchColors& colors, std::string_view icon, bool closing,
-                  const QString& name, QWidget* parent)
-        : QAbstractButton(parent), colors_(colors), icon_(icon), closing_(closing) {
-        setFixedSize(button_width, bar_height);
+    ControlButton(const TitleBar& bar, std::string_view icon, bool closing, const QString& name,
+                  QWidget* parent)
+        : QAbstractButton(parent), bar_(bar), colors_(bar.colors_), icon_(icon), closing_(closing) {
         setFocusPolicy(Qt::NoFocus);
         setAccessibleName(name);
         setToolTip(name);
+        apply_zoom();
+    }
+
+    void apply_zoom() {
+        setFixedSize(bar_.zoomed(button_width), bar_.zoomed(bar_height));
+        update();
     }
 
     void set_icon(std::string_view icon) {
@@ -84,10 +95,11 @@ protected:
                                  ? QColor(Qt::white)
                                  : colors_.color(active_ ? "titleBar.activeForeground"
                                                          : "titleBar.inactiveForeground");
-        draw_glyph(painter, rect(), icon_, color);
+        draw_glyph(painter, rect(), icon_, color, bar_.zoomed(icon_size));
     }
 
 private:
+    const TitleBar& bar_;
     const WorkbenchColors& colors_;
     std::string icon_;
     bool closing_;
@@ -99,15 +111,20 @@ private:
 // click does not change that: the window decides, and says so with `set_shown`.
 class TitleBar::LayoutButton : public QAbstractButton {
 public:
-    LayoutButton(const WorkbenchColors& colors, std::string_view shown_icon,
-                 std::string_view hidden_icon, const QString& name, QWidget* parent)
-        : QAbstractButton(parent), colors_(colors), shown_icon_(shown_icon),
+    LayoutButton(const TitleBar& bar, std::string_view shown_icon, std::string_view hidden_icon,
+                 const QString& name, QWidget* parent)
+        : QAbstractButton(parent), bar_(bar), colors_(bar.colors_), shown_icon_(shown_icon),
           hidden_icon_(hidden_icon) {
         setCheckable(true);
-        setFixedSize(layout_button_size, layout_button_size);
         setFocusPolicy(Qt::NoFocus);
         setAccessibleName(name);
         setToolTip(name);
+        apply_zoom();
+    }
+
+    void apply_zoom() {
+        setFixedSize(bar_.zoomed(layout_button_size), bar_.zoomed(layout_button_size));
+        update();
     }
 
     void set_shown(bool shown) {
@@ -140,14 +157,16 @@ protected:
         if (hovered_) {
             painter.setPen(Qt::NoPen);
             painter.setBrush(colors_.color("toolbar.hoverBackground"));
-            painter.drawRoundedRect(rect(), radius, radius);
+            painter.drawRoundedRect(rect(), bar_.zoomed(radius), bar_.zoomed(radius));
         }
         draw_glyph(
             painter, rect(), isChecked() ? shown_icon_ : hidden_icon_,
-            colors_.color(active_ ? "titleBar.activeForeground" : "titleBar.inactiveForeground"));
+            colors_.color(active_ ? "titleBar.activeForeground" : "titleBar.inactiveForeground"),
+            bar_.zoomed(icon_size));
     }
 
 private:
+    const TitleBar& bar_;
     const WorkbenchColors& colors_;
     std::string shown_icon_;
     std::string hidden_icon_;
@@ -159,11 +178,16 @@ private:
 // border that turns to its active colors under the pointer.
 class TitleBar::CommandCenter : public QAbstractButton {
 public:
-    CommandCenter(const WorkbenchColors& colors, QWidget* parent)
-        : QAbstractButton(parent), colors_(colors) {
-        setFixedHeight(command_center_height);
+    CommandCenter(const TitleBar& bar, QWidget* parent)
+        : QAbstractButton(parent), bar_(bar), colors_(bar.colors_) {
         setFocusPolicy(Qt::NoFocus);
         setAccessibleName(tr("Command center"));
+        apply_zoom();
+    }
+
+    void apply_zoom() {
+        setFixedHeight(bar_.zoomed(command_center_height));
+        update();
     }
 
     void set_active(bool active) {
@@ -199,17 +223,17 @@ protected:
         painter.setPen(colors_.color(hovered_  ? "commandCenter.activeBorder"
                                      : active_ ? "commandCenter.border"
                                                : "commandCenter.inactiveBorder"));
-        painter.drawRoundedRect(box, radius, radius);
+        painter.drawRoundedRect(box, bar_.zoomed(radius), bar_.zoomed(radius));
 
         const QColor foreground = colors_.color(hovered_  ? "commandCenter.activeForeground"
                                                 : active_ ? "commandCenter.foreground"
                                                           : "commandCenter.inactiveForeground");
         QFont font = painter.font();
-        font.setPixelSize(13);
+        font.setPixelSize(bar_.zoomed(text_pixels));
         painter.setFont(font);
         const QFontMetrics metrics(font);
-        constexpr int glyph = 14;
-        constexpr int padding = 8;
+        const int glyph = bar_.zoomed(command_center_glyph);
+        const int padding = bar_.zoomed(command_center_padding);
         const QString text = metrics.elidedText(this->text(), Qt::ElideRight,
                                                 width() - 2 * padding - glyph - padding);
         const int content = glyph + padding + metrics.horizontalAdvance(text);
@@ -221,6 +245,7 @@ protected:
     }
 
 private:
+    const TitleBar& bar_;
     const WorkbenchColors& colors_;
     bool active_ = true;
     bool hovered_ = false;
@@ -228,7 +253,7 @@ private:
 
 TitleBar::TitleBar(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
-    setFixedHeight(bar_height);
+    setFixedHeight(zoomed(bar_height));
     setAccessibleName(tr("Title bar"));
 
     layout_ = new QHBoxLayout(this);
@@ -236,31 +261,31 @@ TitleBar::TitleBar(const WorkbenchColors& colors, QWidget* parent)
     layout_->setSpacing(0);
 
     icon_ = new QWidget(this);
-    icon_->setFixedSize(icon_size + 2 * icon_margin, bar_height);
+    icon_->setFixedSize(zoomed(icon_size) + 2 * zoomed(icon_margin), zoomed(bar_height));
     icon_->setAttribute(Qt::WA_TransparentForMouseEvents);
     layout_->addWidget(icon_);
     layout_->addStretch(1);
 
-    sidebar_button_ = new LayoutButton(colors_, "layout-sidebar-left", "layout-sidebar-left-off",
+    sidebar_button_ = new LayoutButton(*this, "layout-sidebar-left", "layout-sidebar-left-off",
                                        tr("Toggle Primary Side Bar"), this);
     panel_button_ =
-        new LayoutButton(colors_, "layout-panel", "layout-panel-off", tr("Toggle Panel"), this);
+        new LayoutButton(*this, "layout-panel", "layout-panel-off", tr("Toggle Panel"), this);
     layout_spacer_ = new QWidget(this);
-    layout_spacer_->setFixedWidth(6);
+    layout_spacer_->setFixedWidth(zoomed(layout_spacer_width));
     for (QWidget* widget : {static_cast<QWidget*>(sidebar_button_),
                             static_cast<QWidget*>(panel_button_), layout_spacer_}) {
         layout_->addWidget(widget);
         widget->hide();
     }
-    command_center_ = new CommandCenter(colors_, this);
+    command_center_ = new CommandCenter(*this, this);
     command_center_->hide();
     connect(command_center_, &QAbstractButton::clicked, this, &TitleBar::command_center_requested);
     connect(sidebar_button_, &QAbstractButton::clicked, this, &TitleBar::toggle_sidebar_requested);
     connect(panel_button_, &QAbstractButton::clicked, this, &TitleBar::toggle_panel_requested);
 
-    minimize_ = new ControlButton(colors_, "chrome-minimize", false, tr("Minimize"), this);
-    maximize_ = new ControlButton(colors_, "chrome-maximize", false, tr("Maximize"), this);
-    close_ = new ControlButton(colors_, "chrome-close", true, tr("Close"), this);
+    minimize_ = new ControlButton(*this, "chrome-minimize", false, tr("Minimize"), this);
+    maximize_ = new ControlButton(*this, "chrome-maximize", false, tr("Maximize"), this);
+    close_ = new ControlButton(*this, "chrome-close", true, tr("Close"), this);
     for (QAbstractButton* button : {minimize_, maximize_, close_}) {
         layout_->addWidget(button);
     }
@@ -286,10 +311,11 @@ void TitleBar::style_menu_bar() {
         colors_.color(active_ ? "titleBar.activeForeground" : "titleBar.inactiveForeground").name();
     menu_bar_->setStyleSheet(
         QStringLiteral("QMenuBar { background: transparent; color: %1; }"
-                       "QMenuBar::item { background: transparent; padding: %3px 8px; }"
+                       "QMenuBar::item { background: transparent; padding: %3px %4px; }"
                        "QMenuBar::item:selected { background: %2; }")
             .arg(foreground, colors_.color("toolbar.hoverBackground").name(QColor::HexArgb))
-            .arg(std::max(0, (bar_height - menu_bar_->fontMetrics().height()) / 2)));
+            .arg(std::max(0, (zoomed(bar_height) - menu_bar_->fontMetrics().height()) / 2))
+            .arg(zoomed(menu_item_padding)));
 }
 
 void TitleBar::set_title(const QString& title) {
@@ -300,11 +326,51 @@ void TitleBar::set_title(const QString& title) {
     update();
 }
 
+void TitleBar::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &TitleBar::apply_zoom);
+    }
+    apply_zoom();
+}
+
+void TitleBar::apply_zoom() {
+    setFixedHeight(zoomed(bar_height));
+    icon_->setFixedSize(zoomed(icon_size) + 2 * zoomed(icon_margin), zoomed(bar_height));
+    layout_spacer_->setFixedWidth(zoomed(layout_spacer_width));
+    for (QAbstractButton* button : {minimize_, maximize_, close_}) {
+        static_cast<ControlButton*>(button)->apply_zoom();
+    }
+    static_cast<LayoutButton*>(sidebar_button_)->apply_zoom();
+    static_cast<LayoutButton*>(panel_button_)->apply_zoom();
+    static_cast<CommandCenter*>(command_center_)->apply_zoom();
+    if (menu_bar_) {
+        menu_bar_->setFixedHeight(zoomed(bar_height));
+        QFont font = menu_bar_->font();
+        font.setPixelSize(zoomed(menu_bar_font_pixels_));
+        menu_bar_->setFont(font);
+        style_menu_bar();
+    }
+    layout_->invalidate();
+    layout_->activate();
+    place_command_center();
+    update();
+}
+
 void TitleBar::set_menu_bar(QWidget* menu_bar) {
     menu_bar_ = menu_bar;
     menu_bar->setParent(this);
     menu_bar->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    menu_bar->setFixedHeight(bar_height);
+    menu_bar->setFixedHeight(zoomed(bar_height));
+    menu_bar_font_pixels_ = QFontInfo(menu_bar->font()).pixelSize();
+    if (zoom_ && zoom_->level() != 0) {
+        QFont font = menu_bar->font();
+        font.setPixelSize(zoomed(menu_bar_font_pixels_));
+        menu_bar->setFont(font);
+    }
     layout_->insertWidget(1, menu_bar);
     style_menu_bar();
     menu_bar->show();
@@ -376,15 +442,17 @@ int TitleBar::buttons_left() const {
 // too narrow for that. Too narrow for even a small box, it is left out.
 void TitleBar::place_command_center() {
     const int left = (menu_bar_ ? menu_bar_->geometry().right() : icon_->geometry().right()) + 1 +
-                     command_center_margin;
-    const int right = buttons_left() - command_center_margin;
-    const int box_width = std::min({command_center_max_width, width() * 2 / 5, right - left});
-    const bool fits = box_width >= command_center_min_width;
+                     zoomed(command_center_margin);
+    const int right = buttons_left() - zoomed(command_center_margin);
+    const int box_width =
+        std::min({zoomed(command_center_max_width), width() * 2 / 5, right - left});
+    const bool fits = box_width >= zoomed(command_center_min_width);
     command_center_->setVisible(command_center_wanted_ && fits);
     if (fits) {
         const int x = std::clamp((width() - box_width) / 2, left, right - box_width);
-        command_center_->setGeometry(x, (bar_height - command_center_height) / 2, box_width,
-                                     command_center_height);
+        const int box_height = zoomed(command_center_height);
+        command_center_->setGeometry(x, (zoomed(bar_height) - box_height) / 2, box_width,
+                                     box_height);
     }
 }
 
@@ -412,23 +480,22 @@ void TitleBar::paintEvent(QPaintEvent*) {
         painter.fillRect(QRect(0, height() - 1, width(), 1), colors_.color("titleBar.border"));
     }
 
-    draw_glyph(painter, QRect(icon_->pos(), icon_->size()), "code", foreground);
+    draw_glyph(painter, QRect(icon_->pos(), icon_->size()), "code", foreground, zoomed(icon_size));
 
     // Between the menu bar, or the icon, and the buttons.
     const int left = (menu_bar_ ? menu_bar_->geometry().right() : icon_->geometry().right()) + 1;
     const int right = buttons_left();
     if (!command_center_wanted_ && right > left) {
         QFont font = painter.font();
-        font.setPixelSize(13);
+        font.setPixelSize(zoomed(text_pixels));
         painter.setFont(font);
         painter.setPen(foreground);
         const QFontMetrics metrics(font);
-        const QString text =
-            metrics.elidedText(title_, Qt::ElideRight, right - left - 2 * icon_margin);
+        const int margin = zoomed(icon_margin);
+        const QString text = metrics.elidedText(title_, Qt::ElideRight, right - left - 2 * margin);
         const int text_width = metrics.horizontalAdvance(text);
         int x = (width() - text_width) / 2;
-        x = std::clamp(x, left + icon_margin,
-                       std::max(left + icon_margin, right - icon_margin - text_width));
+        x = std::clamp(x, left + margin, std::max(left + margin, right - margin - text_width));
         painter.drawText(QRect(x, 0, text_width, height()), Qt::AlignVCenter | Qt::AlignLeft, text);
     }
 }

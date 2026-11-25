@@ -21,6 +21,7 @@ namespace {
 constexpr int dot_diameter = 8;
 constexpr int close_cross_half_size = 4;
 constexpr int hover_radius = 5;
+constexpr double cross_pen_width = 1.2;
 
 std::uint64_t next_tab_id() {
     static std::uint64_t counter = 0;
@@ -31,18 +32,52 @@ std::uint64_t next_tab_id() {
 
 TabStrip::TabStrip(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
-    setFixedHeight(height_pixels);
+    setFixedHeight(strip_height());
     setMouseTracking(true);
     // Before the name is set, which makes Qt look for the interface of the widget and keep it.
     install_painted_accessibility();
     setAccessibleName(tr("Tabs"));
     QFont strip_font = font();
-    strip_font.setPixelSize(font_pixels);
+    strip_font.setPixelSize(zoomed(font_pixels));
     setFont(strip_font);
     connect(&colors_, &WorkbenchColors::changed, this, qOverload<>(&TabStrip::update));
 }
 
 TabStrip::~TabStrip() = default;
+
+void TabStrip::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &TabStrip::apply_zoom);
+    }
+    apply_zoom();
+}
+
+void TabStrip::apply_zoom() {
+    setFixedHeight(strip_height());
+    QFont strip_font = font();
+    strip_font.setPixelSize(zoomed(font_pixels));
+    setFont(strip_font);
+    // A font that changed measures the titles again in `changeEvent`; the sizes that are not the
+    // font's still change the layout.
+    layout_valid_ = false;
+    set_scroll(scroll_);
+    if (current_ >= 0) {
+        scroll_into_view(current_);
+    }
+    update();
+}
+
+int TabStrip::strip_height() const {
+    return zoomed(height_pixels);
+}
+
+int TabStrip::tab_min_width() const {
+    return zoomed(minimum_tab_width);
+}
 
 int TabStrip::count() const {
     return static_cast<int>(entries_.size());
@@ -225,8 +260,8 @@ void TabStrip::ensure_layout() const {
     int x = 0;
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         Entry& entry = entries_[i];
-        const int natural =
-            std::max(minimum_tab_width, title_padding + entry.title_width + 1 + action_width);
+        const int natural = std::max(tab_min_width(), zoomed(title_padding) + entry.title_width +
+                                                          1 + zoomed(action_width));
         if (single_) {
             entry.x = 0;
             entry.width = static_cast<int>(i) == current_ ? std::max(natural, width()) : 0;
@@ -275,7 +310,7 @@ QRect TabStrip::tab_rect(int index) const {
     }
     ensure_layout();
     const Entry& entry = entries_[static_cast<std::size_t>(index)];
-    return QRect(entry.x - scroll_, 0, entry.width, height_pixels);
+    return QRect(entry.x - scroll_, 0, entry.width, strip_height());
 }
 
 QRect TabStrip::close_button_rect(int index) const {
@@ -283,9 +318,10 @@ QRect TabStrip::close_button_rect(int index) const {
     if (area.isEmpty()) {
         return {};
     }
-    const int left = area.right() + 1 - action_width + (action_width - close_button_size) / 2;
-    return QRect(left, (height_pixels - close_button_size) / 2, close_button_size,
-                 close_button_size);
+    const int action = zoomed(action_width);
+    const int size = zoomed(close_button_size);
+    const int left = area.right() + 1 - action + (action - size) / 2;
+    return QRect(left, (strip_height() - size) / 2, size, size);
 }
 
 int TabStrip::tab_at(int x) const {
@@ -344,7 +380,7 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
     const Entry& entry = entries_[static_cast<std::size_t>(index)];
     const bool active = index == current_;
     const bool hovered = index == hovered_;
-    const QRect area(x, 0, entry.width, height_pixels);
+    const QRect area(x, 0, entry.width, strip_height());
 
     const bool hover_fill = hovered && !active && colors_.is_themed("tab.hoverBackground");
     const char* background =
@@ -359,11 +395,11 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
             painter.fillRect(QRect(area.left(), 0, area.width(), 1), colors_.color(top));
         }
         if (colors_.is_themed("tab.activeBorder")) {
-            painter.fillRect(QRect(area.left(), height_pixels - 1, area.width(), 1),
+            painter.fillRect(QRect(area.left(), strip_height() - 1, area.width(), 1),
                              colors_.color("tab.activeBorder"));
         }
     }
-    painter.fillRect(QRect(area.right(), 0, 1, height_pixels), colors_.color("tab.border"));
+    painter.fillRect(QRect(area.right(), 0, 1, strip_height()), colors_.color("tab.border"));
 
     const char* foreground_key =
         active     ? (focused_ ? "tab.activeForeground" : "tab.unfocusedActiveForeground")
@@ -371,8 +407,9 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
                    : "tab.unfocusedInactiveForeground";
     const QColor foreground = colors_.color(foreground_key);
     painter.setPen(foreground);
-    painter.drawText(QRect(area.left() + title_padding, 0, entry.title_width + 2, height_pixels),
-                     Qt::AlignVCenter | Qt::AlignLeft, entry.tab.title);
+    painter.drawText(
+        QRect(area.left() + zoomed(title_padding), 0, entry.title_width + 2, strip_height()),
+        Qt::AlignVCenter | Qt::AlignLeft, entry.tab.title);
 
     const bool on_button = hovered && hovered_button_;
     const bool dot = entry.tab.dirty && !on_button;
@@ -385,19 +422,18 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
     if (on_button) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(colors_.color("toolbar.hoverBackground"));
-        painter.drawRoundedRect(button, hover_radius, hover_radius);
+        painter.drawRoundedRect(button, zoomed(hover_radius), zoomed(hover_radius));
     }
     const QPointF center = QRectF(button).center();
     if (dot) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(foreground);
-        painter.drawEllipse(center, dot_diameter / 2.0, dot_diameter / 2.0);
+        painter.drawEllipse(center, zoomed(dot_diameter) / 2.0, zoomed(dot_diameter) / 2.0);
     } else {
-        painter.setPen(QPen(foreground, 1.2));
-        painter.drawLine(center + QPointF(-close_cross_half_size, -close_cross_half_size),
-                         center + QPointF(close_cross_half_size, close_cross_half_size));
-        painter.drawLine(center + QPointF(-close_cross_half_size, close_cross_half_size),
-                         center + QPointF(close_cross_half_size, -close_cross_half_size));
+        const double half = zoomed(close_cross_half_size);
+        painter.setPen(QPen(foreground, cross_pen_width * (zoom_ ? zoom_->factor() : 1.0)));
+        painter.drawLine(center + QPointF(-half, -half), center + QPointF(half, half));
+        painter.drawLine(center + QPointF(-half, half), center + QPointF(half, -half));
     }
 }
 
@@ -406,7 +442,7 @@ void TabStrip::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.fillRect(rect(), colors_.color("editorGroupHeader.tabsBackground"));
     if (colors_.is_themed("editorGroupHeader.tabsBorder")) {
-        painter.fillRect(QRect(0, height_pixels - 1, width(), 1),
+        painter.fillRect(QRect(0, strip_height() - 1, width(), 1),
                          colors_.color("editorGroupHeader.tabsBorder"));
     }
 
@@ -428,7 +464,7 @@ void TabStrip::paintEvent(QPaintEvent*) {
         const int x = single_                     ? (drop_indicator_ <= current_ ? 0 : width())
                       : drop_indicator_ < count() ? tab_rect(drop_indicator_).left()
                                                   : tab_rect(count() - 1).right() + 1;
-        painter.fillRect(QRect(std::max(0, x - 1), 0, 2, height_pixels),
+        painter.fillRect(QRect(std::max(0, x - 1), 0, 2, strip_height()),
                          colors_.color("tab.dragAndDropBorder"));
     }
 }

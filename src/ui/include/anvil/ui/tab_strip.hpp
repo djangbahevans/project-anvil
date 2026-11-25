@@ -2,6 +2,7 @@
 
 #include "anvil/ui/painted_accessibility.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QRect>
 #include <QString>
@@ -30,6 +31,7 @@ class TabStrip : public QWidget, public AccessibleItems {
     Q_OBJECT
 
 public:
+    // The sizes at zoom level 0. A strip that has a zoom (`set_zoom`) uses them scaled by it.
     static constexpr int height_pixels = 35;
     static constexpr int font_pixels = 13;
     // A tab is at least this wide, and as wide as its title otherwise.
@@ -77,6 +79,13 @@ public:
     // Shows only the selected tab, as one tab as wide as the strip, instead of every tab. The other
     // tabs stay in the strip, with no area, and cannot be reached with the mouse or reordered.
     void set_single(bool single);
+
+    // The zoom that the sizes of the strip are read through; it lays itself out again when the
+    // zoom changes. The zoom must outlive the strip. Null means level 0.
+    void set_zoom(const Zoom* zoom);
+    // The height of the strip, and the narrowest a tab is, at the zoom now.
+    int strip_height() const;
+    int tab_min_width() const;
     bool single() const {
         return single_;
     }
@@ -176,6 +185,11 @@ private:
     // not see.
     int accessible_index(int tab) const;
     void measure(Entry& entry) const;
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    void apply_zoom();
+    const Zoom* zoom_ = nullptr;
     void ensure_layout() const;
     int content_width() const;
     int max_scroll() const;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QPointer>
 #include <QWidget>
@@ -55,6 +56,7 @@ class Workbench : public QWidget {
     Q_OBJECT
 
 public:
+    // The width at zoom level 0.
     static constexpr int activity_bar_width = 48;
     static constexpr int sidebar_minimum_width = 170;
     static constexpr int panel_minimum_height = 77;
@@ -69,6 +71,10 @@ public:
     // The colors, which must outlive the widget, come from the `activityBar`, `sideBar`, `panel`
     // and `sash` keys.
     explicit Workbench(const WorkbenchColors& colors, QWidget* parent = nullptr);
+
+    // The zoom that the width of the activity bar is read through, which must outlive the
+    // workbench. Null means level 0.
+    void set_zoom(const Zoom* zoom);
     ~Workbench() override;
 
     // The editor area is the widget that fills the middle; the workbench owns it.
@@ -129,6 +135,7 @@ private:
 
     const WorkbenchColors& colors_;
     PartWidget* activity_bar_ = nullptr;
+    const Zoom* zoom_ = nullptr;
     PartWidget* sidebar_ = nullptr;
     PartWidget* panel_ = nullptr;
     QWidget* editor_host_ = nullptr;

@@ -166,6 +166,7 @@ if(TARGET anvil_ui)
     ui/view_container_registry_test.cpp
     ui/workbench_colors_test.cpp
     ui/workbench_test.cpp
+    ui/zoom_parts_test.cpp
     ui/zoom_test.cpp
     ui/ui_test_main.cpp
   )

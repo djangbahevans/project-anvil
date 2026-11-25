@@ -68,6 +68,21 @@ private:
     std::string_view background_;
 };
 
+void Workbench::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    const auto apply = [this] {
+        activity_bar_->setFixedWidth(scaled_by(zoom_, activity_bar_width));
+        apply_sizes();
+    };
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, apply);
+    }
+    apply();
+}
+
 Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
     activity_bar_ = new PartWidget(colors_, "activityBar.background", this);
@@ -247,7 +262,7 @@ int Workbench::size(Part part) const {
     case Part::title_bar:
         return title_bar_ ? title_bar_->height() : 0;
     case Part::activity_bar:
-        return activity_bar_->isHidden() ? 0 : activity_bar_width;
+        return activity_bar_->isHidden() ? 0 : activity_bar_->width();
     case Part::sidebar:
         return sidebar_->isHidden() ? sidebar_size_ : sidebar_->width();
     case Part::editor:

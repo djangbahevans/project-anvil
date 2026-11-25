@@ -98,6 +98,8 @@ public:
     void apply_settings(const core::EditorSettings& settings);
     // Sets how every group shows its tabs, and how the groups that come later do.
     void set_tabs_mode(core::TabsMode mode);
+    // The zoom that the strips of tabs read their sizes through, which must outlive the area.
+    void set_zoom(const Zoom* zoom);
     // Describes the tab again, which does nothing when it is unchanged.
     void refresh_tab(workbench::GroupId group, std::size_t index);
 
@@ -176,6 +178,7 @@ private:
 
     workbench::EditorLayout& layout_;
     const WorkbenchColors& colors_;
+    const Zoom* zoom_ = nullptr;
     TabInfo tab_info_;
     DocumentLookup document_for_;
     HighlighterLookup highlighter_for_;
