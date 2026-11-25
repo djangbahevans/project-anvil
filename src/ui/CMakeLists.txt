@@ -51,6 +51,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/window_frame.hpp
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
+  include/anvil/ui/zoom.hpp
   main_window.cpp
   painted_accessibility.cpp
   panel.cpp
@@ -69,6 +70,7 @@ add_library(anvil_ui STATIC
   window_frame.cpp
   workbench.cpp
   workbench_colors.cpp
+  zoom.cpp
 )
 add_library(anvil::ui ALIAS anvil_ui)
 

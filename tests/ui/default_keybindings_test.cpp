@@ -198,6 +198,26 @@ TEST(DefaultKeybindingsTest, TheKeyboardShortcutsReferenceIsCtrlKCtrlR) {
     }
 }
 
+TEST(DefaultKeybindingsTest, TheZoomKeysAreVsCodesWithoutCtrlShiftMinusOnLinux) {
+    const auto linux = default_keybindings(KeyPlatform::linux);
+    const auto windows = default_keybindings(KeyPlatform::windows);
+    const auto macos = default_keybindings(KeyPlatform::macos);
+    for (const auto* bindings : {&linux, &windows}) {
+        EXPECT_EQ(keys_of(*bindings, "workbench.action.zoomIn"),
+                  chords({"ctrl+=", "ctrl+shift+=", "ctrl+numpad_add"}));
+        EXPECT_EQ(keys_of(*bindings, "workbench.action.zoomReset"), chords({"ctrl+numpad0"}));
+    }
+    EXPECT_EQ(keys_of(linux, "workbench.action.zoomOut"),
+              chords({"ctrl+-", "ctrl+numpad_subtract"}));
+    EXPECT_EQ(keys_of(windows, "workbench.action.zoomOut"),
+              chords({"ctrl+-", "ctrl+shift+-", "ctrl+numpad_subtract"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.zoomIn"),
+              chords({"cmd+=", "cmd+shift+=", "cmd+numpad_add"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.zoomOut"),
+              chords({"cmd+-", "cmd+shift+-", "cmd+numpad_subtract"}));
+    EXPECT_EQ(keys_of(macos, "workbench.action.zoomReset"), chords({"cmd+numpad0"}));
+}
+
 TEST(DefaultKeybindingsTest, ReopenClosedEditorIsCtrlShiftT) {
     EXPECT_EQ(
         keys_of(default_keybindings(KeyPlatform::linux), "workbench.action.reopenClosedEditor"),

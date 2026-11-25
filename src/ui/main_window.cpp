@@ -2,6 +2,7 @@
 
 #include "anvil/core/editor_settings.hpp"
 #include "anvil/core/go_to_line.hpp"
+#include "anvil/core/zoom.hpp"
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
@@ -31,6 +32,7 @@
 #include <QVBoxLayout>
 #include <QWindow>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <set>
 #include <system_error>
@@ -132,7 +134,8 @@ private:
 };
 
 MainWindow::MainWindow(Options options, QWidget* parent)
-    : QMainWindow(parent), options_(std::move(options)), colors_(palette()), bridge_(this) {
+    : QMainWindow(parent), options_(std::move(options)), colors_(palette()), zoom_(this),
+      bridge_(this) {
     about_versions_ =
         about_versions(options_.extension_host ? std::optional(options_.extension_host->vscode_dir)
                                                : std::nullopt);
@@ -573,6 +576,7 @@ SettingsStore::ChangeResult MainWindow::change_setting(const std::string& key, n
 
 void MainWindow::apply_settings() {
     const core::EditorSettings& editor = settings_->editor();
+    zoom_.set_level(editor.zoom_level);
     area_->apply_settings(editor);
     if (title_bar_) {
         title_bar_->set_command_center_visible(editor.command_center);
@@ -1036,6 +1040,10 @@ void MainWindow::register_commands() {
         [this] { find_bar()->find_previous(); });
     add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
     add("workbench.action.newWindow", tr("New Window"), [this] { open_new_window(); });
+    add("workbench.action.zoomIn", tr("Zoom In"), [this] { zoom_by(1); });
+    add("workbench.action.zoomOut", tr("Zoom Out"), [this] { zoom_by(-1); });
+    add("workbench.action.zoomReset", tr("Reset Zoom"),
+        [this] { change_setting("window.zoomLevel", 0, tr("Zoom Level")); });
     add("workbench.action.showAboutDialog", tr("About"), [this] { show_about(); });
     add("workbench.action.openDocumentationUrl", tr("Documentation"),
         [this] { open_project_page(documentation_url); });
@@ -2182,6 +2190,15 @@ void MainWindow::open_new_window() {
                                       .arg(QString::fromStdString(started.error().message)),
                                   8000);
     }
+}
+
+void MainWindow::zoom_by(int step) {
+    // Whole levels, rounded as JavaScript's Math.round does, which VS Code uses.
+    const double level = std::floor(settings_->editor().zoom_level + 0.5) + step;
+    if (level < core::min_zoom_level || level > core::max_zoom_level) {
+        return;
+    }
+    change_setting("window.zoomLevel", static_cast<int>(level), tr("Zoom Level"));
 }
 
 void MainWindow::show_about() {
