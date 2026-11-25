@@ -1251,3 +1251,21 @@ TEST_F(TabStripTest, ADropOverASingleTabGoesBeforeItOrAfterTheLastTab) {
     EXPECT_EQ(strip_->insertion_index_at(10), 1);
     EXPECT_EQ(strip_->insertion_index_at(590), 3);
 }
+
+TEST_F(TabStripTest, ADropIndicatorOverASingleTabIsAtItsLeftEdgeBeforeItAndAtTheRightEdgeAfter) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->set_single(true);
+    const QColor line = colors_.color("tab.dragAndDropBorder");
+    ASSERT_NE(line, QColor("#202020"));
+
+    strip_->set_drop_indicator(1);
+    QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(0, 10)), line);
+    EXPECT_NE(pixel(image, QPoint(599, 10)), line);
+
+    strip_->set_drop_indicator(3);
+    image = grab();
+    EXPECT_EQ(pixel(image, QPoint(599, 10)), line);
+    EXPECT_NE(pixel(image, QPoint(0, 10)), line);
+}
