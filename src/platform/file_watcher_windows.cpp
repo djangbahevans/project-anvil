@@ -16,6 +16,10 @@ std::expected<std::unique_ptr<FileWatcher>, Error> FileWatcher::start(const std:
         Error{ErrorCode::unsupported, "watching files is not supported on this platform yet"});
 }
 
+bool FileWatcher::ready() const {
+    return true;
+}
+
 std::expected<std::vector<FileEvent>, Error> FileWatcher::poll(std::chrono::milliseconds) {
     return std::vector<FileEvent>{};
 }

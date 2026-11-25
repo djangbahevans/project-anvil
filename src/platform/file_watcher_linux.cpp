@@ -3,9 +3,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <poll.h>
@@ -96,6 +98,17 @@ struct FileWatcher::Impl {
     // and by add_directory() and remove_directory(), always with `directories_mutex` held.
     std::unordered_map<int, fs::path> directories;
     std::mutex directories_mutex;
+    // The directories whose subdirectories are not watched yet, breadth first: the worker takes
+    // them in turns between the events it reads. Written by start() before the worker runs.
+    struct Scan {
+        fs::path directory;
+        // Report what the directory holds as created: for a directory that appeared, not for one
+        // that existed when the watch started.
+        bool announce = false;
+    };
+    std::deque<Scan> to_scan;
+    // Whether every directory that existed at the start is watched.
+    std::atomic<bool> scanned{false};
     std::thread worker;
 
     std::mutex mutex;
@@ -171,32 +184,57 @@ struct FileWatcher::Impl {
         return std::unexpected(errno_error("cannot watch " + path.string(), errno));
     }
 
-    // Watches the directories below `directory` and, with `announce`, reports what is in it.
-    std::expected<void, Error> scan(const fs::path& directory, bool announce) {
+    // Watches the directories in `scan.directory` and queues them to be scanned in turn. False when
+    // the system or the watcher's own limit is reached, which ends the scanning: nothing more can
+    // be watched. Another problem with a directory is reported and the others go on.
+    bool scan_directory(const Scan& scan) {
         std::error_code ec;
-        for (fs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+        for (fs::directory_iterator it(scan.directory, ec), end; !ec && it != end;
+             it.increment(ec)) {
             const fs::path child = it->path();
             if (excluded(child)) {
                 continue;
             }
-            if (announce) {
+            if (scan.announce) {
                 report(FileEventKind::created, child);
             }
             std::error_code type_ec;
             if (!fs::is_directory(fs::symlink_status(child, type_ec))) {
                 continue;
             }
-            const auto watched = watch_directory(child);
+            std::expected<bool, Error> watched;
+            {
+                const std::lock_guard lock(directories_mutex);
+                watched = watch_directory(child);
+            }
             if (!watched) {
-                return std::unexpected(watched.error());
+                const bool limit = watched.error().code == ErrorCode::limit_exceeded;
+                fail(watched.error());
+                if (limit) {
+                    return false;
+                }
+                continue;
             }
             if (*watched) {
-                if (auto scanned = scan(child, announce); !scanned) {
-                    return scanned;
-                }
+                to_scan.push_back({child, scan.announce});
             }
         }
-        return {};
+        return true;
+    }
+
+    // Scans for a few milliseconds, so that events and a request to stop wait no longer than that.
+    void scan_for_a_while() {
+        const Clock::time_point until = Clock::now() + std::chrono::milliseconds(5);
+        while (!to_scan.empty() && Clock::now() < until) {
+            const Scan next = std::move(to_scan.front());
+            to_scan.pop_front();
+            if (!scan_directory(next)) {
+                to_scan.clear();
+            }
+        }
+        if (to_scan.empty()) {
+            scanned = true;
+        }
     }
 
     void forget_below(const fs::path& directory) {
@@ -255,9 +293,7 @@ struct FileWatcher::Impl {
                 if (!watched) {
                     fail(watched.error());
                 } else if (*watched) {
-                    if (auto scanned = scan(path, true); !scanned) {
-                        fail(scanned.error());
-                    }
+                    to_scan.push_back({path, true});
                 }
             }
         } else if (event.mask & (IN_DELETE | IN_MOVED_FROM)) {
@@ -270,11 +306,39 @@ struct FileWatcher::Impl {
         }
     }
 
+    // Reads and handles the events that are waiting. False when reading failed for good.
+    bool read_events(std::array<char, 64 * 1024>& buffer) {
+        const ssize_t count = ::read(inotify_fd, buffer.data(), buffer.size());
+        if (count < 0) {
+            if (errno != EAGAIN && errno != EINTR) {
+                fail(errno_error("reading file events", errno));
+                return false;
+            }
+            return true;
+        }
+        for (ssize_t offset = 0; offset < count;) {
+            const char* record = buffer.data() + offset;
+            inotify_event event;
+            std::memcpy(&event, record, sizeof event);
+            std::string name(record + offsetof(inotify_event, name), event.len);
+            name.resize(std::strlen(name.c_str()));
+            {
+                const std::lock_guard lock(directories_mutex);
+                handle(event, name);
+            }
+            offset += static_cast<ssize_t>(sizeof(inotify_event) + event.len);
+        }
+        return true;
+    }
+
     void run() {
         std::array<char, 64 * 1024> buffer;
         for (;;) {
+            // While directories wait to be watched the worker only peeks at the descriptors, then
+            // scans for a while.
+            const int timeout = to_scan.empty() ? -1 : 0;
             std::array<pollfd, 2> fds{{{inotify_fd, POLLIN, 0}, {wake_fd, POLLIN, 0}}};
-            if (::poll(fds.data(), fds.size(), -1) < 0) {
+            if (::poll(fds.data(), fds.size(), timeout) < 0) {
                 if (errno == EINTR) {
                     continue;
                 }
@@ -284,25 +348,11 @@ struct FileWatcher::Impl {
             if (fds[1].revents != 0) {
                 return;
             }
-            const ssize_t count = ::read(inotify_fd, buffer.data(), buffer.size());
-            if (count < 0) {
-                if (errno != EAGAIN && errno != EINTR) {
-                    fail(errno_error("reading file events", errno));
-                    return;
-                }
-                continue;
+            if ((fds[0].revents & POLLIN) != 0 && !read_events(buffer)) {
+                return;
             }
-            for (ssize_t offset = 0; offset < count;) {
-                const char* record = buffer.data() + offset;
-                inotify_event event;
-                std::memcpy(&event, record, sizeof event);
-                std::string name(record + offsetof(inotify_event, name), event.len);
-                name.resize(std::strlen(name.c_str()));
-                {
-                    const std::lock_guard lock(directories_mutex);
-                    handle(event, name);
-                }
-                offset += static_cast<ssize_t>(sizeof(inotify_event) + event.len);
+            if (!to_scan.empty()) {
+                scan_for_a_while();
             }
         }
     }
@@ -349,11 +399,10 @@ std::expected<std::unique_ptr<FileWatcher>, Error> FileWatcher::start(const fs::
         }
         impl->root_wd = impl->directories.begin()->first;
         if (options.recursive) {
-            if (auto scanned = impl->scan(impl->root, false); !scanned) {
-                return std::unexpected(scanned.error());
-            }
+            impl->to_scan.push_back({impl->root, false});
         }
     }
+    impl->scanned = impl->to_scan.empty();
     Impl* raw = impl.get();
     raw->worker = std::thread([raw] { raw->run(); });
     return std::unique_ptr<FileWatcher>(new FileWatcher(std::move(impl)));
@@ -407,6 +456,10 @@ void FileWatcher::remove_directory(const fs::path& directory) {
         ::inotify_rm_watch(impl.inotify_fd, found->first);
         impl.directories.erase(found);
     }
+}
+
+bool FileWatcher::ready() const {
+    return impl_->scanned;
 }
 
 void FileWatcher::stop() {

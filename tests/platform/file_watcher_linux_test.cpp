@@ -1,3 +1,4 @@
+#include "../timing.hpp"
 #include "anvil/platform/file_watcher.hpp"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 
 using namespace anvil;
 using namespace anvil::platform;
+using anvil::test::timing_is_meaningful;
 using std::chrono::milliseconds;
 namespace fs = std::filesystem;
 
@@ -40,6 +42,16 @@ protected:
         auto started = FileWatcher::start(path.empty() ? watched_ : path, options);
         ASSERT_TRUE(started.has_value()) << started.error().message;
         watcher_ = std::move(*started);
+        ASSERT_TRUE(wait_until_ready(*watcher_));
+    }
+
+    // The directories below the path are watched by the worker; a test that changes them waits.
+    static bool wait_until_ready(const FileWatcher& watcher) {
+        const auto deadline = std::chrono::steady_clock::now() + milliseconds(20000);
+        while (!watcher.ready() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(milliseconds(1));
+        }
+        return watcher.ready();
     }
 
     static void write(const fs::path& path, const std::string& text) {
@@ -342,14 +354,32 @@ TEST_F(FileWatcherTest, APathThatDoesNotExistCannotBeWatched) {
     EXPECT_EQ(started.error().code, ErrorCode::not_found);
 }
 
-TEST_F(FileWatcherTest, TooManyDirectoriesFailTheStart) {
+TEST_F(FileWatcherTest, DirectoriesBeyondTheLimitAreReportedByPollAndTheOthersAreWatched) {
     fs::create_directories(watched_ / "a");
     fs::create_directories(watched_ / "b");
     fs::create_directories(watched_ / "c");
 
-    const auto started = FileWatcher::start(watched_, {.max_directories = 3});
-    ASSERT_FALSE(started.has_value());
-    EXPECT_EQ(started.error().code, ErrorCode::limit_exceeded);
+    auto started = FileWatcher::start(watched_, {.max_directories = 3});
+    ASSERT_TRUE(started.has_value()) << "the directories below the path do not fail the start";
+    watcher_ = std::move(*started);
+    ASSERT_TRUE(wait_until_ready(*watcher_));
+
+    const auto problem = watcher_->poll(milliseconds(1000));
+    ASSERT_FALSE(problem.has_value());
+    EXPECT_EQ(problem.error().code, ErrorCode::limit_exceeded);
+    const auto again = watcher_->poll(milliseconds(50));
+    ASSERT_TRUE(again.has_value()) << "the error is returned once";
+
+    write(watched_ / "top.txt", "x");
+    ASSERT_TRUE(wait_for_event(created, watched_ / "top.txt"));
+    write(watched_ / "a" / "in-a.txt", "x");
+    write(watched_ / "b" / "in-b.txt", "x");
+    write(watched_ / "c" / "in-c.txt", "x");
+    const auto seen = take_for(milliseconds(300));
+    const auto watched_count = has(seen, created, watched_ / "a" / "in-a.txt") +
+                               has(seen, created, watched_ / "b" / "in-b.txt") +
+                               has(seen, created, watched_ / "c" / "in-c.txt");
+    EXPECT_EQ(watched_count, 2) << "the root and two of the three directories fit in the limit";
 }
 
 TEST_F(FileWatcherTest, ADirectoryBeyondTheLimitIsReportedAsAnErrorAndTheWatchGoesOn) {
@@ -491,4 +521,91 @@ TEST_F(FileWatcherTest, DirectoriesAddedWhileEventsFlowAreAllWatched) {
 
     write(watched_ / "d199" / "last.txt", "x");
     EXPECT_TRUE(wait_for_event(created, watched_ / "d199" / "last.txt"));
+}
+
+namespace {
+
+// A tree of `top` directories each holding `inner` directories, `top * inner + top` in all.
+void make_tree(const fs::path& base, int top, int inner) {
+    for (int i = 0; i < top; ++i) {
+        for (int j = 0; j < inner; ++j) {
+            fs::create_directories(base / ("d" + std::to_string(i)) / ("s" + std::to_string(j)));
+        }
+    }
+}
+
+double milliseconds_since(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+        .count();
+}
+
+} // namespace
+
+TEST_F(FileWatcherTest, StartingARecursiveWatchDoesNotWaitForTheDirectoriesBelowThePath) {
+    make_tree(watched_, 100, 100);
+
+    const auto begin = std::chrono::steady_clock::now();
+    auto started = FileWatcher::start(watched_);
+    const double took = milliseconds_since(begin);
+    ASSERT_TRUE(started.has_value()) << started.error().message;
+    watcher_ = std::move(*started);
+    if (timing_is_meaningful) {
+        EXPECT_LT(took, 50.0) << "starting a watch of 10,100 directories took " << took << " ms";
+    }
+
+    ASSERT_TRUE(wait_until_ready(*watcher_));
+    write(watched_ / "d99" / "s99" / "deep.txt", "x");
+    EXPECT_TRUE(wait_for_event(created, watched_ / "d99" / "s99" / "deep.txt"))
+        << "the last directory that was added is watched";
+}
+
+TEST_F(FileWatcherTest, ChangesAtThePathAreReportedWhileTheDirectoriesBelowItAreStillBeingAdded) {
+    make_tree(watched_, 100, 100);
+    auto started = FileWatcher::start(watched_);
+    ASSERT_TRUE(started.has_value()) << started.error().message;
+    watcher_ = std::move(*started);
+    const bool still_adding = !watcher_->ready();
+
+    write(watched_ / "top.txt", "x");
+    EXPECT_TRUE(wait_for_event(created, watched_ / "top.txt"));
+    EXPECT_TRUE(still_adding) << "the tree should take longer to watch than this test needs";
+}
+
+TEST_F(FileWatcherTest, StoppingWhileDirectoriesAreBeingAddedDoesNotWaitForTheWholeTree) {
+    make_tree(watched_, 100, 100);
+    auto started = FileWatcher::start(watched_);
+    ASSERT_TRUE(started.has_value()) << started.error().message;
+    watcher_ = std::move(*started);
+
+    const auto begin = std::chrono::steady_clock::now();
+    watcher_.reset();
+    const double took = milliseconds_since(begin);
+    if (timing_is_meaningful) {
+        EXPECT_LT(took, 50.0) << "ending the watch took " << took << " ms";
+    }
+}
+
+TEST_F(FileWatcherTest, ADirectoryThatIsCreatedWhileTheTreeIsBeingAddedIsWatchedToo) {
+    make_tree(watched_, 50, 100);
+    auto started = FileWatcher::start(watched_);
+    ASSERT_TRUE(started.has_value()) << started.error().message;
+    watcher_ = std::move(*started);
+
+    fs::create_directories(watched_ / "made" / "inner");
+    write(watched_ / "made" / "inner" / "early.txt", "x");
+    ASSERT_TRUE(wait_until_ready(*watcher_));
+    events_.clear();
+    write(watched_ / "made" / "inner" / "late.txt", "x");
+    EXPECT_TRUE(wait_for_event(created, watched_ / "made" / "inner" / "late.txt"));
+}
+
+TEST_F(FileWatcherTest, AWatchIsReadyAtOnceWhenItHasNoDirectoriesBelowThePath) {
+    auto started = FileWatcher::start(watched_);
+    ASSERT_TRUE(started.has_value());
+    watcher_ = std::move(*started);
+    EXPECT_TRUE(wait_until_ready(*watcher_));
+
+    auto flat = FileWatcher::start(watched_, {.recursive = false});
+    ASSERT_TRUE(flat.has_value());
+    EXPECT_TRUE((*flat)->ready());
 }

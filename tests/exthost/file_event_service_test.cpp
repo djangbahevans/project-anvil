@@ -1,3 +1,4 @@
+#include "../timing.hpp"
 #include "anvil/exthost/file_event_service.hpp"
 #include "anvil/exthost/vscode_types.hpp"
 #include "fake_host.hpp"
@@ -11,6 +12,7 @@
 
 using namespace anvil::exthost;
 using anvil::exthost::test::FakeHost;
+using anvil::test::timing_is_meaningful;
 using nlohmann::json;
 namespace core = anvil::core;
 namespace fs = std::filesystem;
@@ -45,9 +47,21 @@ protected:
     void create_service(std::optional<core::Workspace> workspace = std::nullopt) {
         service_ =
             std::make_unique<FileEventService>(*session_, router_, *providers_, logger_, workspace);
+        wait_until_ready();
     }
 
-    // Sends `$watch` (`session` and `correlate` as the extension host sends them).
+    // The directories below a watched folder are added by the watchers' workers; a test that
+    // changes them waits until they are.
+    void wait_until_ready() {
+        const auto deadline = std::chrono::steady_clock::now() + milliseconds(20000);
+        while (!service_->ready() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(milliseconds(1));
+        }
+        EXPECT_TRUE(service_->ready());
+    }
+
+    // Sends `$watch` (`session` and `correlate` as the extension host sends them) and waits until
+    // the directories below the folder are watched.
     void watch(const fs::path& path, double session, json options = {{"recursive", true}},
                bool correlate = false, const std::string& scheme = "file") {
         if (!options.contains("excludes")) {
@@ -55,6 +69,7 @@ protected:
         }
         const json uri = {{"$mid", 1}, {"scheme", scheme}, {"path", path.generic_string()}};
         send("$watch", json::array({"acme.ext", session, uri, options, correlate}));
+        wait_until_ready();
     }
     void unwatch(double session) {
         send("$unwatch", json::array({session}));
@@ -391,4 +406,52 @@ TEST_F(FileEventServiceTest, ChangesThatAProviderReportsAreSentAsFileEvents) {
     EXPECT_EQ(batches[0]["created"], json::array({uri("/new"), uri("/new2")}));
     EXPECT_EQ(batches[0]["changed"], json::array({uri("/edited")}));
     EXPECT_EQ(batches[0]["deleted"], json::array({uri("/gone")}));
+}
+
+TEST_F(FileEventServiceTest, StartingTheWatchesOfALargeFolderDoesNotWaitForItsDirectories) {
+    for (int i = 0; i < 100; ++i) {
+        for (int j = 0; j < 100; ++j) {
+            fs::create_directories(dir_ / ("d" + std::to_string(i)) / ("s" + std::to_string(j)));
+        }
+    }
+    const auto workspace = core::Workspace::open(dir_);
+    ASSERT_TRUE(workspace.has_value());
+
+    const auto begin = std::chrono::steady_clock::now();
+    service_ =
+        std::make_unique<FileEventService>(*session_, router_, *providers_, logger_, *workspace);
+    const double workspace_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    if (timing_is_meaningful) {
+        EXPECT_LT(workspace_ms, 50.0)
+            << "the workspace watch of 10,100 directories took " << workspace_ms << " ms to start";
+    }
+
+    fs::create_directories(root_ / "elsewhere");
+    for (int i = 0; i < 100; ++i) {
+        for (int j = 0; j < 100; ++j) {
+            fs::create_directories(root_ / "elsewhere" / ("d" + std::to_string(i)) /
+                                   ("s" + std::to_string(j)));
+        }
+    }
+    const auto extension_begin = std::chrono::steady_clock::now();
+    const json uri = {
+        {"$mid", 1}, {"scheme", "file"}, {"path", (root_ / "elsewhere").generic_string()}};
+    send("$watch", json::array({"acme.ext", 0.5, uri,
+                                json{{"recursive", true}, {"excludes", json::array()}}, false}));
+    const double extension_ms = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - extension_begin)
+                                    .count();
+    if (timing_is_meaningful) {
+        EXPECT_LT(extension_ms, 50.0)
+            << "the $watch of 10,100 directories took " << extension_ms << " ms";
+    }
+
+    wait_until_ready();
+    write(dir_ / "d99" / "s99" / "deep.txt", "x");
+    write(root_ / "elsewhere" / "d99" / "s99" / "deep.txt", "x");
+    EXPECT_TRUE(wait_for([&](auto&) {
+        return has("created", dir_ / "d99" / "s99" / "deep.txt") &&
+               has("created", root_ / "elsewhere" / "d99" / "s99" / "deep.txt");
+    }));
 }

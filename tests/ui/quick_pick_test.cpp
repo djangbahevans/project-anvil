@@ -1,3 +1,4 @@
+#include "../timing.hpp"
 #include "anvil/ui/quick_pick.hpp"
 
 #include <QAbstractItemModel>
@@ -20,18 +21,7 @@ using Ranges = std::vector<MatchRange>;
 
 namespace {
 
-// Sanitizers slow code down several times over, so the time limit applies to plain builds only.
-#if defined(__SANITIZE_ADDRESS__)
-constexpr bool timing_is_meaningful = false;
-#elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
-constexpr bool timing_is_meaningful = false;
-#else
-constexpr bool timing_is_meaningful = true;
-#endif
-#else
-constexpr bool timing_is_meaningful = true;
-#endif
+using anvil::test::timing_is_meaningful;
 
 class QuickPickTest : public ::testing::Test {
 protected:

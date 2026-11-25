@@ -234,6 +234,11 @@ void FileEventService::send_provider_changes(const std::vector<ProviderChange>& 
     send_batch(std::move(created), std::move(changed), std::move(deleted), std::nullopt);
 }
 
+bool FileEventService::ready() const {
+    return std::ranges::all_of(
+        watches_, [](const std::shared_ptr<Watch>& watch) { return watch->watcher->ready(); });
+}
+
 void FileEventService::poll() {
     const std::vector<std::shared_ptr<Watch>> watches = watches_;
     for (const std::shared_ptr<Watch>& watch : watches) {
