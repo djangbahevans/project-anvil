@@ -61,9 +61,8 @@ void TabStrip::apply_zoom() {
     QFont strip_font = font();
     strip_font.setPixelSize(zoomed(font_pixels));
     setFont(strip_font);
-    for (Entry& entry : entries_) {
-        measure(entry);
-    }
+    // A font that changed measures the titles again in `changeEvent`; the sizes that are not the
+    // font's still change the layout.
     layout_valid_ = false;
     set_scroll(scroll_);
     if (current_ >= 0) {

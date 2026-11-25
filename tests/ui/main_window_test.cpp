@@ -9619,6 +9619,16 @@ TEST_F(ZoomChromeTest, TheBarsOfTheWindowAreTheSizesAtLevelZeroScaledAndNothingO
                            window_->status_bar().size());
         EXPECT_LE(editor_area.bottom(), status.top() - 1);
         EXPECT_EQ(status.bottom() + 1, window_->height());
+
+        window_->workbench()->set_visible(ui::Part::activity_bar, true);
+        QApplication::processEvents();
+        EXPECT_EQ(window_->workbench()->size(ui::Part::activity_bar),
+                  zoom.scaled(ui::Workbench::activity_bar_width));
+        const auto* activity_bar = window_->findChild<ui::ActivityBar*>();
+        ASSERT_NE(activity_bar, nullptr);
+        const QToolButton* explorer = activity_bar->button("workbench.view.explorer");
+        ASSERT_NE(explorer, nullptr);
+        EXPECT_EQ(explorer->width(), zoom.scaled(ui::ActivityBar::button_size));
     }
 }
 

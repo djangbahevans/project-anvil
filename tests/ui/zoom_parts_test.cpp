@@ -1,4 +1,5 @@
 #include "anvil/ui/activity_bar.hpp"
+#include "anvil/ui/codicons.hpp"
 #include "anvil/ui/sidebar.hpp"
 #include "anvil/ui/status_bar.hpp"
 #include "anvil/ui/tab_strip.hpp"
@@ -14,6 +15,7 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <QToolButton>
+#include <cstdlib>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -22,6 +24,25 @@ namespace {
 using namespace anvil::ui;
 
 constexpr double levels[] = {-2, 0, 3};
+
+// The smallest rectangle that holds the pixels of `image` inside `area` that are not the color of
+// the pixel at the corner of `area`: the mark that a part drew there.
+QRect painted_extent(const QImage& image, const QRect& area) {
+    const QColor background = image.pixelColor(area.topLeft());
+    QRect extent;
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            const int distance = std::abs(color.red() - background.red()) +
+                                 std::abs(color.green() - background.green()) +
+                                 std::abs(color.blue() - background.blue());
+            if (distance > 60) {
+                extent = extent.united(QRect(x, y, 1, 1));
+            }
+        }
+    }
+    return extent;
+}
 
 class ZoomPartsTest : public ::testing::Test {
 protected:
@@ -102,6 +123,63 @@ TEST_F(TabStripZoomTest, TheTabsLayOutAgainWhenTheZoomChangesWithoutBeingRecreat
     EXPECT_GT(strip_->tab_rect(1).left(), before);
     zoom_.set_level(0);
     EXPECT_EQ(strip_->tab_rect(1).left(), before);
+}
+
+TEST_F(TabStripZoomTest, ALevelThatLeavesTheFontAloneStillChangesTheLayout) {
+    const int font = strip_->font().pixelSize();
+    zoom_.set_level(0.1);
+    ASSERT_EQ(strip_->font().pixelSize(), font);
+    EXPECT_EQ(strip_->tab_rect(0).width(), zoom_.scaled(TabStrip::minimum_tab_width));
+    EXPECT_GT(strip_->tab_rect(0).width(), TabStrip::minimum_tab_width);
+    EXPECT_EQ(strip_->tab_rect(1).left(), strip_->tab_rect(0).width());
+}
+
+TEST_F(TabStripZoomTest, TheDotOfAnUnsavedTabAndTheCrossOfTheCloseButtonAreDrawnAtTheZoomedSize) {
+    colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#101010")},
+                        {"tab.activeBackground", QColor("#202020")},
+                        {"tab.unfocusedActiveBackground", QColor("#202020")},
+                        {"tab.activeForeground", QColor("#ffffff")},
+                        {"tab.unfocusedActiveForeground", QColor("#ffffff")}});
+    const auto extent_of_the_mark = [&](bool dirty) {
+        strip_->set_tab(0, {.title = "a.txt", .tooltip = {}, .dirty = dirty, .has_path = true});
+        QApplication::processEvents();
+        const QImage image = strip_->grab().toImage();
+        return painted_extent(image, strip_->close_button_rect(0));
+    };
+    zoom_.set_level(0);
+    const QRect dot = extent_of_the_mark(true);
+    const QRect cross = extent_of_the_mark(false);
+    ASSERT_FALSE(dot.isEmpty());
+    ASSERT_FALSE(cross.isEmpty());
+    EXPECT_NEAR(dot.width(), TabStrip::close_button_size / 2, 1);
+    zoom_.set_level(3);
+    const QRect zoomed_dot = extent_of_the_mark(true);
+    const QRect zoomed_cross = extent_of_the_mark(false);
+    EXPECT_NEAR(zoomed_dot.width(), zoom_.scaled(8), 2);
+    EXPECT_GT(zoomed_dot.width(), dot.width() * 3 / 2);
+    EXPECT_GT(zoomed_cross.width(), cross.width() * 3 / 2);
+    EXPECT_GT(zoomed_cross.height(), cross.height() * 3 / 2);
+}
+
+TEST_F(TabStripZoomTest, TheTitleStartsAfterTheZoomedPadding) {
+    colors_.set_colors({{"editorGroupHeader.tabsBackground", QColor("#101010")},
+                        {"tab.activeBackground", QColor("#202020")},
+                        {"tab.unfocusedActiveBackground", QColor("#202020")},
+                        {"tab.activeForeground", QColor("#ffffff")},
+                        {"tab.unfocusedActiveForeground", QColor("#ffffff")}});
+    strip_->set_tab(0, {.title = "WWWW", .tooltip = {}, .has_path = true});
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        const QRect tab = strip_->tab_rect(0);
+        const QRect text_area(tab.left(), tab.top() + 2,
+                              strip_->close_button_rect(0).left() - tab.left(), tab.height() - 4);
+        const QRect extent = painted_extent(strip_->grab().toImage(), text_area);
+        ASSERT_FALSE(extent.isEmpty());
+        EXPECT_GE(extent.left() - tab.left(), zoom_.scaled(TabStrip::title_padding));
+        EXPECT_LE(extent.left() - tab.left(), zoom_.scaled(TabStrip::title_padding) + 3);
+    }
 }
 
 TEST_F(TabStripZoomTest, AClickOnATabAndOnItsCloseButtonFindsThemWhereTheyAreDrawn) {
@@ -202,6 +280,12 @@ protected:
             container.create = [] { return new QLabel("view"); };
             registry_.add(std::move(container));
         }
+        ViewContainer round;
+        round.id = "round";
+        round.title = "round";
+        round.icon = codicon_icon("circle-filled", Qt::white, 24);
+        round.create = [] { return new QLabel("view"); };
+        registry_.add(std::move(round));
         workbench_->set_visible(Part::activity_bar, true);
         workbench_->show();
         QApplication::processEvents();
@@ -225,6 +309,21 @@ TEST_F(ActivityBarZoomTest, TheBarAndItsButtonsAreAsWideAsTheSizeAtLevelZeroScal
         EXPECT_EQ(sidebar_->activity_bar().button("two")->geometry().top(),
                   one->geometry().bottom() + 1);
     }
+}
+
+TEST_F(ActivityBarZoomTest, TheIconOfAButtonIsDrawnAtTheZoomedSizeAndStaysSharp) {
+    QToolButton* round = sidebar_->activity_bar().button("round");
+    ASSERT_NE(round, nullptr);
+    const auto extent = [&] {
+        QApplication::processEvents();
+        return painted_extent(round->grab().toImage(), round->rect().adjusted(4, 4, -4, -4));
+    };
+    const QRect plain = extent();
+    ASSERT_FALSE(plain.isEmpty());
+    zoom_.set_level(3);
+    const QRect zoomed = extent();
+    EXPECT_NEAR(zoomed.width() / static_cast<double>(plain.width()), zoom_.factor(), 0.15);
+    EXPECT_NEAR(zoomed.height() / static_cast<double>(plain.height()), zoom_.factor(), 0.15);
 }
 
 TEST_F(ActivityBarZoomTest, AClickOnAButtonAtLevelThreeActivatesItsContainer) {
