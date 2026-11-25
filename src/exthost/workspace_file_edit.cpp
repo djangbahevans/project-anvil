@@ -72,9 +72,27 @@ fs::path path_moved(const fs::path& path, const fs::path& from, const fs::path& 
     return relative == "." ? to : to / relative;
 }
 
+namespace {
+
+// A property that the extension did not set: left out, null, or the placeholder that the
+// extension host writes for `undefined` inside an object with buffers.
+bool is_unset(const json& object, const char* key) {
+    if (!object.contains(key) || object[key].is_null()) {
+        return true;
+    }
+    const json& value = object[key];
+    return value.is_object() && value.contains("$$ref$$") && value["$$ref$$"] == -1;
+}
+
+bool flag(const json& options, const char* key) {
+    return !is_unset(options, key) && options[key].is_boolean() && options[key].get<bool>();
+}
+
+} // namespace
+
 std::expected<FileOperation, Error> parse_file_operation(const json& item) {
     const auto resource = [&](const char* key) -> std::expected<std::optional<fs::path>, Error> {
-        if (!item.contains(key) || item[key].is_null()) {
+        if (is_unset(item, key)) {
             return std::optional<fs::path>();
         }
         auto uri = uri_from_json(item[key]);
@@ -115,20 +133,20 @@ std::expected<FileOperation, Error> parse_file_operation(const json& item) {
 
     if (item.contains("options") && item["options"].is_object()) {
         const json& options = item["options"];
-        if (options.value("copy", false)) {
+        if (flag(options, "copy")) {
             return std::unexpected(Error{ErrorCode::unsupported, "copying is not supported"});
         }
-        if (options.contains("overwrite") && options["overwrite"].is_boolean()) {
+        if (!is_unset(options, "overwrite") && options["overwrite"].is_boolean()) {
             operation.overwrite = options["overwrite"].get<bool>();
         }
-        operation.ignore_if_exists = options.value("ignoreIfExists", false);
-        operation.ignore_if_not_exists = options.value("ignoreIfNotExists", false);
-        operation.recursive = options.value("recursive", false);
-        operation.folder = options.value("folder", false);
-        if (options.contains("contents") && options["contents"].is_object()) {
+        operation.ignore_if_exists = flag(options, "ignoreIfExists");
+        operation.ignore_if_not_exists = flag(options, "ignoreIfNotExists");
+        operation.recursive = flag(options, "recursive");
+        operation.folder = flag(options, "folder");
+        if (!is_unset(options, "contents")) {
             const json& contents = options["contents"];
-            if (contents.value("type", "") != "base64" || !contents.contains("value") ||
-                !contents["value"].is_string()) {
+            if (!contents.is_object() || contents.value("type", "") != "base64" ||
+                !contents.contains("value") || !contents["value"].is_string()) {
                 return std::unexpected(
                     Error{ErrorCode::unsupported, "only base64 contents are supported"});
             }

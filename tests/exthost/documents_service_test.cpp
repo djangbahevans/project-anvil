@@ -122,7 +122,8 @@ json rename_item(const std::filesystem::path& from, const std::filesystem::path&
 }
 
 std::string slurp(const std::filesystem::path& path) {
-    return *anvil::platform::read_file(path);
+    const auto bytes = anvil::platform::read_file(path);
+    return bytes ? *bytes : "<unreadable>";
 }
 
 bool is_on_disk(const std::filesystem::path& path) {
@@ -965,7 +966,7 @@ TEST_F(DocumentsServiceTest, TextEditsApplyAfterTheCreateAndTheRenameBeforeThem)
     synchronize();
     const core::Uri b_uri = core::Uri::file(path("b.txt"));
     const core::Uri c_uri = core::Uri::file(path("c.txt"));
-    EXPECT_EQ(apply_edit({rename_item(a, path("b.txt")), text_item(b_uri, 0, 0, ">>"),
+    ASSERT_EQ(apply_edit({rename_item(a, path("b.txt")), text_item(b_uri, 0, 0, ">>"),
                           create_item(path("c.txt"), json::object(), "YWJj"),
                           text_item(c_uri, 0, 3, "!")})
                   .reply_to(1),
@@ -1180,4 +1181,25 @@ TEST_F(DocumentsServiceTest, AFailedEditPutsRenamedDocumentsBack) {
     EXPECT_EQ(service_.find(b_uri), nullptr);
     EXPECT_EQ(events, (std::vector<std::string>{a_uri.path + " -> " + b_uri.path,
                                                 b_uri.path + " -> " + a_uri.path}));
+}
+
+TEST_F(DocumentsServiceTest, PropertiesThatTheExtensionHostWritesAsUndefinedAreNotSet) {
+    const auto file = write("a.txt", "x");
+    synchronize();
+    // `undefined` in an object with buffers is the placeholder `{"$$ref$$": -1}`.
+    const json undefined = {{"$$ref$$", -1}};
+    const json remove = {{"oldResource", uri_to_json(core::Uri::file(file))},
+                         {"newResource", undefined},
+                         {"metadata", undefined},
+                         {"options", {{"contents", undefined}, {"recursive", undefined}}}};
+    EXPECT_EQ(apply_edit({remove}).reply_to(1), "true");
+    EXPECT_FALSE(is_on_disk(file));
+
+    const auto created = path("b.txt");
+    const json create = {{"oldResource", undefined},
+                         {"newResource", uri_to_json(core::Uri::file(created))},
+                         {"options", {{"overwrite", undefined}, {"ignoreIfExists", true}}}};
+    EXPECT_EQ(apply_edit({create}, 2).reply_to(2), "true");
+    EXPECT_TRUE(is_on_disk(created));
+    EXPECT_EQ(apply_edit({create}, 3).reply_to(3), "true");
 }

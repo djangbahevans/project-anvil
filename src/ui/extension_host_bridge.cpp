@@ -63,6 +63,16 @@ std::expected<void, Error> ExtensionHostBridge::launch() {
             callbacks_.saved(uri);
         }
     };
+    observer.renamed = [this](const core::Uri& from, const core::Uri& to) {
+        if (callbacks_.renamed) {
+            callbacks_.renamed(from, to);
+        }
+    };
+    observer.deleted = [this](const core::Uri& uri) {
+        if (callbacks_.deleted) {
+            callbacks_.deleted(uri);
+        }
+    };
     host_->documents().set_observer(std::move(observer));
     if (language_resolver_) {
         host_->documents().set_language_resolver(language_resolver_);
