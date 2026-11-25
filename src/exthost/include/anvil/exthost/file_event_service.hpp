@@ -47,6 +47,11 @@ public:
     // Sends the events that have arrived since the last call, one `$onFileEvent` per watcher.
     void poll();
 
+    // Whether every platform watcher has added all the directories it watches. A watch of a large
+    // folder is ready some time after it started, and the events of the directories that are not
+    // watched yet are not sent.
+    bool ready() const;
+
     // The number of platform watchers that run, which is less than the number of sessions when
     // watches share one.
     std::size_t watcher_count() const {
