@@ -1,6 +1,7 @@
 #include "anvil/core/glob.hpp"
 #include "anvil/platform/file_watcher.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <condition_variable>
@@ -91,8 +92,10 @@ struct FileWatcher::Impl {
     int inotify_fd = -1;
     int wake_fd = -1;
     int root_wd = -1;
-    // The watched directories. Written by start() before the worker runs and by the worker after.
+    // The watched directories. Written by start() before the worker runs, and then by the worker
+    // and by add_directory() and remove_directory(), always with `directories_mutex` held.
     std::unordered_map<int, fs::path> directories;
+    std::mutex directories_mutex;
     std::thread worker;
 
     std::mutex mutex;
@@ -295,7 +298,10 @@ struct FileWatcher::Impl {
                 std::memcpy(&event, record, sizeof event);
                 std::string name(record + offsetof(inotify_event, name), event.len);
                 name.resize(std::strlen(name.c_str()));
-                handle(event, name);
+                {
+                    const std::lock_guard lock(directories_mutex);
+                    handle(event, name);
+                }
                 offset += static_cast<ssize_t>(sizeof(inotify_event) + event.len);
             }
         }
@@ -351,6 +357,56 @@ std::expected<std::unique_ptr<FileWatcher>, Error> FileWatcher::start(const fs::
     Impl* raw = impl.get();
     raw->worker = std::thread([raw] { raw->run(); });
     return std::unique_ptr<FileWatcher>(new FileWatcher(std::move(impl)));
+}
+
+std::expected<void, Error> FileWatcher::add_directory(const fs::path& directory) {
+    Impl& impl = *impl_;
+    std::error_code ec;
+    fs::path absolute = fs::absolute(directory, ec).lexically_normal();
+    if (!absolute.has_filename()) {
+        absolute = absolute.parent_path();
+    }
+    if (impl.options.recursive || impl.root_is_file) {
+        return std::unexpected(Error{ErrorCode::invalid_argument,
+                                     "directories can be added to a watcher of a directory that "
+                                     "is not recursive"});
+    }
+    const std::string relative = absolute.lexically_relative(impl.root).generic_string();
+    if (relative.empty() || relative == ".." || relative.starts_with("../")) {
+        return std::unexpected(Error{ErrorCode::invalid_argument,
+                                     absolute.string() + " is not below " + impl.root.string()});
+    }
+    const std::lock_guard lock(impl.directories_mutex);
+    if (std::ranges::any_of(impl.directories,
+                            [&](const auto& watched) { return watched.second == absolute; })) {
+        return {};
+    }
+    const auto watched = impl.watch_directory(absolute);
+    if (!watched) {
+        return std::unexpected(watched.error());
+    }
+    if (!*watched) {
+        return std::unexpected(Error{ErrorCode::not_found, absolute.string() + " does not exist"});
+    }
+    return {};
+}
+
+void FileWatcher::remove_directory(const fs::path& directory) {
+    Impl& impl = *impl_;
+    fs::path absolute = fs::absolute(directory).lexically_normal();
+    if (!absolute.has_filename()) {
+        absolute = absolute.parent_path();
+    }
+    if (absolute == impl.root) {
+        return;
+    }
+    const std::lock_guard lock(impl.directories_mutex);
+    const auto found = std::ranges::find_if(
+        impl.directories, [&](const auto& watched) { return watched.second == absolute; });
+    if (found != impl.directories.end()) {
+        ::inotify_rm_watch(impl.inotify_fd, found->first);
+        impl.directories.erase(found);
+    }
 }
 
 void FileWatcher::stop() {
