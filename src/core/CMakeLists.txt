@@ -8,6 +8,7 @@ add_library(anvil_core STATIC
   occurrences.cpp
   editor_settings.cpp
   file_name_order.cpp
+  file_tree.cpp
   fuzzy.cpp
   glob.cpp
   go_to_line.cpp
