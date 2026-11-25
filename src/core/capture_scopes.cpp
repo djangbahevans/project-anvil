@@ -120,6 +120,51 @@ std::vector<CaptureScope> joined(std::span<const CaptureScope> first,
     return all;
 }
 
+// The captures of the Markdown block grammar's `highlights.scm` and of Anvil's own patterns for it
+// (`queries/markdown.scm`), with the scopes of VS Code's Markdown grammar. A span has one scope
+// and not the stack of scopes that a TextMate grammar gives a token, so a mark that VS Code's
+// grammar scopes inside a heading or a quote (`#`, `>`) has the scope of the heading or the
+// quote's marker that themes style. Left out: `punctuation.special`, `punctuation.delimiter` and
+// `none`, which themes do not style.
+constexpr std::array markdown_rows = {
+    CaptureScope{"markup.heading", "markup.heading"},
+    CaptureScope{"text.title", "markup.heading"},
+    CaptureScope{"punctuation.definition.list.begin", "punctuation.definition.list.begin"},
+    CaptureScope{"punctuation.definition.quote.begin", "punctuation.definition.quote.begin"},
+    CaptureScope{"meta.separator", "meta.separator"},
+    CaptureScope{"markup.fenced_code.block", "markup.fenced_code.block"},
+    CaptureScope{"markup.raw.block", "markup.raw.block"},
+    CaptureScope{"text.literal", "markup.raw.block"},
+    CaptureScope{"fenced_code.block.language", "fenced_code.block.language"},
+    CaptureScope{"string.other.link.title", "string.other.link.title"},
+    CaptureScope{"markup.underline.link", "markup.underline.link"},
+    CaptureScope{"text.uri", "markup.underline.link"},
+    CaptureScope{"constant.other.reference.link", "constant.other.reference.link"},
+    CaptureScope{"text.reference", "constant.other.reference.link"},
+    CaptureScope{"constant.character.escape", "constant.character.escape"},
+    CaptureScope{"string.escape", "constant.character.escape"},
+};
+
+// The same for the inline grammar (`queries/markdown-inline.scm`): what is inside a paragraph, a
+// heading or a table cell.
+constexpr std::array markdown_inline_rows = {
+    CaptureScope{"markup.inline.raw.string", "markup.inline.raw.string"},
+    CaptureScope{"text.literal", "markup.inline.raw.string"},
+    CaptureScope{"markup.italic", "markup.italic"},
+    CaptureScope{"text.emphasis", "markup.italic"},
+    CaptureScope{"markup.bold", "markup.bold"},
+    CaptureScope{"text.strong", "markup.bold"},
+    CaptureScope{"markup.strikethrough", "markup.strikethrough"},
+    CaptureScope{"string.other.link.description", "string.other.link.description"},
+    CaptureScope{"text.reference", "string.other.link.description"},
+    CaptureScope{"markup.underline.link", "markup.underline.link"},
+    CaptureScope{"text.uri", "markup.underline.link"},
+    CaptureScope{"string.other.link.title", "string.other.link.title"},
+    CaptureScope{"constant.other.reference.link", "constant.other.reference.link"},
+    CaptureScope{"constant.character.escape", "constant.character.escape"},
+    CaptureScope{"string.escape", "constant.character.escape"},
+};
+
 bool names(std::string_view row, std::string_view capture) {
     return capture.starts_with(row) && (capture.size() == row.size() || capture[row.size()] == '.');
 }
@@ -157,6 +202,14 @@ std::span<const CaptureScope> cpp_capture_scopes() {
 
 std::span<const CaptureScope> javascript_capture_scopes() {
     return js_rows;
+}
+
+std::span<const CaptureScope> markdown_capture_scopes() {
+    return markdown_rows;
+}
+
+std::span<const CaptureScope> markdown_inline_capture_scopes() {
+    return markdown_inline_rows;
 }
 
 std::span<const CaptureScope> typescript_capture_scopes() {

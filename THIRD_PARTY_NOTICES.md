@@ -71,3 +71,10 @@ Anvil includes the following material from other projects. Each keeps its own li
 - **From:** https://github.com/tree-sitter/tree-sitter-typescript, release v0.23.2, fetched and checked by `scripts/fetch-tree-sitter.sh`.
 - **Copyright:** Copyright (c) 2017 Max Brunsfeld.
 - **License:** MIT.
+
+## tree-sitter-markdown
+
+- **What:** the Markdown block grammar and inline grammar (`tree-sitter-markdown/src`, `tree-sitter-markdown-inline/src`) and their `queries/highlights.scm`, compiled and embedded into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository.
+- **From:** https://github.com/tree-sitter-grammars/tree-sitter-markdown, release v0.5.4, fetched and checked by `scripts/fetch-tree-sitter.sh`.
+- **Copyright:** Copyright (c) 2021 Matthias Deiml.
+- **License:** MIT.

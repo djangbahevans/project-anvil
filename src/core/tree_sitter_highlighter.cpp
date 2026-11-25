@@ -24,6 +24,8 @@ extern "C" const TSLanguage* tree_sitter_cpp(void);
 extern "C" const TSLanguage* tree_sitter_javascript(void);
 extern "C" const TSLanguage* tree_sitter_typescript(void);
 extern "C" const TSLanguage* tree_sitter_tsx(void);
+extern "C" const TSLanguage* tree_sitter_markdown(void);
+extern "C" const TSLanguage* tree_sitter_markdown_inline(void);
 
 namespace anvil::core::grammar_queries {
 extern const std::string_view json;
@@ -32,6 +34,8 @@ extern const std::string_view cpp;
 extern const std::string_view javascript;
 extern const std::string_view typescript;
 extern const std::string_view typescriptreact;
+extern const std::string_view markdown;
+extern const std::string_view markdown_inline;
 } // namespace anvil::core::grammar_queries
 
 namespace anvil::core {
@@ -47,10 +51,25 @@ struct Grammar {
     const TSLanguage* (*language)();
     const std::string_view& highlights;
     std::span<const CaptureScope> (*scopes)();
+    // The grammar of the inline content, for a language whose blocks hold text of another grammar
+    // (Markdown); null for the others.
+    const Grammar* inline_grammar = nullptr;
 };
 
-const std::array<Grammar, 7>& grammars() {
-    static const std::array<Grammar, 7> table = {
+// The grammar of the inline content of Markdown, which is parsed apart from its blocks: its
+// language is not one that a document can have.
+const Grammar& markdown_inline_grammar() {
+    static const Grammar grammar{"markdown_inline",
+                                 "text.html.markdown",
+                                 "markdown",
+                                 tree_sitter_markdown_inline,
+                                 grammar_queries::markdown_inline,
+                                 markdown_inline_capture_scopes};
+    return grammar;
+}
+
+const std::array<Grammar, 8>& grammars() {
+    static const std::array<Grammar, 8> table = {
         Grammar{"json", "source.json", "json", tree_sitter_json, grammar_queries::json,
                 json_capture_scopes},
         Grammar{"c", "source.c", "c", tree_sitter_c, grammar_queries::c, c_capture_scopes},
@@ -64,6 +83,8 @@ const std::array<Grammar, 7>& grammars() {
                 grammar_queries::typescript, typescript_capture_scopes},
         Grammar{"typescriptreact", "source.tsx", "tsx", tree_sitter_tsx,
                 grammar_queries::typescriptreact, typescript_capture_scopes},
+        Grammar{"markdown", "text.html.markdown", "markdown", tree_sitter_markdown,
+                grammar_queries::markdown, markdown_capture_scopes, &markdown_inline_grammar()},
     };
     return table;
 }
@@ -111,7 +132,6 @@ const char* read_chunk(void* payload, std::uint32_t byte, TSPoint, std::uint32_t
     return chunk.data();
 }
 
-// The row and the byte column that tree-sitter's points use, not the UTF-16 column.
 void describe(TSNode node, std::string& out) {
     const TSPoint start = ts_node_start_point(node);
     const TSPoint end = ts_node_end_point(node);
@@ -129,6 +149,7 @@ void describe(TSNode node, std::string& out) {
     out += ")";
 }
 
+// The row and the byte column that tree-sitter's points use, not the UTF-16 column.
 TSPoint point_at(const Text& text, std::size_t offset) {
     const std::size_t row = text.position_at(offset).line;
     return {static_cast<std::uint32_t>(row),
@@ -151,6 +172,9 @@ struct Capture {
     std::uint32_t pattern = 0;
     std::string_view scope;
     bool weak = false;
+    // 0 for what the inline grammar captured, 1 for the blocks: where both capture the same text,
+    // the inline one is the more specific.
+    int layer = 1;
 };
 
 // Turns captures, which may nest and share ranges, into byte spans that do not overlap, where the
@@ -168,6 +192,9 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
         if (a.weak != b.weak) {
             return b.weak;
         }
+        if (a.layer != b.layer) {
+            return a.layer < b.layer;
+        }
         return a.pattern < b.pattern;
     });
 
@@ -176,7 +203,7 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
     std::size_t position = 0;
     const auto close_until = [&](std::size_t end, const Capture& top) {
         if (position < end) {
-            out.push_back({position, end, top.pattern, top.scope, top.weak});
+            out.push_back({position, end, top.pattern, top.scope, top.weak, top.layer});
             position = end;
         }
     };
@@ -308,8 +335,10 @@ read_predicates(TSQuery& query) {
     return all;
 }
 
-// Whether the captures of `match` satisfy the predicates of its pattern.
-bool satisfies(const QueryData& data, const TSQueryMatch& match, const Text& text,
+// Whether the captures of `match` satisfy the predicates of its pattern. `slice(begin, length)`
+// gives the bytes of the text that the query ran on.
+template <class Slice>
+bool satisfies(const QueryData& data, const TSQueryMatch& match, const Slice& slice,
                pcre2_match_data* scratch) {
     for (const TextPredicate& predicate : data.predicates[match.pattern_index]) {
         if (predicate.kind == TextPredicate::Kind::never) {
@@ -321,7 +350,7 @@ bool satisfies(const QueryData& data, const TSQueryMatch& match, const Text& tex
                 continue;
             }
             const std::size_t begin = ts_node_start_byte(capture.node);
-            const std::string subject = text.slice(begin, ts_node_end_byte(capture.node) - begin);
+            const std::string subject = slice(begin, ts_node_end_byte(capture.node) - begin);
             const bool holds = predicate.kind == TextPredicate::Kind::text
                                    ? subject == predicate.text
                                    : pcre2_match(predicate.regex.get(),
@@ -337,10 +366,179 @@ bool satisfies(const QueryData& data, const TSQueryMatch& match, const Text& tex
 
 constexpr std::size_t no_line_limit = std::numeric_limits<std::size_t>::max();
 
-// The spans of `line`, from the query run on its byte range. A line of more than `max_units`
+// The inline content of a block-structured language such as Markdown: each `inline` node of the
+// block tree is parsed on its own, with the inline grammar, as the text that is left of the node
+// when the named nodes inside it (the `>` of a block quote on each line) are taken out. The text is
+// parsed apart from the document, so that the tree does not depend on where the node is, and one
+// tree serves every node with the same text.
+struct InlineTree {
+    std::unique_ptr<TSTree, TreeDeleter> tree;
+    std::string text;
+};
+
+// Where a stretch of the text of an inline tree is in the document.
+struct InlinePiece {
+    std::size_t text_offset = 0;
+    std::size_t doc_offset = 0;
+    std::size_t length = 0;
+};
+
+struct InlineNode {
+    // The range of the node of the block tree, in the document.
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    std::vector<InlinePiece> pieces;
+    std::shared_ptr<const InlineTree> parsed;
+
+    // The offset in the text of the tree of the first byte at or after `doc`, and of the end of
+    // what is before `doc`.
+    std::size_t text_begin(std::size_t doc) const {
+        for (const InlinePiece& piece : pieces) {
+            if (doc < piece.doc_offset + piece.length) {
+                return piece.text_offset + (doc > piece.doc_offset ? doc - piece.doc_offset : 0);
+            }
+        }
+        return parsed->text.size();
+    }
+    std::size_t text_end(std::size_t doc) const {
+        for (auto piece = pieces.rbegin(); piece != pieces.rend(); ++piece) {
+            if (doc > piece->doc_offset) {
+                return piece->text_offset + std::min(piece->length, doc - piece->doc_offset);
+            }
+        }
+        return 0;
+    }
+    // The offset in the document of the byte at `text` of the tree, and of the end of the byte
+    // before it.
+    std::size_t doc_begin(std::size_t text) const {
+        for (auto piece = pieces.rbegin(); piece != pieces.rend(); ++piece) {
+            if (text >= piece->text_offset) {
+                return piece->doc_offset + std::min(text - piece->text_offset, piece->length);
+            }
+        }
+        return begin;
+    }
+    std::size_t doc_end(std::size_t text) const {
+        return text == 0 ? doc_begin(0) : doc_begin(text - 1) + 1;
+    }
+};
+
+using InlineLayer = std::vector<InlineNode>;
+using InlineCache = std::unordered_map<std::string, std::shared_ptr<const InlineTree>>;
+
+const char* read_string(void* payload, std::uint32_t byte, TSPoint, std::uint32_t* bytes_read) {
+    const auto& text = *static_cast<const std::string*>(payload);
+    *bytes_read = byte < text.size() ? static_cast<std::uint32_t>(text.size() - byte) : 0;
+    return text.data() + std::min<std::size_t>(byte, text.size());
+}
+
+struct InlineBuild {
+    std::shared_ptr<const InlineLayer> layer;
+    InlineCache cache;
+    // The document ranges of the nodes whose text was not parsed before.
+    std::vector<std::pair<std::size_t, std::size_t>> fresh;
+};
+
+// Finds the inline nodes of the block tree and parses those whose text `known` does not have.
+// Fails when the parser is cancelled.
+std::expected<InlineBuild, Error> build_inline_layer(const Text& text, const TSTree& block_tree,
+                                                     TSParser& parser, std::atomic<bool>& cancel,
+                                                     const InlineCache& known) {
+    InlineBuild build;
+    auto layer = std::make_shared<InlineLayer>();
+
+    const auto add = [&](TSNode node) -> bool {
+        InlineNode inline_node;
+        inline_node.begin = ts_node_start_byte(node);
+        inline_node.end = ts_node_end_byte(node);
+        std::string content;
+        std::size_t position = inline_node.begin;
+        const auto piece = [&](std::size_t from, std::size_t to) {
+            if (from < to) {
+                inline_node.pieces.push_back({content.size(), from, to - from});
+                content += text.slice(from, to - from);
+            }
+        };
+        for (std::uint32_t i = 0; i < ts_node_child_count(node); ++i) {
+            const TSNode child = ts_node_child(node, i);
+            if (!ts_node_is_named(child)) {
+                continue;
+            }
+            piece(position, ts_node_start_byte(child));
+            position = std::max<std::size_t>(position, ts_node_end_byte(child));
+        }
+        piece(position, inline_node.end);
+        if (content.empty()) {
+            return true;
+        }
+
+        if (const auto found = known.find(content); found != known.end()) {
+            inline_node.parsed = found->second;
+        } else if (const auto again = build.cache.find(content); again != build.cache.end()) {
+            inline_node.parsed = again->second;
+        } else {
+            if (cancel.load()) {
+                return false;
+            }
+            auto parsed = std::make_shared<InlineTree>();
+            parsed->text = std::move(content);
+            const TSInput input{&parsed->text, read_string, TSInputEncodingUTF8, nullptr};
+            parsed->tree.reset(parse(parser, nullptr, input, cancel));
+            if (!parsed->tree) {
+                return false;
+            }
+            build.fresh.emplace_back(inline_node.begin, inline_node.end);
+            inline_node.parsed = std::move(parsed);
+            build.cache.emplace(inline_node.parsed->text, inline_node.parsed);
+            layer->push_back(std::move(inline_node));
+            return true;
+        }
+        build.cache.emplace(inline_node.parsed->text, inline_node.parsed);
+        layer->push_back(std::move(inline_node));
+        return true;
+    };
+
+    TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(&block_tree));
+    bool done = false;
+    bool failed = false;
+    while (!done && !failed) {
+        const TSNode node = ts_tree_cursor_current_node(&cursor);
+        const std::string_view type = ts_node_type(node);
+        const bool inline_content = type == "inline" || type == "pipe_table_cell";
+        if (inline_content) {
+            failed = !add(node);
+        }
+        if (!inline_content && ts_tree_cursor_goto_first_child(&cursor)) {
+            continue;
+        }
+        while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                done = true;
+                break;
+            }
+        }
+    }
+    ts_tree_cursor_delete(&cursor);
+    if (failed) {
+        return std::unexpected(Error{ErrorCode::environment_unavailable, "cancelled"});
+    }
+    build.layer = std::move(layer);
+    return build;
+}
+
+// What the spans of a line come from: the block tree and, for a language that has one, the inline
+// trees of its inline nodes.
+struct Layers {
+    const TSTree* tree = nullptr;
+    const QueryData* data = nullptr;
+    const InlineLayer* inlines = nullptr;
+    const QueryData* inline_data = nullptr;
+};
+
+// The spans of `line`, from the queries run on its byte range. A line of more than `max_units`
 // UTF-16 units has none.
-std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, const QueryData& data,
-                                      std::size_t line, std::size_t max_units) {
+std::vector<HighlightSpan> line_spans(const Text& text, const Layers& layers, std::size_t line,
+                                      std::size_t max_units) {
     if (line >= text.line_count()) {
         return {};
     }
@@ -354,33 +552,66 @@ std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, cons
         return {};
     }
 
-    std::unique_ptr<TSQueryCursor, CursorDeleter> cursor(ts_query_cursor_new());
-    ts_query_cursor_set_byte_range(cursor.get(), static_cast<std::uint32_t>(line_begin),
-                                   static_cast<std::uint32_t>(line_end));
-    ts_query_cursor_exec(cursor.get(), data.query.get(), ts_tree_root_node(&tree));
-
     std::vector<Capture> captures;
-    TSQueryMatch match;
-    std::uint32_t index = 0;
     const std::unique_ptr<pcre2_match_data, void (*)(pcre2_match_data*)> scratch(
         pcre2_match_data_create(1, nullptr), pcre2_match_data_free);
-    while (ts_query_cursor_next_capture(cursor.get(), &match, &index)) {
-        if (!data.predicates[match.pattern_index].empty() &&
-            !satisfies(data, match, text, scratch.get())) {
-            ts_query_cursor_remove_match(cursor.get(), match.id);
-            continue;
+
+    // Runs `data`'s query on [begin, end) of `tree`; `slice` gives the text it ran on, and
+    // `to_document` maps the byte range of a captured node to the document.
+    const auto collect = [&](const TSTree& tree, const QueryData& data, std::size_t begin,
+                             std::size_t end, int layer, const auto& slice,
+                             const auto& to_document) {
+        std::unique_ptr<TSQueryCursor, CursorDeleter> cursor(ts_query_cursor_new());
+        ts_query_cursor_set_byte_range(cursor.get(), static_cast<std::uint32_t>(begin),
+                                       static_cast<std::uint32_t>(end));
+        ts_query_cursor_exec(cursor.get(), data.query.get(), ts_tree_root_node(&tree));
+        TSQueryMatch match;
+        std::uint32_t index = 0;
+        while (ts_query_cursor_next_capture(cursor.get(), &match, &index)) {
+            if (!data.predicates[match.pattern_index].empty() &&
+                !satisfies(data, match, slice, scratch.get())) {
+                ts_query_cursor_remove_match(cursor.get(), match.id);
+                continue;
+            }
+            const TSQueryCapture& capture = match.captures[index];
+            const std::string_view scope = data.capture_scopes[capture.index];
+            if (scope.empty()) {
+                continue;
+            }
+            const auto [node_begin, node_end] =
+                to_document(ts_node_start_byte(capture.node), ts_node_end_byte(capture.node));
+            const std::size_t clipped_begin = std::max(node_begin, line_begin);
+            const std::size_t clipped_end = std::min(node_end, line_end);
+            if (clipped_begin < clipped_end) {
+                captures.push_back({clipped_begin - line_begin, clipped_end - line_begin,
+                                    match.pattern_index, scope, data.capture_weak[capture.index],
+                                    layer});
+            }
         }
-        const TSQueryCapture& capture = match.captures[index];
-        const std::string_view scope = data.capture_scopes[capture.index];
-        if (scope.empty()) {
-            continue;
-        }
-        const std::size_t begin =
-            std::max<std::size_t>(ts_node_start_byte(capture.node), line_begin);
-        const std::size_t end = std::min<std::size_t>(ts_node_end_byte(capture.node), line_end);
-        if (begin < end) {
-            captures.push_back({begin - line_begin, end - line_begin, match.pattern_index, scope,
-                                data.capture_weak[capture.index]});
+    };
+
+    collect(
+        *layers.tree, *layers.data, line_begin, line_end, 1,
+        [&](std::size_t begin, std::size_t length) { return text.slice(begin, length); },
+        [](std::size_t begin, std::size_t end) { return std::pair(begin, end); });
+
+    if (layers.inlines) {
+        const auto first = std::ranges::lower_bound(
+            *layers.inlines, line_begin, {}, [](const InlineNode& node) { return node.end; });
+        for (auto node = first; node != layers.inlines->end() && node->begin < line_end; ++node) {
+            const std::size_t begin = node->text_begin(std::max(line_begin, node->begin));
+            const std::size_t end = node->text_end(std::min(line_end, node->end));
+            if (begin >= end) {
+                continue;
+            }
+            collect(
+                *node->parsed->tree, *layers.inline_data, begin, end, 0,
+                [&](std::size_t from, std::size_t length) {
+                    return node->parsed->text.substr(from, length);
+                },
+                [&](std::size_t from, std::size_t to) {
+                    return std::pair(node->doc_begin(from), node->doc_end(to));
+                });
         }
     }
 
@@ -400,7 +631,12 @@ std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, cons
     std::vector<HighlightSpan> spans;
     for (const Capture& capture : flatten(std::move(captures))) {
         const std::size_t begin = column_of(capture.begin);
-        spans.push_back({begin, column_of(capture.end), capture.scope});
+        const std::size_t end = column_of(capture.end);
+        if (!spans.empty() && spans.back().end == begin && spans.back().scope == capture.scope) {
+            spans.back().end = end;
+        } else {
+            spans.push_back({begin, end, capture.scope});
+        }
     }
     return spans;
 }
@@ -411,8 +647,11 @@ std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, cons
 class FrozenHighlighter final : public Highlighter {
 public:
     FrozenHighlighter(Text text, std::unique_ptr<TSTree, TreeDeleter> tree,
-                      std::shared_ptr<const QueryData> data, std::string_view root_scope)
+                      std::shared_ptr<const QueryData> data,
+                      std::shared_ptr<const InlineLayer> inlines,
+                      std::shared_ptr<const QueryData> inline_data, std::string_view root_scope)
         : text_(std::move(text)), tree_(std::move(tree)), data_(std::move(data)),
+          inlines_(std::move(inlines)), inline_data_(std::move(inline_data)),
           root_scope_(root_scope) {}
 
     std::vector<HighlightSpan> spans(std::size_t line) const override {
@@ -420,8 +659,8 @@ public:
         if (found != cache_.end()) {
             return found->second;
         }
-        return cache_
-            .emplace(line, line_spans(text_, *tree_, *data_, line, max_highlighted_line_units))
+        const Layers layers{tree_.get(), data_.get(), inlines_.get(), inline_data_.get()};
+        return cache_.emplace(line, line_spans(text_, layers, line, max_highlighted_line_units))
             .first->second;
     }
     std::string_view root_scope() const override {
@@ -435,6 +674,8 @@ private:
     Text text_;
     std::unique_ptr<TSTree, TreeDeleter> tree_;
     std::shared_ptr<const QueryData> data_;
+    std::shared_ptr<const InlineLayer> inlines_;
+    std::shared_ptr<const QueryData> inline_data_;
     std::string_view root_scope_;
     mutable std::unordered_map<std::size_t, std::vector<HighlightSpan>> cache_;
 };
@@ -516,6 +757,13 @@ struct TreeSitterHighlighter::Impl {
     std::unique_ptr<TSParser, ParserDeleter> parser;
     std::unique_ptr<TSTree, TreeDeleter> tree;
     std::shared_ptr<const QueryData> data;
+    // For a language with inline content: the parser and the query of the inline grammar, the
+    // inline nodes of the tree with their trees, and the trees by text, which the next parse
+    // finds the unchanged ones in.
+    std::unique_ptr<TSParser, ParserDeleter> inline_parser;
+    std::shared_ptr<const QueryData> inline_data;
+    std::shared_ptr<const InlineLayer> inlines;
+    InlineCache inline_cache;
     // The parser polls it while it parses and stops when it is set; a `std::stop_callback` sets it
     // from the thread that asks for the stop.
     std::atomic<bool> cancel{false};
@@ -576,7 +824,42 @@ TreeSitterHighlighter::create_with_query(std::string_view language_id, std::stri
                                      impl->cancel.load() ? "cancelled" : "parsing failed"});
     }
     impl->cache.resize(impl->text.line_count());
-    return std::unique_ptr<TreeSitterHighlighter>(new TreeSitterHighlighter(std::move(impl)));
+    if (grammar->inline_grammar) {
+        impl->inline_parser.reset(ts_parser_new());
+        if (!ts_parser_set_language(impl->inline_parser.get(),
+                                    grammar->inline_grammar->language())) {
+            return std::unexpected(Error{ErrorCode::environment_unavailable,
+                                         "the inline grammar of " + std::string(language_id) +
+                                             " does not fit the tree-sitter runtime"});
+        }
+        auto inline_data = query_data_for(*grammar->inline_grammar);
+        if (!inline_data) {
+            return std::unexpected(inline_data.error());
+        }
+        impl->inline_data = std::move(*inline_data);
+    }
+    auto highlighter =
+        std::unique_ptr<TreeSitterHighlighter>(new TreeSitterHighlighter(std::move(impl)));
+    if (auto built = highlighter->rebuild_inlines(); !built) {
+        return std::unexpected(built.error());
+    }
+    return highlighter;
+}
+
+std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error>
+TreeSitterHighlighter::rebuild_inlines() {
+    Impl& impl = *impl_;
+    if (!impl.inline_parser) {
+        return {};
+    }
+    auto build = build_inline_layer(impl.text, *impl.tree, *impl.inline_parser, impl.cancel,
+                                    impl.inline_cache);
+    if (!build) {
+        return std::unexpected(build.error());
+    }
+    impl.inlines = std::move(build->layer);
+    impl.inline_cache = std::move(build->cache);
+    return std::move(build->fresh);
 }
 
 TreeSitterHighlighter::TreeSitterHighlighter(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -590,9 +873,11 @@ std::vector<HighlightSpan> TreeSitterHighlighter::spans(std::size_t line) const 
     auto& slot = impl_->cache[line];
     if (!slot) {
         ++impl_->line_queries;
-        slot = impl_->tree
-                   ? line_spans(impl_->text, *impl_->tree, *impl_->data, line, no_line_limit)
-                   : std::vector<HighlightSpan>{};
+        slot = impl_->tree ? line_spans(impl_->text,
+                                        Layers{impl_->tree.get(), impl_->data.get(),
+                                               impl_->inlines.get(), impl_->inline_data.get()},
+                                        line, no_line_limit)
+                           : std::vector<HighlightSpan>{};
     }
     return *slot;
 }
@@ -603,22 +888,27 @@ std::shared_ptr<const Highlighter> TreeSitterHighlighter::snapshot() const {
         tree.reset(ts_tree_copy(impl_->tree.get()));
     }
     return std::make_shared<FrozenHighlighter>(impl_->text, std::move(tree), impl_->data,
+                                               impl_->inlines, impl_->inline_data,
                                                impl_->grammar->root_scope);
 }
 
 std::vector<std::string> TreeSitterHighlighter::unmapped_captures(std::string_view language_id) {
-    const Grammar* grammar = find_grammar(language_id);
-    const auto data = grammar ? query_data_for(*grammar) : std::unexpected(Error{});
     std::vector<std::string> names;
-    if (!data) {
-        return names;
-    }
-    const TSQuery& query = *(*data)->query;
-    for (std::uint32_t i = 0; i < (*data)->capture_scopes.size(); ++i) {
-        if ((*data)->capture_scopes[i].empty()) {
-            std::uint32_t length = 0;
-            const char* name = ts_query_capture_name_for_id(&query, i, &length);
-            names.emplace_back(name, length);
+    const Grammar* grammar = find_grammar(language_id);
+    for (const Grammar* part : {grammar, grammar ? grammar->inline_grammar : nullptr}) {
+        if (!part) {
+            continue;
+        }
+        const auto data = query_data_for(*part);
+        if (!data) {
+            continue;
+        }
+        for (std::uint32_t i = 0; i < (*data)->capture_scopes.size(); ++i) {
+            if ((*data)->capture_scopes[i].empty()) {
+                std::uint32_t length = 0;
+                const char* name = ts_query_capture_name_for_id((*data)->query.get(), i, &length);
+                names.emplace_back(name, length);
+            }
         }
     }
     return names;
@@ -641,6 +931,12 @@ std::string TreeSitterHighlighter::describe_tree() const {
     std::string out;
     if (impl_->tree) {
         describe(ts_tree_root_node(impl_->tree.get()), out);
+    }
+    if (impl_->inlines) {
+        for (const InlineNode& node : *impl_->inlines) {
+            out += "\n@" + std::to_string(node.begin) + " ";
+            describe(ts_tree_root_node(node.parsed->tree.get()), out);
+        }
     }
     return out;
 }
@@ -750,6 +1046,22 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
         }
     }
     std::free(ranges);
+    if (impl_->inline_parser) {
+        auto fresh = rebuild_inlines();
+        if (!fresh) {
+            impl_->tree.reset();
+            impl_->cache.assign(impl_->text.line_count(), std::nullopt);
+            ++impl_->version;
+            return std::unexpected(fresh.error());
+        }
+        for (const auto& [begin, end] : *fresh) {
+            const std::size_t last =
+                std::min(impl_->text.position_at(end).line, impl_->cache.size() - 1);
+            for (std::size_t row = impl_->text.position_at(begin).line; row <= last; ++row) {
+                impl_->cache[row].reset();
+            }
+        }
+    }
     ++impl_->version;
     return {};
 }

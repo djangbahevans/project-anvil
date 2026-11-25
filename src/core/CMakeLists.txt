@@ -115,7 +115,8 @@ if(ANVIL_HAVE_TREE_SITTER)
 
   target_sources(anvil_core PRIVATE ${ANVIL_TREE_SITTER_SOURCES} tree_sitter_highlighter.cpp
     highlight_worker.cpp)
-  foreach(dir json c cpp javascript typescript/typescript typescript/tsx)
+  foreach(dir json c cpp javascript typescript/typescript typescript/tsx markdown/tree-sitter-markdown
+                  markdown/tree-sitter-markdown-inline)
     anvil_add_tree_sitter_parser("${dir}")
   endforeach()
 
@@ -130,6 +131,10 @@ if(ANVIL_HAVE_TREE_SITTER)
   anvil_add_highlights_query(typescriptreact OVERLAYS typescript javascript javascript-jsx
     UPSTREAM typescript/queries/highlights.scm javascript/queries/highlights-jsx.scm
              javascript/queries/highlights.scm)
+  anvil_add_highlights_query(markdown OVERLAYS markdown
+    UPSTREAM markdown/tree-sitter-markdown/queries/highlights.scm)
+  anvil_add_highlights_query(markdown_inline OVERLAYS markdown-inline
+    UPSTREAM markdown/tree-sitter-markdown-inline/queries/highlights.scm)
   target_include_directories(anvil_core PRIVATE "${ANVIL_TREE_SITTER_RUNTIME}/include")
   target_compile_definitions(anvil_core PUBLIC ANVIL_TREE_SITTER)
 endif()

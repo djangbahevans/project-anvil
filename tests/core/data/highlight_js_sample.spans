@@ -38,9 +38,7 @@
 6 20-22 keyword.operator.expression.js
 6 23-27 variable.other.readwrite.js
 6 28-33 entity.name.function.js
-6 34-35 string.regexp.js
-6 35-40 string.regexp.js
-6 40-41 string.regexp.js
+6 34-41 string.regexp.js
 7 6-8 keyword.control.js
 7 10-14 variable.other.readwrite.js
 7 15-18 keyword.operator.js

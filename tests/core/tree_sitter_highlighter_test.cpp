@@ -186,6 +186,14 @@ TEST(TreeSitterHighlighter, TheTsxSampleMatchesTheGoldenFile) {
     expect_well_formed(*highlighter, text);
 }
 
+TEST(TreeSitterHighlighter, TheMarkdownSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_markdown_sample.md"));
+    const auto highlighter = highlighter_for("markdown", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_markdown_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
 TEST(TreeSitterHighlighter, TheCppSampleMatchesTheGoldenFile) {
     const Text text = text_of(read_file("highlight_cpp_sample.cpp"));
     const auto highlighter = highlighter_for("cpp", text);
@@ -209,6 +217,9 @@ TEST(TreeSitterHighlighter, TheCapturesWithoutAScopeAreTheOnesTheTablesLeaveOut)
          {"javascript", "javascriptreact", "typescript", "typescriptreact"}) {
         EXPECT_EQ(unmapped(language), javascript) << language;
     }
+    const std::vector<std::string> markdown = {"none", "punctuation.delimiter",
+                                               "punctuation.delimiter", "punctuation.special"};
+    EXPECT_EQ(unmapped("markdown"), markdown);
     EXPECT_TRUE(unmapped("python").empty());
 }
 
@@ -601,6 +612,52 @@ TEST(TreeSitterHighlighter, EditedTypescriptHighlightingEqualsAFreshParseOfTheNe
                                              script_fragments);
     expect_edits_to_agree_with_a_fresh_parse("typescriptreact", "highlight_tsx_sample.tsx", 24,
                                              script_fragments);
+}
+
+namespace {
+
+const char* const markdown_fragments[] = {"",
+                                          "\n",
+                                          "\n\n",
+                                          "# ",
+                                          "## ",
+                                          "> ",
+                                          "- ",
+                                          "1. ",
+                                          "* ",
+                                          "`",
+                                          "```",
+                                          "~~",
+                                          "**",
+                                          "*",
+                                          "_",
+                                          "[",
+                                          "]",
+                                          "(",
+                                          ")",
+                                          "![",
+                                          "<",
+                                          ">",
+                                          "|",
+                                          "---",
+                                          "===",
+                                          "    ",
+                                          "\\",
+                                          "text",
+                                          " ",
+                                          "caf\xC3\xA9",
+                                          "\xF0\x9F\x98\x80",
+                                          "http://x.y",
+                                          "[a]: b",
+                                          "  ",
+                                          "\t",
+                                          "***"};
+
+}
+
+TEST(TreeSitterHighlighter, EditedMarkdownHighlightingEqualsAFreshParseOfTheNewText) {
+    expect_edits_to_agree_with_a_fresh_parse("markdown", "highlight_markdown_sample.md", 31,
+                                             markdown_fragments);
 }
 
 TEST(TreeSitterHighlighter, ADocumentChangeOfSeveralEditsIsFollowed) {

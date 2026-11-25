@@ -15,6 +15,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace anvil::core {
@@ -93,6 +94,10 @@ public:
 private:
     struct Impl;
     explicit TreeSitterHighlighter(std::unique_ptr<Impl> impl);
+
+    // Parses the inline nodes of the tree again where their text is new, and returns the ranges
+    // of the document of those. Nothing for a language without inline content.
+    std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error> rebuild_inlines();
 
     std::unique_ptr<Impl> impl_;
 };
