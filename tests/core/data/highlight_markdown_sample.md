@@ -9,6 +9,11 @@ A paragraph with **bold**, _italic_, a [link](https://example.com "title"), ![im
 > A quote with `code`
 > continued **here**
 
+> hard\
+> break
+
+## *Whole*
+
 - item one
 - item two
   1. nested
