@@ -132,6 +132,9 @@ private:
 
 MainWindow::MainWindow(Options options, QWidget* parent)
     : QMainWindow(parent), options_(std::move(options)), colors_(palette()), bridge_(this) {
+    about_versions_ =
+        about_versions(options_.extension_host ? std::optional(options_.extension_host->vscode_dir)
+                                               : std::nullopt);
     resize(1000, 700);
     palette_ = new QuickPick(this, colors_);
     palette_->set_ignored_prefix(">");
@@ -1029,6 +1032,7 @@ void MainWindow::register_commands() {
         [this] { find_bar()->find_previous(); });
     add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
     add("workbench.action.newWindow", tr("New Window"), [this] { open_new_window(); });
+    add("workbench.action.showAboutDialog", tr("About"), [this] { show_about(); });
     add("workbench.action.openDocumentationUrl", tr("Documentation"),
         [this] { open_project_page(documentation_url); });
     add("workbench.action.openIssueReporter", tr("Report Issue"),
@@ -2162,6 +2166,19 @@ void MainWindow::open_new_window() {
                                       .arg(QString::fromStdString(started.error().message)),
                                   8000);
     }
+}
+
+void MainWindow::show_about() {
+    if (about_dialog_) {
+        about_dialog_->raise();
+        about_dialog_->activateWindow();
+        return;
+    }
+    auto* dialog = new QMessageBox(QMessageBox::Information, tr("About"),
+                                   about_text(about_versions_), QMessageBox::Ok, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    about_dialog_ = dialog;
+    dialog->open();
 }
 
 void MainWindow::open_project_page(std::string_view address) {

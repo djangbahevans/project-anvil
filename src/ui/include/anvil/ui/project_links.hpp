@@ -4,7 +4,8 @@
 
 namespace anvil::ui {
 
-// The pages of the project that the Help menu opens in the system's browser.
+// The address of the project, and the pages of it that the Help menu opens in the system's browser.
+inline constexpr std::string_view project_url = "https://github.com/djangbahevans/project-anvil";
 inline constexpr std::string_view documentation_url =
     "https://github.com/djangbahevans/project-anvil#readme";
 inline constexpr std::string_view new_issue_url =

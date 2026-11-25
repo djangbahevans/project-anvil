@@ -138,6 +138,7 @@ gtest_discover_tests(anvil_exthost_integration_tests)
 if(TARGET anvil_ui)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   add_executable(anvil_ui_tests
+    ui/about_test.cpp
     ui/codicons_test.cpp
     ui/command_registry_test.cpp
     ui/default_keybindings_test.cpp
@@ -169,6 +170,7 @@ if(TARGET anvil_ui)
     PRIVATE anvil::ui anvil::platform Qt6::Test nlohmann_json::nlohmann_json GTest::gtest anvil_compile_options)
   target_compile_definitions(anvil_ui_tests PRIVATE
     ANVIL_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/data"
+    ANVIL_CMAKELISTS="${CMAKE_SOURCE_DIR}/CMakeLists.txt"
     ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
     ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
     ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
