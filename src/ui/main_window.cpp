@@ -6,6 +6,7 @@
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/platform/file_system.hpp"
 #include "anvil/ui/codicons.hpp"
 #include "anvil/ui/default_keybindings.hpp"
 #include "anvil/ui/keybindings_reference.hpp"
@@ -360,6 +361,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             }
         };
         callbacks.saved = [this](const core::Uri& uri) { update_document(uri); };
+        callbacks.renamed = [this](const core::Uri& from, const core::Uri& to) {
+            document_renamed(from, to);
+        };
+        callbacks.deleted = [this](const core::Uri& uri) { document_deleted(uri); };
         callbacks.show_requested = [this](const core::Uri& uri) {
             if (auto document = bridge_.find(uri)) {
                 show_document(uri, std::move(document));
@@ -1905,7 +1910,13 @@ std::shared_ptr<core::Document> MainWindow::file_document(const std::filesystem:
 bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path,
                                 bool automatic) {
     const std::shared_ptr<core::Document> document = documents_.at(uri);
-    if (auto written = platform::write_file(path, document->to_file_bytes()); !written) {
+    // The directory is made again for a document whose file was deleted together with it.
+    auto written = path.has_parent_path() ? platform::make_directory(path.parent_path())
+                                          : std::expected<void, Error>();
+    if (written) {
+        written = platform::write_file(path, document->to_file_bytes());
+    }
+    if (!written) {
         const QString reason = QString::fromStdString(written.error().message);
         if (automatic) {
             status_bar_->show_message(tr("Auto save failed: %1").arg(reason), 5000);
@@ -2125,27 +2136,61 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
         return false;
     }
     if (!(uri == new_uri)) {
-        // The document keeps its text and history; extensions see it under its new name.
-        std::optional<std::string> chosen;
-        if (const auto found = chosen_languages_.find(uri); found != chosen_languages_.end()) {
-            chosen = found->second;
-            chosen_languages_.erase(found);
-            chosen_languages_.emplace(new_uri, *chosen);
-        }
-        document_languages_.erase(uri);
-        auto node = documents_.extract(uri);
-        const std::shared_ptr<core::Document> document = node.mapped();
-        node.key() = new_uri;
-        documents_.insert(std::move(node));
-        highlighting_->rename(uri, new_uri);
-        bridge_.remove_document(uri);
-        bridge_.add_document(new_uri, document, chosen);
-        history_.replace_uri(uri, new_uri);
-        layout_.replace_document(uri, new_uri);
+        rekey_document(uri, new_uri, false);
     }
     update_document(new_uri);
     area_->refresh_highlighters();
     return true;
+}
+
+void MainWindow::rekey_document(const core::Uri& uri, const core::Uri& new_uri,
+                                bool extensions_know) {
+    // The document keeps its text and history; extensions see it under its new name.
+    std::optional<std::string> chosen;
+    if (const auto found = chosen_languages_.find(uri); found != chosen_languages_.end()) {
+        chosen = found->second;
+        chosen_languages_.erase(found);
+        chosen_languages_.emplace(new_uri, *chosen);
+    }
+    document_languages_.erase(uri);
+    auto node = documents_.extract(uri);
+    const std::shared_ptr<core::Document> document = node.mapped();
+    node.key() = new_uri;
+    documents_.insert(std::move(node));
+    highlighting_->rename(uri, new_uri);
+    if (!extensions_know) {
+        bridge_.remove_document(uri);
+        bridge_.add_document(new_uri, document, chosen);
+    } else if (chosen) {
+        bridge_.language_changed(new_uri, *chosen);
+    }
+    history_.replace_uri(uri, new_uri);
+    layout_.replace_document(uri, new_uri);
+}
+
+void MainWindow::document_renamed(const core::Uri& uri, const core::Uri& new_uri) {
+    if (!documents_.contains(uri) || documents_.contains(new_uri)) {
+        return;
+    }
+    rekey_document(uri, new_uri, true);
+    update_document(new_uri);
+    area_->refresh_highlighters();
+}
+
+void MainWindow::document_deleted(const core::Uri& uri) {
+    if (!documents_.contains(uri)) {
+        return;
+    }
+    auto locations = layout_.locations(uri);
+    if (!locations.empty() && documents_.size() == 1) {
+        add_untitled_document(locations.front().group);
+    }
+    for (locations = layout_.locations(uri); !locations.empty();
+         locations = layout_.locations(uri)) {
+        layout_.close_tab(locations.front().group, locations.front().index);
+    }
+    forget_document_language(uri);
+    documents_.erase(uri);
 }
 
 void MainWindow::save_as_dialog() {

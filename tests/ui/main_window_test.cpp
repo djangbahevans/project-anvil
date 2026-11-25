@@ -157,6 +157,35 @@ protected:
         return value ? json::parse(*value) : json(nullptr);
     }
 
+    // The argument of `anvil.docs.fileEdit`: a list of steps, each with an `op`, a `path` and the
+    // other fields given.
+    static json file_edit(std::initializer_list<json> steps) {
+        json list = json::array();
+        for (const json& step : steps) {
+            list.push_back(step);
+        }
+        return json::array({list});
+    }
+    static json step(const char* op, const std::filesystem::path& path,
+                     const std::filesystem::path& to = {}, const char* text = nullptr) {
+        json result = json::object();
+        result["op"] = op;
+        result["path"] = path.string();
+        if (!to.empty()) {
+            result["to"] = to.string();
+        }
+        if (text != nullptr) {
+            result["text"] = text;
+        }
+        return result;
+    }
+
+    // Whether the extension host has the document, as `vscode.workspace.textDocuments` tells.
+    bool extension_has_document(const core::Uri& uri) {
+        const json open = run("anvil.docs.openDocuments");
+        return std::ranges::find(open, json(uri.to_string())) != open.end();
+    }
+
     QString label_text(const QString& fragment) const {
         const StatusBar& bar = window_->status_bar();
         for (const auto side : {StatusBarSide::left, StatusBarSide::right}) {
@@ -1477,6 +1506,155 @@ TEST_F(MainWindowTest, ExtensionsEditingAnotherDocumentUpdateItsTab) {
     ASSERT_TRUE(run("anvil.docs.workspaceEdit", json::array({a.string()})).get<bool>());
     ASSERT_TRUE(wait_until([&] { return window_->tab_strip()->tab(1).dirty; }));
     EXPECT_EQ(window_->tab_strip()->current_index(), 2);
+}
+
+TEST_F(MainWindowTest, ARenamedFileKeepsItsTabItsChangesAndItsHistory) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    const auto b = scratch_ / "renamed" / "b.txt";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+    ASSERT_TRUE(window_->tab_strip()->tab(1).dirty);
+
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({step("rename", a, b)})).get<bool>());
+    ASSERT_TRUE(wait_until([&] { return window_->tab_strip()->tab(1).title == "b.txt"; }));
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+    EXPECT_EQ(window_->view()->document()->text().to_string(), "!A");
+    EXPECT_FALSE(std::filesystem::exists(a));
+    EXPECT_EQ(*platform::read_file(b), "A");
+
+    const json active = run("anvil.docs.active");
+    EXPECT_EQ(active["uri"], core::Uri::file(b).to_string());
+    EXPECT_EQ(active["text"], "!A");
+    EXPECT_TRUE(extension_has_document(core::Uri::file(b)));
+    EXPECT_FALSE(extension_has_document(core::Uri::file(a)));
+
+    window_->commands().execute("undo");
+    EXPECT_EQ(window_->view()->document()->text().to_string(), "A");
+    type("?");
+    EXPECT_EQ(run("anvil.docs.active")["text"], "?A");
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(b), "?A");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
+}
+
+TEST_F(MainWindowTest, ARenamedDirectoryRenamesTheTabsOfItsFiles) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    std::filesystem::create_directories(scratch_ / "dir");
+    const auto x = write("dir/x.txt", "X");
+    const auto y = write("dir/y.txt", "Y");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(x.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(y.string())));
+    ASSERT_TRUE(run("anvil.docs.fileEdit",
+                    file_edit({step("rename", scratch_ / "dir", scratch_ / "moved")}))
+                    .get<bool>());
+    ASSERT_TRUE(wait_until([&] { return window_->tab_strip()->tab(2).tooltip.contains("moved"); }));
+    EXPECT_TRUE(window_->tab_strip()->tab(1).tooltip.contains("moved"));
+    EXPECT_EQ(window_->tab_strip()->count(), 3);
+    EXPECT_EQ(window_->view()->document()->text().to_string(), "Y");
+}
+
+TEST_F(MainWindowTest, ADeletedFileClosesItsCleanDocumentInEveryGroup) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    const auto b = write("b.txt", "B");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(b.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    const core::Uri uri = core::Uri::file(a);
+    window_->commands().execute("workbench.action.splitEditor");
+    window_->editor_layout().open(window_->editor_layout().focused(), uri);
+    ASSERT_EQ(window_->editor_layout().locations(uri).size(), 2u);
+
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({step("delete", a)})).get<bool>());
+    ASSERT_TRUE(wait_until([&] { return window_->editor_layout().locations(uri).empty(); }));
+    EXPECT_FALSE(std::filesystem::exists(a));
+    EXPECT_TRUE(extension_has_document(core::Uri::file(b)));
+    EXPECT_FALSE(extension_has_document(uri));
+}
+
+TEST_F(MainWindowTest, DeletingTheOnlyOpenFileLeavesAnUntitledDocument) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(window_->close_document(0));
+    ASSERT_EQ(window_->tab_strip()->count(), 1);
+    ASSERT_EQ(window_->tab_strip()->tab(0).title, "a.txt");
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({step("delete", a)})).get<bool>());
+    ASSERT_TRUE(wait_until([&] { return window_->tab_strip()->tab(0).title != "a.txt"; }));
+    EXPECT_EQ(window_->tab_strip()->count(), 1);
+    EXPECT_TRUE(window_->tab_strip()->tab(0).title.startsWith("Untitled"));
+}
+
+TEST_F(MainWindowTest, ADeletedFileKeepsItsDirtyDocumentOpenAndSavingWritesItAgain) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto a = write("a.txt", "A");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({step("delete", a)})).get<bool>());
+    EXPECT_FALSE(std::filesystem::exists(a));
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "a.txt");
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+    EXPECT_EQ(window_->view()->document()->text().to_string(), "!A");
+    EXPECT_TRUE(extension_has_document(core::Uri::file(a)));
+
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(a), "!A");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
+}
+
+TEST_F(MainWindowTest, SavingADocumentWhoseDirectoryWasDeletedMakesTheDirectoryAgain) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    std::filesystem::create_directories(scratch_ / "dir");
+    const auto x = write("dir/x.txt", "X");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(x.string())));
+    type("!");
+    json options = json::object();
+    options["recursive"] = true;
+    json remove = step("delete", scratch_ / "dir");
+    remove["options"] = options;
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({remove})).get<bool>());
+    ASSERT_FALSE(std::filesystem::exists(scratch_ / "dir"));
+    answer_next_prompt(QMessageBox::Ok);
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_FALSE(prompt_shown_);
+    EXPECT_EQ(platform::read_file(x).value_or("<unreadable>"), "!X");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
+}
+
+TEST_F(MainWindowTest, AFileThatAnExtensionCreatesAndEditsIsADocumentForExtensionsNotATab) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto created = scratch_ / "made" / "new.txt";
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({step("create", created, {}, "abc"),
+                                                      step("insert", created, {}, ">")}))
+                    .get<bool>());
+    EXPECT_EQ(*platform::read_file(created), "abc");
+    const core::Uri uri = core::Uri::file(created);
+    ASSERT_NE(window_->bridge().find(uri), nullptr);
+    EXPECT_EQ(window_->bridge().find(uri)->text().to_string(), ">abc");
+    EXPECT_EQ(window_->tab_strip()->count(), 1);
 }
 
 class TypingCostTest : public MainWindowTest {

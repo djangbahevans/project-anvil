@@ -40,6 +40,11 @@ public:
         std::function<void(const core::Uri&)> show_requested;
         // An extension saved a document.
         std::function<void(const core::Uri&)> saved;
+        // An extension renamed the file of a document, which is now registered under the new URI.
+        std::function<void(const core::Uri& from, const core::Uri& to)> renamed;
+        // An extension deleted the file of a document that had no unsaved changes, which is no
+        // longer registered.
+        std::function<void(const core::Uri&)> deleted;
         // The extension host stopped, with the reason.
         std::function<void(const std::string&)> stopped;
     };

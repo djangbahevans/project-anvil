@@ -449,6 +449,14 @@ private:
     // extension changes the tabs.
     bool save_document(const core::Uri& uri);
     bool save_document_as(const core::Uri& uri, const QString& path);
+    // Makes the document of `uri` the document of `new_uri`, in the tabs, the languages, the
+    // highlighting, the history and, unless `extensions_know`, for extensions.
+    void rekey_document(const core::Uri& uri, const core::Uri& new_uri, bool extensions_know);
+    // An extension renamed the file of a document, or deleted the file of one without unsaved
+    // changes; the extension host has been told. A renamed document keeps its tabs, and a deleted
+    // one is closed in every group without asking.
+    void document_renamed(const core::Uri& uri, const core::Uri& new_uri);
+    void document_deleted(const core::Uri& uri);
     // Writes the document to `path`. A failure is shown in a dialog, or in the status bar when
     // `automatic`, which is for a save that nobody asked for.
     bool write_document(const core::Uri& uri, const std::filesystem::path& path,

@@ -84,6 +84,29 @@ exports.activate = (context) => {
             edit.insert(vscode.Uri.file(path), new vscode.Position(0, 0), '>>');
             return vscode.workspace.applyEdit(edit);
         }),
+        // Applies a WorkspaceEdit made of the given steps: {op: 'create' | 'rename' | 'delete' |
+        // 'insert', path, to?, options?, text?}. `text` is the content of a created file and the
+        // text an insert puts at the start of the file.
+        vscode.commands.registerCommand('anvil.docs.fileEdit', (steps) => {
+            const edit = new vscode.WorkspaceEdit();
+            for (const step of steps) {
+                const uri = vscode.Uri.file(step.path);
+                const options = { ...(step.options || {}) };
+                if (step.op === 'create') {
+                    if (step.text !== undefined) {
+                        options.contents = Buffer.from(step.text);
+                    }
+                    edit.createFile(uri, options);
+                } else if (step.op === 'rename') {
+                    edit.renameFile(uri, vscode.Uri.file(step.to), options);
+                } else if (step.op === 'delete') {
+                    edit.deleteFile(uri, options);
+                } else {
+                    edit.insert(uri, new vscode.Position(0, 0), step.text);
+                }
+            }
+            return vscode.workspace.applyEdit(edit);
+        }),
         vscode.commands.registerCommand('anvil.docs.execute', (id, ...args) =>
             vscode.commands.executeCommand(id, ...args),
         ),
