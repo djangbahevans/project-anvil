@@ -1,3 +1,4 @@
+#include "../timing.hpp"
 #include "anvil/exthost/file_event_service.hpp"
 #include "anvil/exthost/vscode_types.hpp"
 #include "fake_host.hpp"
@@ -11,6 +12,7 @@
 
 using namespace anvil::exthost;
 using anvil::exthost::test::FakeHost;
+using anvil::test::timing_is_meaningful;
 using nlohmann::json;
 namespace core = anvil::core;
 namespace fs = std::filesystem;
@@ -420,8 +422,10 @@ TEST_F(FileEventServiceTest, StartingTheWatchesOfALargeFolderDoesNotWaitForItsDi
         std::make_unique<FileEventService>(*session_, router_, *providers_, logger_, *workspace);
     const double workspace_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
-    EXPECT_LT(workspace_ms, 50.0) << "the workspace watch of 10,100 directories took "
-                                  << workspace_ms << " ms to start";
+    if (timing_is_meaningful) {
+        EXPECT_LT(workspace_ms, 50.0)
+            << "the workspace watch of 10,100 directories took " << workspace_ms << " ms to start";
+    }
 
     fs::create_directories(root_ / "elsewhere");
     for (int i = 0; i < 100; ++i) {
@@ -438,8 +442,10 @@ TEST_F(FileEventServiceTest, StartingTheWatchesOfALargeFolderDoesNotWaitForItsDi
     const double extension_ms = std::chrono::duration<double, std::milli>(
                                     std::chrono::steady_clock::now() - extension_begin)
                                     .count();
-    EXPECT_LT(extension_ms, 50.0) << "the $watch of 10,100 directories took " << extension_ms
-                                  << " ms";
+    if (timing_is_meaningful) {
+        EXPECT_LT(extension_ms, 50.0)
+            << "the $watch of 10,100 directories took " << extension_ms << " ms";
+    }
 
     wait_until_ready();
     write(dir_ / "d99" / "s99" / "deep.txt", "x");

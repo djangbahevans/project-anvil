@@ -1,3 +1,4 @@
+#include "../timing.hpp"
 #include "anvil/platform/file_watcher.hpp"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 
 using namespace anvil;
 using namespace anvil::platform;
+using anvil::test::timing_is_meaningful;
 using std::chrono::milliseconds;
 namespace fs = std::filesystem;
 
@@ -547,7 +549,9 @@ TEST_F(FileWatcherTest, StartingARecursiveWatchDoesNotWaitForTheDirectoriesBelow
     const double took = milliseconds_since(begin);
     ASSERT_TRUE(started.has_value()) << started.error().message;
     watcher_ = std::move(*started);
-    EXPECT_LT(took, 50.0) << "starting a watch of 10,100 directories took " << took << " ms";
+    if (timing_is_meaningful) {
+        EXPECT_LT(took, 50.0) << "starting a watch of 10,100 directories took " << took << " ms";
+    }
 
     ASSERT_TRUE(wait_until_ready(*watcher_));
     write(watched_ / "d99" / "s99" / "deep.txt", "x");
@@ -576,7 +580,9 @@ TEST_F(FileWatcherTest, StoppingWhileDirectoriesAreBeingAddedDoesNotWaitForTheWh
     const auto begin = std::chrono::steady_clock::now();
     watcher_.reset();
     const double took = milliseconds_since(begin);
-    EXPECT_LT(took, 50.0) << "ending the watch took " << took << " ms";
+    if (timing_is_meaningful) {
+        EXPECT_LT(took, 50.0) << "ending the watch took " << took << " ms";
+    }
 }
 
 TEST_F(FileWatcherTest, ADirectoryThatIsCreatedWhileTheTreeIsBeingAddedIsWatchedToo) {

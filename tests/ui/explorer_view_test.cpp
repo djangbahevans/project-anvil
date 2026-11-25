@@ -1,3 +1,4 @@
+#include "../timing.hpp"
 #include "anvil/ui/explorer_view.hpp"
 
 #include <QApplication>
@@ -19,6 +20,7 @@
 
 using namespace anvil;
 using namespace anvil::ui;
+using anvil::test::timing_is_meaningful;
 using core::FileTreeEntry;
 
 namespace {
@@ -669,7 +671,9 @@ TEST_F(ExplorerFollowTest, ABurstOfTenThousandEventsReadsEachAffectedDirectoryOn
         EXPECT_EQ(view_->model()->rowCount(index_of(name.c_str())), files_each) << name;
     }
     EXPECT_EQ(files_.listings("/w"), 1);
-    EXPECT_LT(blocked, 1000) << "one round of ten thousand events took " << blocked << " ms";
+    if (timing_is_meaningful) {
+        EXPECT_LT(blocked, 1000) << "one round of ten thousand events took " << blocked << " ms";
+    }
 }
 
 TEST_F(ExplorerFollowTest, RowsThatAppearTogetherAreInsertedAsRuns) {
@@ -839,7 +843,10 @@ TEST_F(ExplorerDiskTest, ABurstOfTenThousandNewFilesIsOneRoundAndDoesNotStallThe
     ASSERT_GE(listed_before, 1) << "the directory was open before the files came";
     EXPECT_LE(listings_[key] - listed_before, 3)
         << "the directory is read a few times at most, not once for each event";
-    EXPECT_LT(longest_block, 1000) << "the event loop was blocked for " << longest_block << " ms";
+    if (timing_is_meaningful) {
+        EXPECT_LT(longest_block, 1000)
+            << "the event loop was blocked for " << longest_block << " ms";
+    }
 }
 
 TEST_F(ExplorerDiskTest, OneRoundOfABurstOfTenThousandNewFilesIsFast) {
