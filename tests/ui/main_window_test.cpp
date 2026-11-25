@@ -7866,6 +7866,28 @@ TEST_F(HighlightingWindowTest, JavascriptAndTypescriptDocumentsAreHighlightedByT
     EXPECT_EQ(window_->highlighting().worker_count(), 4u);
 }
 
+TEST_F(HighlightingWindowTest, MarkdownDocumentsAreHighlightedInTheBlocksAndInsideThem) {
+    create_window();
+    ASSERT_TRUE(open(write("a.md", "# Title\n\nA *word* and `code`.\n")));
+    ASSERT_NE(shown_highlighter(), nullptr);
+    ASSERT_TRUE(spans_arrive_on(2));
+    EXPECT_EQ(scopes_of_line(0).front(), "markup.heading.markdown");
+    EXPECT_EQ(scopes_of_line(2), (std::vector<std::string>{"markup.italic.markdown",
+                                                           "markup.inline.raw.string.markdown"}));
+}
+
+TEST_F(HighlightingWindowTest, TypingInsideAMarkdownParagraphRecolorsItsSpans) {
+    create_window();
+    ASSERT_TRUE(open(write("a.md", "one *two* three\n")));
+    ASSERT_TRUE(spans_arrive_on(0));
+    ASSERT_EQ(scopes_of_line(0).size(), 1u);
+    insert_into_shown_document(0, "**");
+    ASSERT_TRUE(wait_until([&] {
+        return scopes_of_line(0) == std::vector<std::string>{"markup.italic.markdown"} &&
+               window_->current_document()->text().line(0) == "**one *two* three";
+    }));
+}
+
 TEST_F(HighlightingWindowTest, CAndCppDocumentsAreHighlighted) {
     create_window();
     ASSERT_TRUE(open(write("a.c", "#include <stdio.h>\nint main(void) { return 0; }\n")));
@@ -7891,7 +7913,8 @@ TEST_F(HighlightingWindowTest, TheSamplesAreShownInDarkAndLightModern) {
         window_->resize(900, 700);
         for (const char* sample :
              {"highlight_c_sample.c", "highlight_cpp_sample.cpp", "highlight_js_sample.js",
-              "highlight_jsx_sample.jsx", "highlight_ts_sample.ts", "highlight_tsx_sample.tsx"}) {
+              "highlight_jsx_sample.jsx", "highlight_ts_sample.ts", "highlight_tsx_sample.tsx",
+              "highlight_markdown_sample.md"}) {
             std::ifstream in(std::string(ANVIL_CORE_TEST_DATA_DIR) + "/" + sample,
                              std::ios::binary);
             std::stringstream text;

@@ -15,6 +15,7 @@ SOURCES=(
     "cpp|https://github.com/tree-sitter/tree-sitter-cpp/archive/refs/tags/v0.23.4.tar.gz|7a2c55afe3028f4105f25762ea58cc16537d1f5a1dcd9cca90410b3cd5d46051"
     "javascript|https://github.com/tree-sitter/tree-sitter-javascript/archive/refs/tags/v0.25.0.tar.gz|9712fc283d3dc01d996d20b6392143445d05867a7aad76fdd723824468428b86"
     "typescript|https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/tags/v0.23.2.tar.gz|2c4ce711ae8d1218a3b2f899189298159d672870b5b34dff5d937bed2f3e8983"
+    "markdown|https://github.com/tree-sitter-grammars/tree-sitter-markdown/archive/refs/tags/v0.5.4.tar.gz|481ce2c1cce7b1130bc8455c186052bd0fa461f1ff488666994c6a3da7fca2ac"
 )
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -34,5 +34,7 @@ std::span<const CaptureScope> c_capture_scopes();
 std::span<const CaptureScope> cpp_capture_scopes();
 std::span<const CaptureScope> javascript_capture_scopes();
 std::span<const CaptureScope> typescript_capture_scopes();
+std::span<const CaptureScope> markdown_capture_scopes();
+std::span<const CaptureScope> markdown_inline_capture_scopes();
 
 } // namespace anvil::core

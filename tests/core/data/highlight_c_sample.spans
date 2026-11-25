@@ -14,9 +14,7 @@
 7 15-20 entity.name.type.c
 7 23-26 storage.type.c
 7 27-28 variable.other.member.c
-7 30-38 storage.type.c
-7 38-39 storage.type.c
-7 39-43 storage.type.c
+7 30-43 storage.type.c
 7 44-45 variable.other.member.c
 7 49-56 entity.name.type.c
 8 0-4 storage.type.c
@@ -40,8 +38,7 @@
 14 4-8 entity.name.function.c
 14 9-12 storage.type.c
 14 19-23 storage.type.c
-14 24-25 keyword.operator.c
-14 25-26 keyword.operator.c
+14 24-26 keyword.operator.c
 15 4-19 comment.c
 16 4-7 keyword.control.c
 16 9-12 storage.type.c
