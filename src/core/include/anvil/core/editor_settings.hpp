@@ -107,6 +107,11 @@ struct EditorSettings {
     TabsMode show_tabs = TabsMode::multiple;
     // zenMode.showTabs: what `show_tabs` is while Zen Mode is on
     TabsMode zen_show_tabs = TabsMode::multiple;
+    // editor.comments.insertSpace: a space follows a line comment token and goes inside a block
+    // comment
+    bool comments_insert_space = true;
+    // editor.comments.ignoreEmptyLines: Toggle Line Comment leaves lines with nothing on them alone
+    bool comments_ignore_empty_lines = true;
     // zenMode.fullScreen: turning on Zen Mode also puts the window into full screen
     bool zen_full_screen = true;
     // zenMode.centerLayout: turning on Zen Mode also centers the editor area
