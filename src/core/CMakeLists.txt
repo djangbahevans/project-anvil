@@ -69,17 +69,10 @@ if(ANVIL_HAVE_TREE_SITTER)
     INCLUDE_DIRECTORIES "${ANVIL_TREE_SITTER_RUNTIME}/src;${ANVIL_TREE_SITTER_RUNTIME}/include"
     COMPILE_DEFINITIONS "_POSIX_C_SOURCE=200112L;_DEFAULT_SOURCE;_DARWIN_C_SOURCE")
 
-  # One call per grammar in .deps/tree-sitter/<name>: compiles its parser (and scanner, when it
-  # has one) and embeds its highlights query as `anvil::core::grammar_queries::<name>`. A grammar
-  # that builds on another (`INHERIT c`, for C++) has that one's patterns in its query too.
-  #
-  # The query is made of Anvil's own patterns first, from `queries/<name>.scm` of this directory,
-  # and then the grammar's own `highlights.scm`; in each part the grammar comes before those it
-  # inherits, as the more specific. Where two patterns capture the same node the first one wins,
-  # so Anvil's patterns decide the nodes that they name and C++ can refine what C says.
-  function(anvil_add_tree_sitter_grammar name)
-    cmake_parse_arguments(ARG "" "" "INHERIT" ${ARGN})
-    set(grammar_dir "${ANVIL_TREE_SITTER_DIR}/${name}")
+  # Compiles the parser (and scanner, when there is one) of the grammar in `dir` under
+  # .deps/tree-sitter, the directory that holds `src/parser.c`.
+  function(anvil_add_tree_sitter_parser dir)
+    set(grammar_dir "${ANVIL_TREE_SITTER_DIR}/${dir}")
     set(sources "${grammar_dir}/src/parser.c")
     if(EXISTS "${grammar_dir}/src/scanner.c")
       list(APPEND sources "${grammar_dir}/src/scanner.c")
@@ -87,35 +80,56 @@ if(ANVIL_HAVE_TREE_SITTER)
     set_source_files_properties(${sources} PROPERTIES
       COMPILE_OPTIONS "${ANVIL_THIRD_PARTY_C_OPTIONS}"
       INCLUDE_DIRECTORIES "${grammar_dir}/src")
+    target_sources(anvil_core PRIVATE ${sources})
+  endfunction()
 
+  # Embeds the highlights query of a language as `anvil::core::grammar_queries::<language>`.
+  #   OVERLAYS  the files `queries/<overlay>.scm` of this directory: Anvil's own patterns
+  #   UPSTREAM  `highlights.scm` files of the grammars, as paths under .deps/tree-sitter
+  # The query is the overlays and then the upstream files, each in the order given. Where two
+  # patterns capture the same node the first one wins, so Anvil's patterns decide the nodes that
+  # they name, and a language that builds on another lists its own files before those it takes
+  # from the other, so that it can refine them.
+  function(anvil_add_highlights_query language)
+    cmake_parse_arguments(ARG "" "" "OVERLAYS;UPSTREAM" ${ARGN})
     set(query "")
-    foreach(source ${name} ${ARG_INHERIT})
-      set(overlay "${CMAKE_CURRENT_SOURCE_DIR}/queries/${source}.scm")
-      if(EXISTS "${overlay}")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${overlay}")
-        file(READ "${overlay}" part)
-        string(APPEND query "${part}\n")
-      endif()
+    foreach(overlay ${ARG_OVERLAYS})
+      set(file "${CMAKE_CURRENT_SOURCE_DIR}/queries/${overlay}.scm")
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
+      file(READ "${file}" part)
+      string(APPEND query "${part}\n")
     endforeach()
-    foreach(source ${name} ${ARG_INHERIT})
-      set(upstream "${ANVIL_TREE_SITTER_DIR}/${source}/queries/highlights.scm")
-      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${upstream}")
-      file(READ "${upstream}" part)
+    foreach(upstream ${ARG_UPSTREAM})
+      set(file "${ANVIL_TREE_SITTER_DIR}/${upstream}")
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
+      file(READ "${file}" part)
       string(APPEND query "${part}\n")
     endforeach()
 
     set(ANVIL_HIGHLIGHTS_QUERY "${query}")
-    set(ANVIL_GRAMMAR_NAME "${name}")
-    set(generated "${CMAKE_CURRENT_BINARY_DIR}/grammar_query_${name}.cpp")
+    set(ANVIL_GRAMMAR_NAME "${language}")
+    set(generated "${CMAKE_CURRENT_BINARY_DIR}/grammar_query_${language}.cpp")
     configure_file("${CMAKE_SOURCE_DIR}/cmake/grammar_query.cpp.in" "${generated}" @ONLY)
-
-    target_sources(anvil_core PRIVATE ${sources} "${generated}")
+    target_sources(anvil_core PRIVATE "${generated}")
   endfunction()
 
-  target_sources(anvil_core PRIVATE ${ANVIL_TREE_SITTER_SOURCES} tree_sitter_highlighter.cpp highlight_worker.cpp)
-  anvil_add_tree_sitter_grammar(json)
-  anvil_add_tree_sitter_grammar(c)
-  anvil_add_tree_sitter_grammar(cpp INHERIT c)
+  target_sources(anvil_core PRIVATE ${ANVIL_TREE_SITTER_SOURCES} tree_sitter_highlighter.cpp
+    highlight_worker.cpp)
+  foreach(dir json c cpp javascript typescript/typescript typescript/tsx)
+    anvil_add_tree_sitter_parser("${dir}")
+  endforeach()
+
+  anvil_add_highlights_query(json UPSTREAM json/queries/highlights.scm)
+  anvil_add_highlights_query(c OVERLAYS c UPSTREAM c/queries/highlights.scm)
+  anvil_add_highlights_query(cpp OVERLAYS cpp c
+    UPSTREAM cpp/queries/highlights.scm c/queries/highlights.scm)
+  anvil_add_highlights_query(javascript OVERLAYS javascript javascript-jsx
+    UPSTREAM javascript/queries/highlights.scm javascript/queries/highlights-jsx.scm)
+  anvil_add_highlights_query(typescript OVERLAYS typescript javascript
+    UPSTREAM typescript/queries/highlights.scm javascript/queries/highlights.scm)
+  anvil_add_highlights_query(typescriptreact OVERLAYS typescript javascript javascript-jsx
+    UPSTREAM typescript/queries/highlights.scm javascript/queries/highlights-jsx.scm
+             javascript/queries/highlights.scm)
   target_include_directories(anvil_core PRIVATE "${ANVIL_TREE_SITTER_RUNTIME}/include")
   target_compile_definitions(anvil_core PUBLIC ANVIL_TREE_SITTER)
 endif()

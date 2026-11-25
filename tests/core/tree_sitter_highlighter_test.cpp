@@ -1,6 +1,7 @@
 #include "anvil/core/tree_sitter_highlighter.hpp"
 #include "anvil/core/utf.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -153,6 +154,38 @@ TEST(TreeSitterHighlighter, TheCSampleMatchesTheGoldenFile) {
     expect_well_formed(*highlighter, text);
 }
 
+TEST(TreeSitterHighlighter, TheJsSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_js_sample.js"));
+    const auto highlighter = highlighter_for("javascript", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_js_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
+TEST(TreeSitterHighlighter, TheJsxSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_jsx_sample.jsx"));
+    const auto highlighter = highlighter_for("javascriptreact", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_jsx_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
+TEST(TreeSitterHighlighter, TheTsSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_ts_sample.ts"));
+    const auto highlighter = highlighter_for("typescript", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_ts_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
+TEST(TreeSitterHighlighter, TheTsxSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_tsx_sample.tsx"));
+    const auto highlighter = highlighter_for("typescriptreact", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_tsx_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
 TEST(TreeSitterHighlighter, TheCppSampleMatchesTheGoldenFile) {
     const Text text = text_of(read_file("highlight_cpp_sample.cpp"));
     const auto highlighter = highlighter_for("cpp", text);
@@ -162,11 +195,21 @@ TEST(TreeSitterHighlighter, TheCppSampleMatchesTheGoldenFile) {
 }
 
 TEST(TreeSitterHighlighter, TheCapturesWithoutAScopeAreTheOnesTheTablesLeaveOut) {
-    EXPECT_TRUE(TreeSitterHighlighter::unmapped_captures("json").empty());
-    const std::vector<std::string> c = {"variable", "delimiter"};
-    EXPECT_EQ(TreeSitterHighlighter::unmapped_captures("c"), c);
-    EXPECT_EQ(TreeSitterHighlighter::unmapped_captures("cpp"), c);
-    EXPECT_TRUE(TreeSitterHighlighter::unmapped_captures("python").empty());
+    const auto unmapped = [](const char* language) {
+        auto names = TreeSitterHighlighter::unmapped_captures(language);
+        std::ranges::sort(names);
+        return names;
+    };
+    EXPECT_TRUE(unmapped("json").empty());
+    const std::vector<std::string> c = {"delimiter", "variable"};
+    EXPECT_EQ(unmapped("c"), c);
+    EXPECT_EQ(unmapped("cpp"), c);
+    const std::vector<std::string> javascript = {"punctuation.bracket", "punctuation.delimiter"};
+    for (const char* language :
+         {"javascript", "javascriptreact", "typescript", "typescriptreact"}) {
+        EXPECT_EQ(unmapped(language), javascript) << language;
+    }
+    EXPECT_TRUE(unmapped("python").empty());
 }
 
 TEST(TreeSitterHighlighter, AnIdentifierIsAConstantOnlyWhenItsTextMatchesThePredicate) {
@@ -211,12 +254,28 @@ TEST(TreeSitterHighlighter, ANotMatchPredicateKeepsTheNodesWhoseTextDoesNotMatch
               (std::vector<std::string>{"\"banana\""}));
 }
 
+TEST(TreeSitterHighlighter, AnEqPredicateComparesTheTextOfTheCapture) {
+    EXPECT_EQ(strings_matching(R"q((#eq? @string "\"banana\""))q"),
+              (std::vector<std::string>{"\"banana\""}));
+    EXPECT_EQ(strings_matching(R"q((#not-eq? @string "\"banana\""))q"),
+              (std::vector<std::string>{"\"apple\"", "\"avocado\""}));
+}
+
+TEST(TreeSitterHighlighter, TheLocalPredicatesAnswerThatNothingIsLocal) {
+    EXPECT_EQ(strings_matching(R"q((#is-not? local))q").size(), 3u);
+    EXPECT_TRUE(strings_matching(R"q((#is? local))q").empty());
+    const auto refused = TreeSitterHighlighter::create_with_query(
+        "json", R"q(((string) @s (#is-not? global)))q", Text{});
+    EXPECT_FALSE(refused.has_value());
+}
+
 TEST(TreeSitterHighlighter, AQueryWithAPredicateThatIsNotUnderstoodIsRefused) {
     const auto refused = TreeSitterHighlighter::create_with_query(
-        "json", R"q(((string) @s (#eq? @s "\"a\"")))q", Text{});
+        "json", R"q(((string) @s (#any-of? @s "\"a\"" "\"b\"")))q", Text{});
     ASSERT_FALSE(refused.has_value());
     EXPECT_EQ(refused.error().code, ErrorCode::environment_unavailable);
-    EXPECT_NE(refused.error().message.find("#eq?"), std::string::npos) << refused.error().message;
+    EXPECT_NE(refused.error().message.find("#any-of?"), std::string::npos)
+        << refused.error().message;
 }
 
 TEST(TreeSitterHighlighter, AQueryThatDoesNotCompileSaysWhatIsWrongAndWhere) {
@@ -227,6 +286,15 @@ TEST(TreeSitterHighlighter, AQueryThatDoesNotCompileSaysWhatIsWrongAndWhere) {
         << refused.error().message;
     EXPECT_NE(refused.error().message.find("nonsense"), std::string::npos)
         << refused.error().message;
+}
+
+TEST(TreeSitterHighlighter, EveryLanguageWithAGrammarCanBeMade) {
+    for (const char* language :
+         {"json", "c", "cpp", "javascript", "javascriptreact", "typescript", "typescriptreact"}) {
+        EXPECT_TRUE(TreeSitterHighlighter::supports(language)) << language;
+        const auto made = TreeSitterHighlighter::create(language, Text{});
+        EXPECT_TRUE(made.has_value()) << language << ": " << (made ? "" : made.error().message);
+    }
 }
 
 TEST(TreeSitterHighlighter, TheRootScopeIsTheLanguages) {
@@ -434,8 +502,60 @@ const char* const c_fragments[] = {"",     "{",         "}",           "(",
 
 // Random edits to a sample document, after each of which an edited highlighter must agree with a
 // fresh one on every line and on the tree.
+const char* const script_fragments[] = {"",
+                                        "{",
+                                        "}",
+                                        "(",
+                                        ")",
+                                        ";",
+                                        "\n",
+                                        "\n\n",
+                                        "\"",
+                                        "'",
+                                        "`",
+                                        "${",
+                                        "/*",
+                                        "*/",
+                                        "//",
+                                        "/",
+                                        "=>",
+                                        "<div>",
+                                        "</div>",
+                                        "<",
+                                        ">",
+                                        "/>",
+                                        "import ",
+                                        "from ",
+                                        "async ",
+                                        "await ",
+                                        "class ",
+                                        "const ",
+                                        "x",
+                                        "X",
+                                        "1",
+                                        "0x",
+                                        ".",
+                                        "?.",
+                                        "...",
+                                        ": number",
+                                        "interface ",
+                                        "type ",
+                                        " as ",
+                                        "<T>",
+                                        "enum ",
+                                        "caf\xC3\xA9",
+                                        "\xF0\x9F\x98\x80",
+                                        "\\",
+                                        "null",
+                                        "this",
+                                        "return ",
+                                        "#priv",
+                                        "@",
+                                        "\\n"};
+
 void expect_edits_to_agree_with_a_fresh_parse(std::string_view language, const char* sample,
-                                              unsigned seed) {
+                                              unsigned seed,
+                                              std::span<const char* const> pieces = c_fragments) {
     std::mt19937 random(seed);
     for (int round = 0; round < 3; ++round) {
         TextBuffer buffer(text_of(read_file(sample)));
@@ -443,7 +563,7 @@ void expect_edits_to_agree_with_a_fresh_parse(std::string_view language, const c
         ASSERT_TRUE(highlighter);
         for (int step = 0; step < 100; ++step) {
             (void)render(*highlighter, buffer.snapshot());
-            const RandomEdit edit = random_edit(random, buffer.snapshot(), c_fragments);
+            const RandomEdit edit = random_edit(random, buffer.snapshot(), pieces);
             const auto change = buffer.replace(edit.start, edit.end, edit.text);
             ASSERT_TRUE(change.has_value());
             ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
@@ -467,6 +587,20 @@ TEST(TreeSitterHighlighter, EditedCHighlightingEqualsAFreshParseOfTheNewText) {
 
 TEST(TreeSitterHighlighter, EditedCppHighlightingEqualsAFreshParseOfTheNewText) {
     expect_edits_to_agree_with_a_fresh_parse("cpp", "highlight_cpp_sample.cpp", 12);
+}
+
+TEST(TreeSitterHighlighter, EditedJavascriptHighlightingEqualsAFreshParseOfTheNewText) {
+    expect_edits_to_agree_with_a_fresh_parse("javascript", "highlight_js_sample.js", 21,
+                                             script_fragments);
+    expect_edits_to_agree_with_a_fresh_parse("javascriptreact", "highlight_jsx_sample.jsx", 22,
+                                             script_fragments);
+}
+
+TEST(TreeSitterHighlighter, EditedTypescriptHighlightingEqualsAFreshParseOfTheNewText) {
+    expect_edits_to_agree_with_a_fresh_parse("typescript", "highlight_ts_sample.ts", 23,
+                                             script_fragments);
+    expect_edits_to_agree_with_a_fresh_parse("typescriptreact", "highlight_tsx_sample.tsx", 24,
+                                             script_fragments);
 }
 
 TEST(TreeSitterHighlighter, ADocumentChangeOfSeveralEditsIsFollowed) {
