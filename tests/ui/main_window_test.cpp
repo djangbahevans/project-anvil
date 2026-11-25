@@ -2716,6 +2716,10 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.toggleZenMode",
                                           "workbench.action.exitZenMode",
                                           "workbench.action.toggleCenteredLayout",
+                                          "editor.action.commentLine",
+                                          "editor.action.addCommentLine",
+                                          "editor.action.removeCommentLine",
+                                          "editor.action.blockComment",
                                           "workbench.action.showMultipleEditorTabs",
                                           "workbench.action.showEditorTab",
                                           "workbench.action.hideEditorTabs",
@@ -2886,6 +2890,8 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleFullScreen",
         "workbench.action.toggleZenMode",
         "workbench.action.toggleCenteredLayout",
+        "editor.action.commentLine",
+        "editor.action.blockComment",
         "workbench.action.showMultipleEditorTabs",
         "workbench.action.showEditorTab",
         "workbench.action.hideEditorTabs",
@@ -8671,4 +8677,179 @@ TEST_F(ZenTabBarModeTest, TheNormalCommandsWriteTheNormalSettingEvenInZenMode) {
     EXPECT_FALSE(strip()->isHidden());
     run("workbench.action.toggleZenMode");
     EXPECT_TRUE(strip()->isHidden());
+}
+
+class CommentCommandsTest : public MainWindowTest {
+protected:
+    void open(const char* name, const std::string& text) {
+        create_window();
+        window_->resize(900, 600);
+        window_->show();
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write(name, text).string())));
+        QApplication::processEvents();
+    }
+    std::string text() const {
+        return window_->current_document()->text().to_string();
+    }
+    void select(std::vector<core::Selection> selections) {
+        window_->view()->select_ranges(std::move(selections), 0);
+    }
+    void run(const char* id) {
+        window_->commands().execute(id);
+    }
+    QString message() const {
+        return window_->status_bar().message();
+    }
+};
+
+TEST_F(CommentCommandsTest, TheEditMenuItemsAreEnabledAndShowTheirKeys) {
+    create_window();
+    QAction* line = menu_action("editor.action.commentLine");
+    ASSERT_NE(line, nullptr);
+    EXPECT_TRUE(line->isEnabled());
+    EXPECT_TRUE(line->text().endsWith("\tCtrl+/")) << line->text().toStdString();
+    QAction* block = menu_action("editor.action.blockComment");
+    ASSERT_NE(block, nullptr);
+    EXPECT_TRUE(block->isEnabled());
+    EXPECT_TRUE(block->text().endsWith("\tCtrl+Shift+A")) << block->text().toStdString();
+}
+
+TEST_F(CommentCommandsTest, ToggleLineCommentAddsAndRemovesTheTokenOfTheLanguage) {
+    open("a.py", "x = 1\n    y = 2\n");
+    select({core::Selection{0, 14}});
+    menu_action("editor.action.commentLine")->trigger();
+    EXPECT_EQ(text(), "# x = 1\n#     y = 2\n");
+    menu_action("editor.action.commentLine")->trigger();
+    EXPECT_EQ(text(), "x = 1\n    y = 2\n");
+}
+
+TEST_F(CommentCommandsTest, EachCommandIsOneUndoStep) {
+    open("a.py", "a\nb\nc\n");
+    select({core::Selection{0, 4}});
+    run("editor.action.commentLine");
+    ASSERT_EQ(text(), "# a\n# b\nc\n");
+    run("undo");
+    EXPECT_EQ(text(), "a\nb\nc\n");
+    run("redo");
+    EXPECT_EQ(text(), "# a\n# b\nc\n");
+}
+
+TEST_F(CommentCommandsTest, AddAndRemoveLineCommentForceTheirDirection) {
+    open("a.py", "# a\nb\n");
+    select({core::Selection{0, 5}});
+    run("editor.action.addCommentLine");
+    EXPECT_EQ(text(), "# # a\n# b\n");
+    run("editor.action.removeCommentLine");
+    EXPECT_EQ(text(), "# a\nb\n");
+}
+
+TEST_F(CommentCommandsTest, ToggleBlockCommentWrapsTheSelectionAndUnwrapsIt) {
+    open("a.html", "<p>hello</p>\n");
+    select({core::Selection{3, 8}});
+    menu_action("editor.action.blockComment")->trigger();
+    EXPECT_EQ(text(), "<p><!-- hello --></p>\n");
+    const core::Selection selected = window_->current_document()->selections().primary();
+    EXPECT_EQ(text().substr(selected.start(), selected.end() - selected.start()), "hello");
+    menu_action("editor.action.blockComment")->trigger();
+    EXPECT_EQ(text(), "<p>hello</p>\n");
+}
+
+TEST_F(CommentCommandsTest, ALanguageWithOnlyABlockCommentGetsThatAroundTheLine) {
+    open("a.html", "<p>hello</p>\n");
+    select({core::Selection::caret(0)});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "<!-- <p>hello</p> -->\n");
+}
+
+TEST_F(CommentCommandsTest, ALanguageWithoutTokensChangesNothingAndSaysSo) {
+    open("a.txt", "hello\n");
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "hello\n");
+    EXPECT_EQ(message(), "Plain Text has no comment tokens.");
+}
+
+TEST_F(CommentCommandsTest, ALanguageWithoutABlockCommentSaysSoForTheBlockCommand) {
+    open("Makefile", "all:\n\ttrue\n");
+    run("editor.action.blockComment");
+    EXPECT_EQ(text(), "all:\n\ttrue\n");
+    EXPECT_EQ(message(), "Makefile has no block comment.");
+}
+
+TEST_F(CommentCommandsTest, ATokenThatTheLanguageWantsInTheFirstColumnGoesThere) {
+    open("Makefile", "all:\n\ttrue\n");
+    select({core::Selection{6, 6}});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "all:\n# \ttrue\n");
+}
+
+TEST_F(CommentCommandsTest, EveryCursorCommentsItsLine) {
+    open("a.py", "a\nb\nc\n");
+    select({core::Selection::caret(0), core::Selection::caret(2), core::Selection::caret(4)});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "# a\n# b\n# c\n");
+}
+
+TEST_F(CommentCommandsTest, CursorsOnTheLineOfTheFirstCursorShareIt) {
+    open("a.py", "one two three\nnext\n");
+    select({core::Selection::caret(0), core::Selection::caret(4), core::Selection::caret(8)});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "# one two three\nnext\n");
+}
+
+TEST_F(CommentCommandsTest,
+       CursorsOnALaterLineThatTheFirstCursorIsNotOnCommentItOnceForEachAsInVsCode) {
+    open("a.py", "a\nb c\n");
+    select({core::Selection::caret(0), core::Selection::caret(2), core::Selection::caret(4)});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "# a\n# # b c\n");
+}
+
+TEST_F(CommentCommandsTest, ThePythonKeysAndTheShortcutRunTheCommands) {
+    open("a.py", "a\n");
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_Slash, Qt::ControlModifier);
+    EXPECT_EQ(text(), "# a\n");
+    QTest::keyClick(window_->view(), Qt::Key_Slash, Qt::ControlModifier);
+    EXPECT_EQ(text(), "a\n");
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_C, Qt::ControlModifier);
+    EXPECT_EQ(text(), "# a\n");
+    QTest::keyClick(window_->view(), Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(window_->view(), Qt::Key_U, Qt::ControlModifier);
+    EXPECT_EQ(text(), "a\n");
+    QTest::keyClick(window_->view(), Qt::Key_A, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(text(), "\"\"\"  \"\"\"a\n") << text();
+}
+
+TEST_F(CommentCommandsTest, TheSettingsDecideTheSpaceAndTheEmptyLines) {
+    settings_file_ = write("settings.json", R"j({"editor.comments.insertSpace": false,
+                                               "editor.comments.ignoreEmptyLines": false})j");
+    open("a.py", "a\n\nb\n");
+    select({core::Selection{0, 4}});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "#a\n#\n#b\n");
+}
+
+TEST_F(CommentCommandsTest, TheTabSizeAlignsTheTokensOfIndentedLines) {
+    settings_file_ = write("settings.json", R"j({"editor.tabSize": 4})j");
+    open("a.py", "\t\tx\n    y\n");
+    select({core::Selection{0, 11}});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "\t# \tx\n    # y\n");
+    run("editor.action.commentLine");
+    window_->change_setting("editor.tabSize", 8);
+    select({core::Selection{0, 9}});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "# \t\tx\n#     y\n");
+}
+
+TEST_F(CommentCommandsTest, SelectionsThatEndAtTheStartOfALineLeaveItOut) {
+    open("a.py", "a\nb\nc\n");
+    select({core::Selection{0, 4}});
+    run("editor.action.commentLine");
+    EXPECT_EQ(text(), "# a\n# b\nc\n");
+    const core::Selection selection = window_->current_document()->selections().primary();
+    EXPECT_EQ(selection, (core::Selection{2, 8}));
 }

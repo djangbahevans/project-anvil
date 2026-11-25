@@ -448,6 +448,9 @@ private:
     void set_up_title_bar();
     void update_chrome();
     void toggle_zen_mode();
+    // Runs one of the comment commands on the shown editor, or says in the status bar that the
+    // language of the document has no token for it.
+    void run_comment_command(bool block, core::LineCommentType type);
     // Shows the status bar, the activity bar and the tabs as the settings say, and as Zen Mode
     // lets them.
     void apply_part_visibility();

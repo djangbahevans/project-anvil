@@ -98,6 +98,10 @@ public:
     void add_cursors_to_line_ends();
     // Moves every caret as Go to Bracket does (see core::jump_to_bracket).
     void jump_to_bracket();
+    // Comments or uncomments the lines of every selection, or its text with a block comment (see
+    // core::EditController::comment_lines and toggle_block_comment).
+    void comment_lines(core::LineCommentType type, const core::CommentOptions& options);
+    void toggle_block_comment(const core::CommentOptions& options);
     // Grows every selection to the next range around it, and goes back one (see
     // core::EditController::expand_selection).
     void expand_selection();
