@@ -8,6 +8,7 @@
 #include "anvil/core/uri.hpp"
 #include "anvil/core/workspace.hpp"
 #include "anvil/platform/process.hpp"
+#include "anvil/ui/about.hpp"
 #include "anvil/ui/command_registry.hpp"
 #include "anvil/ui/editor_area.hpp"
 #include "anvil/ui/editor_view.hpp"
@@ -46,6 +47,7 @@
 #include <vector>
 
 class QMenu;
+class QMessageBox;
 class QUrl;
 class QMenuBar;
 
@@ -458,6 +460,9 @@ private:
     void set_up_title_bar();
     void update_chrome();
     void toggle_zen_mode();
+    // Opens the About dialog, or raises the one that is open. It does not run a nested event loop,
+    // so the extension host is served while it is shown.
+    void show_about();
     // Opens a page of the project in the browser, or says in the status bar that it cannot.
     void open_project_page(std::string_view address);
     // Runs one of the comment commands on the shown editor, or says in the status bar that the
@@ -501,6 +506,8 @@ private:
     ThemeStore* themes_ = nullptr;
     CommandRegistry commands_;
     ExtensionHostBridge bridge_;
+    AboutVersions about_versions_;
+    QPointer<QMessageBox> about_dialog_;
     Highlighting* highlighting_ = nullptr;
     core::LanguageRegistry languages_ = core::LanguageRegistry::with_builtin_languages();
     std::vector<core::FileAssociation> file_associations_;

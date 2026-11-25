@@ -1,4 +1,5 @@
 add_library(anvil_ui STATIC
+  about.cpp
   activity_bar.cpp
   codicon_table.hpp
   codicons.cpp
@@ -15,6 +16,7 @@ add_library(anvil_ui STATIC
   keybinding_service.cpp
   keybindings_store.cpp
   menu_style.cpp
+  include/anvil/ui/about.hpp
   include/anvil/ui/activity_bar.hpp
   include/anvil/ui/codicons.hpp
   include/anvil/ui/command_registry.hpp
@@ -74,6 +76,7 @@ qt_add_resources(anvil_ui anvil_codicons
   BASE ${CMAKE_SOURCE_DIR}/resources/codicons
   FILES ${CMAKE_SOURCE_DIR}/resources/codicons/codicon.ttf)
 target_include_directories(anvil_ui PUBLIC include)
+target_compile_definitions(anvil_ui PRIVATE ANVIL_VERSION="${PROJECT_VERSION}")
 target_link_libraries(anvil_ui
   PUBLIC Qt6::Widgets anvil::core anvil::exthost anvil::workbench
   PRIVATE anvil::platform anvil_compile_options

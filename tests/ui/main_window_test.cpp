@@ -1,6 +1,7 @@
 #include "anvil/core/live_highlighter.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/ui/about.hpp"
 #include "anvil/ui/activity_bar.hpp"
 #include "anvil/ui/main_window.hpp"
 #include "anvil/ui/menu_style.hpp"
@@ -2735,6 +2736,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.openDocumentationUrl",
                                           "workbench.action.openIssueReporter",
                                           "workbench.action.openLicenseUrl",
+                                          "workbench.action.showAboutDialog",
                                           "workbench.action.showMultipleEditorTabs",
                                           "workbench.action.showEditorTab",
                                           "workbench.action.hideEditorTabs",
@@ -2910,6 +2912,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.openDocumentationUrl",
         "workbench.action.openIssueReporter",
         "workbench.action.openLicenseUrl",
+        "workbench.action.showAboutDialog",
         "workbench.action.showMultipleEditorTabs",
         "workbench.action.showEditorTab",
         "workbench.action.hideEditorTabs",
@@ -9189,4 +9192,76 @@ TEST_F(HelpPagesTest, APageThatCannotBeOpenedIsReportedWithItsAddress) {
     EXPECT_TRUE(window_->status_bar().message().contains(
         "https://github.com/djangbahevans/project-anvil/issues/new"))
         << window_->status_bar().message().toStdString();
+}
+
+class AboutDialogTest : public MainWindowTest {
+protected:
+    static std::vector<QMessageBox*> dialogs() {
+        std::vector<QMessageBox*> found;
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            if (auto* box = qobject_cast<QMessageBox*>(widget); box && box->isVisible()) {
+                found.push_back(box);
+            }
+        }
+        return found;
+    }
+};
+
+TEST_F(AboutDialogTest, TheItemIsEnabledAndHasNoKey) {
+    create_window();
+    QAction* item = menu_action("workbench.action.showAboutDialog");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    EXPECT_FALSE(item->text().contains(QLatin1Char('\t'))) << item->text().toStdString();
+}
+
+TEST_F(AboutDialogTest, TheItemOpensADialogWithTheVersionsWithoutRunningANestedLoop) {
+    create_window();
+    menu_action("workbench.action.showAboutDialog")->trigger();
+    const auto open = dialogs();
+    ASSERT_EQ(open.size(), 1U);
+    EXPECT_EQ(open[0]->windowTitle(), "About");
+    EXPECT_EQ(open[0]->windowModality(), Qt::WindowModal);
+    EXPECT_EQ(open[0]->parentWidget(), window_.get());
+    const QString text = open[0]->text();
+    EXPECT_TRUE(text.contains(QString::fromStdString("Version: " + ui::anvil_version())))
+        << text.toStdString();
+    EXPECT_TRUE(text.contains(QString("Qt: ") + qVersion())) << text.toStdString();
+    EXPECT_TRUE(text.contains("VS Code extension host: not available")) << text.toStdString();
+    EXPECT_TRUE(text.contains("MIT")) << text.toStdString();
+    EXPECT_TRUE(text.contains(QString::fromUtf8(ui::project_url.data()))) << text.toStdString();
+    EXPECT_NE(open[0]->button(QMessageBox::Ok), nullptr);
+}
+
+TEST_F(AboutDialogTest, ASecondRunWhileItIsOpenOpensNoSecondOne) {
+    create_window();
+    window_->commands().execute("workbench.action.showAboutDialog");
+    window_->commands().execute("workbench.action.showAboutDialog");
+    EXPECT_EQ(dialogs().size(), 1U);
+}
+
+TEST_F(AboutDialogTest, OKClosesItAndTheNextRunOpensANewOne) {
+    create_window();
+    window_->commands().execute("workbench.action.showAboutDialog");
+    ASSERT_EQ(dialogs().size(), 1U);
+    dialogs()[0]->button(QMessageBox::Ok)->click();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QApplication::processEvents();
+    EXPECT_TRUE(dialogs().empty());
+    window_->commands().execute("workbench.action.showAboutDialog");
+    EXPECT_EQ(dialogs().size(), 1U);
+}
+
+TEST_F(AboutDialogTest, TheRunningExtensionHostsVersionIsShown) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto version = ui::read_vscode_version(ANVIL_VSCODE_DIR);
+    ASSERT_TRUE(version.has_value());
+    window_->commands().execute("workbench.action.showAboutDialog");
+    ASSERT_EQ(dialogs().size(), 1U);
+    EXPECT_TRUE(dialogs()[0]->text().contains(
+        QString::fromStdString("VS Code extension host: " + *version)))
+        << dialogs()[0]->text().toStdString();
 }
