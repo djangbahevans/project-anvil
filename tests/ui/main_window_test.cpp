@@ -4,6 +4,7 @@
 #include "anvil/ui/activity_bar.hpp"
 #include "anvil/ui/main_window.hpp"
 #include "anvil/ui/menu_style.hpp"
+#include "anvil/ui/project_links.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -26,6 +27,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
+#include <QUrl>
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -65,6 +67,7 @@ protected:
         options.themes_directory = themes_directory_;
         options.executable = executable_;
         options.start_process = start_process_;
+        options.open_url = open_url_;
         options.custom_title_bar = custom_title_bar_;
         options.workspace = workspace_;
         options.choose_folder = choose_folder_;
@@ -285,6 +288,13 @@ protected:
     std::optional<std::filesystem::path> themes_directory_;
     std::filesystem::path executable_;
     std::function<std::expected<std::int64_t, Error>(const platform::ProcessSpec&)> start_process_;
+    // What the Help menu opens in the browser: nothing is opened for real in the tests.
+    std::vector<QUrl> opened_urls_;
+    bool open_url_works_ = true;
+    std::function<bool(const QUrl&)> open_url_ = [this](const QUrl& url) {
+        opened_urls_.push_back(url);
+        return open_url_works_;
+    };
     std::unique_ptr<MainWindow> window_;
     bool prompt_shown_ = false;
 };
@@ -2722,6 +2732,9 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.addCommentLine",
                                           "editor.action.removeCommentLine",
                                           "editor.action.blockComment",
+                                          "workbench.action.openDocumentationUrl",
+                                          "workbench.action.openIssueReporter",
+                                          "workbench.action.openLicenseUrl",
                                           "workbench.action.showMultipleEditorTabs",
                                           "workbench.action.showEditorTab",
                                           "workbench.action.hideEditorTabs",
@@ -2894,6 +2907,9 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.toggleCenteredLayout",
         "editor.action.commentLine",
         "editor.action.blockComment",
+        "workbench.action.openDocumentationUrl",
+        "workbench.action.openIssueReporter",
+        "workbench.action.openLicenseUrl",
         "workbench.action.showMultipleEditorTabs",
         "workbench.action.showEditorTab",
         "workbench.action.hideEditorTabs",
@@ -9106,4 +9122,71 @@ TEST_F(ExplorerWindowTest, WithNoFolderTheExplorerOffersToOpenOneAndFollowsTheWo
     QApplication::processEvents();
     EXPECT_FALSE(explorer->shows_folder());
     EXPECT_EQ(explorer->model()->rowCount(), 0);
+}
+
+class HelpPagesTest : public MainWindowTest {
+protected:
+    void run_item(const char* id) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_TRUE(item->isEnabled()) << id;
+        item->trigger();
+    }
+};
+
+TEST_F(HelpPagesTest, TheThreeItemsAreEnabledAndHaveNoKey) {
+    create_window();
+    for (const char* id :
+         {"workbench.action.openDocumentationUrl", "workbench.action.openIssueReporter",
+          "workbench.action.openLicenseUrl"}) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_TRUE(item->isEnabled()) << id;
+        EXPECT_FALSE(item->text().contains(QLatin1Char('\t'))) << item->text().toStdString();
+    }
+}
+
+TEST_F(HelpPagesTest, EachItemOpensItsPageAndNothingElse) {
+    create_window();
+    run_item("workbench.action.openDocumentationUrl");
+    ASSERT_EQ(opened_urls_.size(), 1U);
+    EXPECT_EQ(opened_urls_[0].toString(), "https://github.com/djangbahevans/project-anvil#readme");
+    run_item("workbench.action.openIssueReporter");
+    ASSERT_EQ(opened_urls_.size(), 2U);
+    EXPECT_EQ(opened_urls_[1].toString(),
+              "https://github.com/djangbahevans/project-anvil/issues/new");
+    run_item("workbench.action.openLicenseUrl");
+    ASSERT_EQ(opened_urls_.size(), 3U);
+    EXPECT_EQ(opened_urls_[2].toString(),
+              "https://github.com/djangbahevans/project-anvil/blob/main/LICENSE");
+}
+
+TEST_F(HelpPagesTest, TheCommandsOpenThePagesToo) {
+    create_window();
+    window_->commands().execute("workbench.action.openLicenseUrl");
+    ASSERT_EQ(opened_urls_.size(), 1U);
+    EXPECT_TRUE(opened_urls_[0].toString().endsWith("/LICENSE"));
+    EXPECT_EQ(window_->status_bar().message(), "");
+}
+
+TEST_F(HelpPagesTest, ThePagesAreDifferentAndBelongToTheProject) {
+    const std::vector<std::string_view> pages = {ui::documentation_url, ui::new_issue_url,
+                                                 ui::license_url};
+    for (std::size_t i = 0; i < pages.size(); ++i) {
+        EXPECT_TRUE(pages[i].starts_with("https://github.com/djangbahevans/project-anvil"))
+            << pages[i];
+        for (std::size_t j = i + 1; j < pages.size(); ++j) {
+            EXPECT_NE(pages[i], pages[j]);
+        }
+    }
+}
+
+TEST_F(HelpPagesTest, APageThatCannotBeOpenedIsReportedWithItsAddress) {
+    open_url_works_ = false;
+    create_window();
+    window_->commands().execute("workbench.action.openIssueReporter");
+    ASSERT_EQ(opened_urls_.size(), 1U);
+    EXPECT_TRUE(window_->status_bar().message().contains(
+        "https://github.com/djangbahevans/project-anvil/issues/new"))
+        << window_->status_bar().message().toStdString();
 }

@@ -8,6 +8,7 @@
 #include "anvil/ui/codicons.hpp"
 #include "anvil/ui/default_keybindings.hpp"
 #include "anvil/ui/menu_style.hpp"
+#include "anvil/ui/project_links.hpp"
 #include "anvil/ui/resources.hpp"
 
 #include <QAbstractButton>
@@ -17,6 +18,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLineEdit>
@@ -1027,6 +1029,12 @@ void MainWindow::register_commands() {
         [this] { find_bar()->find_previous(); });
     add("workbench.action.files.openFile", tr("Open File…"), [this] { open_dialog(); });
     add("workbench.action.newWindow", tr("New Window"), [this] { open_new_window(); });
+    add("workbench.action.openDocumentationUrl", tr("Documentation"),
+        [this] { open_project_page(documentation_url); });
+    add("workbench.action.openIssueReporter", tr("Report Issue"),
+        [this] { open_project_page(new_issue_url); });
+    add("workbench.action.openLicenseUrl", tr("View License"),
+        [this] { open_project_page(license_url); });
     // There is no settings or shortcuts editor: both the interface and the JSON commands open the
     // file.
     const auto open_settings = [this] { open_user_file(options_.settings_file, "{}\n"); };
@@ -2153,6 +2161,15 @@ void MainWindow::open_new_window() {
         status_bar_->show_message(tr("The new window cannot be started: %1")
                                       .arg(QString::fromStdString(started.error().message)),
                                   8000);
+    }
+}
+
+void MainWindow::open_project_page(std::string_view address) {
+    const QUrl url(QString::fromUtf8(address.data(), static_cast<qsizetype>(address.size())));
+    const bool opened = options_.open_url ? options_.open_url(url) : QDesktopServices::openUrl(url);
+    if (!opened) {
+        status_bar_->show_message(
+            tr("The page cannot be opened. Its address is %1").arg(url.toString()), 15000);
     }
 }
 
