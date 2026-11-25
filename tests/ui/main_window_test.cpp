@@ -2740,6 +2740,9 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.openLicenseUrl",
                                           "workbench.action.showAboutDialog",
                                           "workbench.action.keybindingsReference",
+                                          "workbench.action.zoomIn",
+                                          "workbench.action.zoomOut",
+                                          "workbench.action.zoomReset",
                                           "workbench.action.showMultipleEditorTabs",
                                           "workbench.action.showEditorTab",
                                           "workbench.action.hideEditorTabs",
@@ -2917,6 +2920,9 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "workbench.action.openLicenseUrl",
         "workbench.action.showAboutDialog",
         "workbench.action.keybindingsReference",
+        "workbench.action.zoomIn",
+        "workbench.action.zoomOut",
+        "workbench.action.zoomReset",
         "workbench.action.showMultipleEditorTabs",
         "workbench.action.showEditorTab",
         "workbench.action.hideEditorTabs",
@@ -9379,4 +9385,195 @@ TEST_F(KeyboardShortcutsReferenceTest, TheKeyOpensItInAShownWindow) {
     QTest::keyClick(window_->view(), Qt::Key_R, Qt::ControlModifier);
     EXPECT_EQ(window_->open_document_count(), before + 1);
     EXPECT_TRUE(current_text().starts_with("Keyboard Shortcuts Reference\n\n"));
+}
+
+class ZoomTest : public MainWindowKeysTest {
+protected:
+    void start_with(const std::string& settings) {
+        settings_file_ = write("settings.json", settings);
+        create_active_window();
+    }
+    std::string settings_text() const {
+        return *platform::read_file(settings_file_);
+    }
+    int font_pixels() const {
+        return window_->view()->font().pixelSize();
+    }
+    static int scaled(int size, double level) {
+        return static_cast<int>(std::lround(size * std::pow(1.2, level)));
+    }
+    void run(const char* id) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        ASSERT_TRUE(item->isEnabled()) << id;
+        item->trigger();
+    }
+};
+
+TEST_F(ZoomTest, TheThreeItemsAreEnabledAndShowVsCodesKeys) {
+    create_window();
+    const std::pair<const char*, const char*> items[] = {{"workbench.action.zoomIn", "Ctrl+="},
+                                                         {"workbench.action.zoomOut", "Ctrl+-"},
+                                                         {"workbench.action.zoomReset", "Ctrl+"}};
+    for (const auto& [id, key] : items) {
+        QAction* item = menu_action(id);
+        ASSERT_NE(item, nullptr) << id;
+        EXPECT_TRUE(item->isEnabled()) << id;
+        EXPECT_TRUE(item->text().contains(QLatin1Char('\t') + QString(key)))
+            << item->text().toStdString();
+    }
+}
+
+TEST_F(ZoomTest, TheEditorFontIsTheFontSizeScaledByTheLevel) {
+    for (const double level : {-8.0, -2.0, 0.0, 3.0, 8.0}) {
+        window_.reset();
+        start_with(R"j({"editor.fontSize": 20, "window.zoomLevel": )j" + std::to_string(level) +
+                   "}");
+        EXPECT_EQ(font_pixels(), scaled(20, level)) << level;
+        EXPECT_EQ(window_->zoom().level(), level);
+    }
+}
+
+TEST_F(ZoomTest, EveryEditorViewFollowsTheLevel) {
+    start_with(R"j({"editor.fontSize": 20})j");
+    window_->commands().execute("workbench.action.splitEditor");
+    window_->commands().execute("workbench.action.zoomIn");
+    const auto groups = window_->editor_area()->groups();
+    ASSERT_EQ(groups.size(), 2U);
+    for (auto* group : groups) {
+        EXPECT_EQ(group->view()->font().pixelSize(), 24);
+    }
+    window_->commands().execute("workbench.action.splitEditorDown");
+    EXPECT_EQ(window_->editor_area()->groups().back()->view()->font().pixelSize(), 24);
+}
+
+TEST_F(ZoomTest, TheCommandsStepOneLevelAndStopAtTheEndsOfTheRange) {
+    start_with("{}");
+    for (int level = 1; level <= 8; ++level) {
+        window_->commands().execute("workbench.action.zoomIn");
+        EXPECT_EQ(window_->zoom().level(), level);
+    }
+    const std::string at_top = settings_text();
+    window_->commands().execute("workbench.action.zoomIn");
+    EXPECT_EQ(window_->zoom().level(), 8);
+    EXPECT_EQ(settings_text(), at_top);
+    EXPECT_NE(at_top.find("\"window.zoomLevel\": 8"), std::string::npos) << at_top;
+
+    for (int level = 7; level >= -8; --level) {
+        window_->commands().execute("workbench.action.zoomOut");
+        EXPECT_EQ(window_->zoom().level(), level);
+    }
+    const std::string at_bottom = settings_text();
+    window_->commands().execute("workbench.action.zoomOut");
+    EXPECT_EQ(window_->zoom().level(), -8);
+    EXPECT_EQ(settings_text(), at_bottom);
+    EXPECT_NE(at_bottom.find("\"window.zoomLevel\": -8"), std::string::npos) << at_bottom;
+}
+
+TEST_F(ZoomTest, ResetWritesZero) {
+    start_with(R"j({"window.zoomLevel": 5})j");
+    ASSERT_EQ(window_->zoom().level(), 5);
+    window_->commands().execute("workbench.action.zoomReset");
+    EXPECT_EQ(window_->zoom().level(), 0);
+    EXPECT_EQ(settings_text(), R"j({"window.zoomLevel": 0})j");
+}
+
+TEST_F(ZoomTest, AFractionalLevelIsRoundedBeforeTheStep) {
+    start_with(R"j({"window.zoomLevel": 1.5})j");
+    window_->commands().execute("workbench.action.zoomIn");
+    EXPECT_EQ(window_->zoom().level(), 3);
+    window_.reset();
+    start_with(R"j({"window.zoomLevel": 1.5})j");
+    window_->commands().execute("workbench.action.zoomOut");
+    EXPECT_EQ(window_->zoom().level(), 1);
+    window_.reset();
+    start_with(R"j({"window.zoomLevel": -0.5})j");
+    window_->commands().execute("workbench.action.zoomIn");
+    EXPECT_EQ(window_->zoom().level(), 1) << "-0.5 rounds to 0, as Math.round does";
+}
+
+TEST_F(ZoomTest, TheItemsRunTheCommands) {
+    start_with(R"j({"editor.fontSize": 20})j");
+    run("workbench.action.zoomIn");
+    run("workbench.action.zoomIn");
+    EXPECT_EQ(font_pixels(), scaled(20, 2));
+    run("workbench.action.zoomOut");
+    EXPECT_EQ(font_pixels(), scaled(20, 1));
+    run("workbench.action.zoomReset");
+    EXPECT_EQ(font_pixels(), 20);
+}
+
+TEST_F(ZoomTest, TheKeysOfVsCodeZoomTheEditor) {
+    start_with(R"j({"editor.fontSize": 20})j");
+    const auto key = [&](Qt::Key code, Qt::KeyboardModifiers modifiers) {
+        QTest::keyClick(window_->view(), code, modifiers);
+    };
+    key(Qt::Key_Equal, Qt::ControlModifier);
+    EXPECT_EQ(window_->zoom().level(), 1);
+    key(Qt::Key_Plus, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(window_->zoom().level(), 2);
+    key(Qt::Key_Plus, Qt::ControlModifier | Qt::KeypadModifier);
+    EXPECT_EQ(window_->zoom().level(), 3);
+    key(Qt::Key_Minus, Qt::ControlModifier);
+    EXPECT_EQ(window_->zoom().level(), 2);
+    key(Qt::Key_Minus, Qt::ControlModifier | Qt::KeypadModifier);
+    EXPECT_EQ(window_->zoom().level(), 1);
+    key(Qt::Key_Plus, Qt::ControlModifier);
+    key(Qt::Key_0, Qt::ControlModifier | Qt::KeypadModifier);
+    EXPECT_EQ(window_->zoom().level(), 0);
+    EXPECT_EQ(font_pixels(), 20);
+    EXPECT_EQ(current_text(), "") << "no key typed a character";
+}
+
+TEST_F(ZoomTest, TheLevelIsKeptInTheSettingsFileAndReadAtTheNextStart) {
+    start_with(R"j({"editor.fontSize": 20})j");
+    window_->commands().execute("workbench.action.zoomIn");
+    window_->commands().execute("workbench.action.zoomIn");
+    window_.reset();
+    ASSERT_NE(settings_text().find("\"window.zoomLevel\": 2"), std::string::npos)
+        << settings_text();
+    create_active_window();
+    EXPECT_EQ(window_->zoom().level(), 2);
+    EXPECT_EQ(font_pixels(), scaled(20, 2));
+}
+
+TEST_F(ZoomTest, ASettingsFileEditedByHandZoomsTheEditor) {
+    start_with(R"j({"editor.fontSize": 20})j");
+    ASSERT_EQ(font_pixels(), 20);
+    write("settings.json", R"j({"editor.fontSize": 20, "window.zoomLevel": 3})j");
+    ASSERT_TRUE(wait_until([&] { return font_pixels() != 20; }));
+    EXPECT_EQ(font_pixels(), scaled(20, 3));
+    EXPECT_EQ(window_->zoom().level(), 3);
+    write("settings.json", R"j({"editor.fontSize": 20})j");
+    ASSERT_TRUE(wait_until([&] { return font_pixels() == 20; }));
+    EXPECT_EQ(window_->zoom().level(), 0);
+}
+
+TEST_F(ZoomTest, TheFirstVisibleLineStaysInViewWhenTheFontChanges) {
+    start_with(R"j({"editor.fontSize": 14})j");
+    std::string text;
+    for (int line = 0; line < 300; ++line) {
+        text += "line " + std::to_string(line) + "\n";
+    }
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("long.txt", text).string())));
+    auto* view = window_->view();
+    view->verticalScrollBar()->setValue(60 * view->line_height());
+    ASSERT_EQ(view->verticalScrollBar()->value() / view->line_height(), 60);
+    window_->commands().execute("workbench.action.zoomIn");
+    window_->commands().execute("workbench.action.zoomIn");
+    EXPECT_GT(view->line_height(), 14);
+    EXPECT_EQ(view->verticalScrollBar()->value() / view->line_height(), 60);
+    window_->commands().execute("workbench.action.zoomReset");
+    EXPECT_EQ(view->verticalScrollBar()->value() / view->line_height(), 60);
+}
+
+TEST_F(ZoomTest, TheLineHeightAndTheCharacterWidthFollowTheFont) {
+    start_with(R"j({"editor.fontSize": 14})j");
+    const int line_height = window_->view()->line_height();
+    const int char_width = window_->view()->char_width();
+    window_->commands().execute("workbench.action.zoomIn");
+    window_->commands().execute("workbench.action.zoomIn");
+    window_->commands().execute("workbench.action.zoomIn");
+    EXPECT_GT(window_->view()->line_height(), line_height);
+    EXPECT_GT(window_->view()->char_width(), char_width);
 }

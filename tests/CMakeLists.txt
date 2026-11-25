@@ -9,6 +9,7 @@ add_executable(anvil_core_tests
   core/document_test.cpp
   core/editing_test.cpp
   core/editor_settings_test.cpp
+  core/zoom_test.cpp
   core/file_name_order_test.cpp
   core/file_tree_test.cpp
   core/fuzzy_test.cpp
@@ -165,6 +166,7 @@ if(TARGET anvil_ui)
     ui/view_container_registry_test.cpp
     ui/workbench_colors_test.cpp
     ui/workbench_test.cpp
+    ui/zoom_test.cpp
     ui/ui_test_main.cpp
   )
   target_link_libraries(anvil_ui_tests

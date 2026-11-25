@@ -30,6 +30,7 @@
 #include "anvil/ui/window_frame.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 #include "anvil/workbench/closed_editors.hpp"
 #include "anvil/workbench/editor_layout.hpp"
 #include "anvil/workbench/menu_model.hpp"
@@ -228,6 +229,10 @@ public:
     // The editor's commands: menus run them, and extensions can execute them by id.
     CommandRegistry& commands() {
         return commands_;
+    }
+    // The zoom of the window: the level of `window.zoomLevel` as the window applies it.
+    const Zoom& zoom() const {
+        return zoom_;
     }
     ExtensionHostBridge& bridge() {
         return bridge_;
@@ -470,6 +475,9 @@ private:
     // Opens the About dialog, or raises the one that is open. It does not run a nested event loop,
     // so the extension host is served while it is shown.
     void show_about();
+    // Writes `window.zoomLevel` one whole level above or below the current one, and does nothing
+    // at the end of the range.
+    void zoom_by(int step);
     // Opens a page of the project in the browser, or says in the status bar that it cannot.
     void open_project_page(std::string_view address);
     // Runs one of the comment commands on the shown editor, or says in the status bar that the
@@ -483,6 +491,7 @@ private:
 
     Options options_;
     WorkbenchColors colors_;
+    Zoom zoom_;
     std::unique_ptr<MenuStyle> menu_style_;
     Workbench* workbench_ = nullptr;
     TitleBar* title_bar_ = nullptr;

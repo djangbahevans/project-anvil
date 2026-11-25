@@ -1,5 +1,7 @@
 #include "anvil/ui/editor_view.hpp"
 
+#include "anvil/core/zoom.hpp"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QFontDatabase>
@@ -191,7 +193,8 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     render_control_characters_ = settings.render_control_characters;
     multi_cursor_modifier_ = settings.multi_cursor_modifier;
     column_selection_ = settings.column_selection;
-    const QFont wanted = font_for(settings.font_family, settings.font_size);
+    const QFont wanted = font_for(settings.font_family,
+                                  core::scale_for_zoom(settings.font_size, settings.zoom_level));
     if (wanted != font()) {
         setFont(wanted);
     }

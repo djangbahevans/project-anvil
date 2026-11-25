@@ -59,6 +59,9 @@ struct EditorSettings {
     std::string font_family;
     // editor.fontSize, in pixels
     int font_size = 14;
+    // window.zoomLevel: the level of the window's zoom, from -8 to 8 (see `zoom_factor`); the
+    // editor's font is `font_size` scaled by it
+    double zoom_level = 0;
     // editor.tabSize
     int tab_size = 4;
     // editor.insertSpaces
@@ -123,11 +126,11 @@ struct EditorSettings {
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
-    // 6-100, tab size to 1-1024: the upper bound keeps a typo from making Tab insert gigabytes;
-    // the auto save delay to 0 ms-24 h). A value of the wrong type, a `files.eol` that is not one
-    // of "\n", "\r\n" and "auto", an `editor.multiCursorModifier` that is not "alt" or "ctrlCmd",
-    // an `editor.renderWhitespace` that is not "none", "boundary", "selection", "trailing" or
-    // "all", a `files.autoSave` that is not "off", "afterDelay", "onFocusChange" or
+    // 6-100, zoom level to -8-8, tab size to 1-1024: the upper bound keeps a typo from making Tab
+    // insert gigabytes; the auto save delay to 0 ms-24 h). A value of the wrong type, a `files.eol`
+    // that is not one of "\n", "\r\n" and "auto", an `editor.multiCursorModifier` that is not "alt"
+    // or "ctrlCmd", an `editor.renderWhitespace` that is not "none", "boundary", "selection",
+    // "trailing" or "all", a `files.autoSave` that is not "off", "afterDelay", "onFocusChange" or
     // "onWindowChange", a `workbench.sideBar.location` that is not "left" or "right", a
     // `workbench.activityBar.location` that is not "default", "top", "bottom" or "hidden", a
     // `workbench.editor.showTabs` or `zenMode.showTabs` that is not "multiple", "single" or "none",

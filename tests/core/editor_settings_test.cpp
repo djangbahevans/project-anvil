@@ -64,6 +64,31 @@ TEST(EditorSettings, FontSizeIsClampedAndRounded) {
     EXPECT_EQ(read(R"j({"editor.fontSize": 13.4})j")->font_size, 13);
 }
 
+TEST(EditorSettings, TheZoomLevelDefaultsToZeroAndIsClampedToEightEitherWay) {
+    EXPECT_EQ(read("{}")->zoom_level, 0);
+    EXPECT_EQ(read(R"j({"window.zoomLevel": 3})j")->zoom_level, 3);
+    EXPECT_EQ(read(R"j({"window.zoomLevel": -8})j")->zoom_level, -8);
+    EXPECT_EQ(read(R"j({"window.zoomLevel": 9})j")->zoom_level, 8);
+    EXPECT_EQ(read(R"j({"window.zoomLevel": -100})j")->zoom_level, -8);
+    EXPECT_EQ(read(R"j({"window": {"zoomLevel": 2}})j")->zoom_level, 2);
+}
+
+TEST(EditorSettings, TheZoomLevelMayHaveDecimals) {
+    EXPECT_DOUBLE_EQ(read(R"j({"window.zoomLevel": 1.5})j")->zoom_level, 1.5);
+    EXPECT_DOUBLE_EQ(read(R"j({"window.zoomLevel": -0.25})j")->zoom_level, -0.25);
+}
+
+TEST(EditorSettings, AZoomLevelThatIsNotANumberIsReportedByKey) {
+    for (const char* text : {R"j({"window.zoomLevel": "2"})j", R"j({"window.zoomLevel": true})j",
+                             R"j({"window.zoomLevel": null})j"}) {
+        const auto result = read(text);
+        ASSERT_FALSE(result.has_value()) << text;
+        EXPECT_NE(result.error().message.find("window.zoomLevel must be a number"),
+                  std::string::npos)
+            << result.error().message;
+    }
+}
+
 TEST(EditorSettings, TabSizeIsClamped) {
     EXPECT_EQ(read(R"j({"editor.tabSize": 0})j")->tab_size, 1);
     EXPECT_EQ(read(R"j({"editor.tabSize": -4})j")->tab_size, 1);

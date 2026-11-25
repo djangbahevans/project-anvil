@@ -1,5 +1,7 @@
 #include "anvil/core/editor_settings.hpp"
 
+#include "anvil/core/zoom.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <string_view>
@@ -43,6 +45,13 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             result.font_size = clamped(*size, min_font_size, max_font_size);
         } else {
             problems.emplace_back("editor.fontSize must be a number");
+        }
+    }
+    if (settings.contains("window.zoomLevel")) {
+        if (const auto level = settings.get<double>("window.zoomLevel")) {
+            result.zoom_level = std::clamp(*level, min_zoom_level, max_zoom_level);
+        } else {
+            problems.emplace_back("window.zoomLevel must be a number");
         }
     }
     if (settings.contains("editor.tabSize")) {
