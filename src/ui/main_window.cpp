@@ -6,6 +6,7 @@
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/platform/file_system.hpp"
 #include "anvil/ui/codicons.hpp"
 #include "anvil/ui/default_keybindings.hpp"
 #include "anvil/ui/keybindings_reference.hpp"
@@ -1905,7 +1906,13 @@ std::shared_ptr<core::Document> MainWindow::file_document(const std::filesystem:
 bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path,
                                 bool automatic) {
     const std::shared_ptr<core::Document> document = documents_.at(uri);
-    if (auto written = platform::write_file(path, document->to_file_bytes()); !written) {
+    // The directory is made again for a document whose file was deleted together with it.
+    auto written = path.has_parent_path() ? platform::make_directory(path.parent_path())
+                                          : std::expected<void, Error>();
+    if (written) {
+        written = platform::write_file(path, document->to_file_bytes());
+    }
+    if (!written) {
         const QString reason = QString::fromStdString(written.error().message);
         if (automatic) {
             status_bar_->show_message(tr("Auto save failed: %1").arg(reason), 5000);

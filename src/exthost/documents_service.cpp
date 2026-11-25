@@ -3,6 +3,7 @@
 #include "anvil/exthost/vscode_types.hpp"
 #include "anvil/exthost/workspace_file_edit.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/platform/file_system.hpp"
 
 #include <algorithm>
 #include <set>
@@ -404,7 +405,12 @@ std::optional<HandlerResult> DocumentsService::try_save_document(const json& arg
     if (entry == nullptr || !path) {
         return boolean(false);
     }
-    if (auto written = platform::write_file(*path, entry->document->to_file_bytes()); !written) {
+    auto written = path->has_parent_path() ? platform::make_directory(path->parent_path())
+                                           : std::expected<void, Error>();
+    if (written) {
+        written = platform::write_file(*path, entry->document->to_file_bytes());
+    }
+    if (!written) {
         return failed(written.error());
     }
     entry->document->mark_saved();

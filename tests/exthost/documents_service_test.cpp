@@ -1203,3 +1203,18 @@ TEST_F(DocumentsServiceTest, PropertiesThatTheExtensionHostWritesAsUndefinedAreN
     EXPECT_TRUE(is_on_disk(created));
     EXPECT_EQ(apply_edit({create}, 3).reply_to(3), "true");
 }
+
+TEST_F(DocumentsServiceTest, SavingTheDocumentOfADeletedDirectoryMakesTheDirectoryAgain) {
+    const auto file = write("dir/sub/x.txt", "x");
+    const core::Uri uri = core::Uri::file(file);
+    ASSERT_TRUE(service_.add_document(uri, make_document("x")).has_value());
+    ASSERT_TRUE(service_.find(uri)->apply_edits(std::vector<core::Edit>{{1, 1, "!"}}));
+    synchronize();
+    ASSERT_EQ(apply_edit({delete_item(path("dir"), {{"recursive", true}})}).reply_to(1), "true");
+    ASSERT_FALSE(is_on_disk(path("dir")));
+    EXPECT_EQ(request(ProxyId::MainThreadDocuments, "$trySaveDocument",
+                      json::array({uri_to_json(uri)}), 2)
+                  .reply_to(2),
+              "true");
+    EXPECT_EQ(slurp(file), "x!");
+}

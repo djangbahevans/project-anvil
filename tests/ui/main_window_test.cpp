@@ -1619,6 +1619,28 @@ TEST_F(MainWindowTest, ADeletedFileKeepsItsDirtyDocumentOpenAndSavingWritesItAga
     EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
 }
 
+TEST_F(MainWindowTest, SavingADocumentWhoseDirectoryWasDeletedMakesTheDirectoryAgain) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    std::filesystem::create_directories(scratch_ / "dir");
+    const auto x = write("dir/x.txt", "X");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(x.string())));
+    type("!");
+    json options = json::object();
+    options["recursive"] = true;
+    json remove = step("delete", scratch_ / "dir");
+    remove["options"] = options;
+    ASSERT_TRUE(run("anvil.docs.fileEdit", file_edit({remove})).get<bool>());
+    ASSERT_FALSE(std::filesystem::exists(scratch_ / "dir"));
+    answer_next_prompt(QMessageBox::Ok);
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_FALSE(prompt_shown_);
+    EXPECT_EQ(platform::read_file(x).value_or("<unreadable>"), "!X");
+    EXPECT_FALSE(window_->tab_strip()->tab(1).dirty);
+}
+
 TEST_F(MainWindowTest, AFileThatAnExtensionCreatesAndEditsIsADocumentForExtensionsNotATab) {
     create_window(true);
     if (!window_) {
