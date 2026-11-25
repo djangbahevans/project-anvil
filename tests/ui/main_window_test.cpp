@@ -1,3 +1,4 @@
+#include "anvil/core/live_highlighter.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/main_window.hpp"
@@ -7773,6 +7774,62 @@ TEST_F(HighlightingWindowTest, LinesBelowANewLineKeepTheirColorsWhileTheWorkerPa
     insert_into_shown_document(4, "\n");
     // Before any event is processed no result for the new version can have been delivered.
     EXPECT_EQ(scopes_of_line(3), (std::vector<std::string>{"constant.language.json"}));
+}
+
+namespace {
+
+// A result with one span on the first line.
+class OneSpan final : public core::Highlighter {
+public:
+    std::vector<core::HighlightSpan> spans(std::size_t line) const override {
+        return line == 0 ? std::vector<core::HighlightSpan>{{0, 1, "invalid.test"}}
+                         : std::vector<core::HighlightSpan>{};
+    }
+    std::string_view root_scope() const override {
+        return "source.test";
+    }
+    std::uint64_t version() const override {
+        return 1;
+    }
+};
+
+class PaintsOnTheViewport : public QObject {
+public:
+    int paints = 0;
+
+protected:
+    bool eventFilter(QObject*, QEvent* event) override {
+        paints += event->type() == QEvent::Paint ? 1 : 0;
+        return false;
+    }
+};
+
+} // namespace
+
+TEST_F(HighlightingWindowTest, TheViewShowingADocumentRepaintsWhenSpansArriveForIt) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "[1]\n")));
+    ASSERT_TRUE(spans_arrive_on(0));
+    QTest::qWait(50);
+    PaintsOnTheViewport counter;
+    window_->view()->viewport()->installEventFilter(&counter);
+
+    const auto live = std::const_pointer_cast<core::LiveHighlighter>(
+        std::dynamic_pointer_cast<const core::LiveHighlighter>(shown_highlighter()));
+    ASSERT_NE(live, nullptr);
+    ASSERT_TRUE(live->deliver(live->parsed_version(), std::make_shared<OneSpan>()));
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
+    emit window_->highlighting().spans_arrived(live.get());
+    QApplication::processEvents();
+    EXPECT_GE(counter.paints, 1);
+
+    // An arrival for a highlighter that no view shows repaints nothing.
+    counter.paints = 0;
+    const core::LiveHighlighter other("source.test", 1);
+    emit window_->highlighting().spans_arrived(&other);
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
 }
 
 TEST_F(HighlightingWindowTest, ALanguageChangeSwitchesTheHighlighter) {

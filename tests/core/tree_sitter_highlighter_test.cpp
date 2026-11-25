@@ -1,11 +1,14 @@
 #include "anvil/core/tree_sitter_highlighter.hpp"
 #include "anvil/core/utf.hpp"
 
+#include <atomic>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <random>
 #include <sstream>
+#include <stop_token>
 #include <string>
+#include <thread>
 
 #ifdef ANVIL_TREE_SITTER
 
@@ -444,6 +447,88 @@ TEST(TreeSitterHighlighter, AnEditReparsesAFractionOfTheBytesOfTheFirstParse) {
     const std::size_t reparse = highlighter->bytes_read() - first_parse;
     EXPECT_GT(reparse, 0u);
     EXPECT_LT(reparse * 50, first_parse) << reparse << " of " << first_parse;
+}
+
+TEST(TreeSitterHighlighter, AStopEndsTheParseOfALargeText) {
+    const Text text = text_of(nested_json(700));
+    std::stop_source source;
+    source.request_stop();
+    const auto cancelled = TreeSitterHighlighter::create("json", text, source.get_token());
+    ASSERT_FALSE(cancelled.has_value());
+    EXPECT_EQ(cancelled.error().message, "cancelled");
+    EXPECT_TRUE(TreeSitterHighlighter::create("json", text, std::stop_token{}).has_value());
+}
+
+TEST(TreeSitterHighlighter, AStopEndsTheReparseAndLeavesNoTree) {
+    TextBuffer buffer(text_of(nested_json(700)));
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    const auto change = buffer.insert(buffer.snapshot().size() / 2, "[");
+    std::stop_source source;
+    source.request_stop();
+    // A reparse of one edit may finish before the parser looks at the flag; a failure leaves no
+    // tree, and a success is a correct one.
+    const auto result = highlighter->apply(std::span<const TextChange>(&*change, 1),
+                                           buffer.snapshot(), source.get_token());
+    if (!result) {
+        EXPECT_TRUE(highlighter->spans(1).empty());
+        EXPECT_FALSE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    } else {
+        EXPECT_EQ(render(*highlighter, buffer.snapshot()), fresh_render(buffer.snapshot()));
+    }
+}
+
+TEST(TreeSitterHighlighter, ASnapshotKeepsTheTextItWasTakenAt) {
+    TextBuffer buffer(text_of("[1, true]\n[2]"));
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    const auto snapshot = highlighter->snapshot();
+    const std::string before = render(*snapshot, buffer.snapshot());
+    EXPECT_EQ(before, render(*highlighter, buffer.snapshot()));
+    EXPECT_EQ(snapshot->root_scope(), "source.json");
+
+    const auto change = buffer.replace(1, 2, "\"changed\"");
+    ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    EXPECT_EQ(render(*snapshot, text_of("[1, true]\n[2]")), before);
+    EXPECT_NE(render(*highlighter, buffer.snapshot()), before);
+}
+
+TEST(TreeSitterHighlighter, ASnapshotHasNoSpansOnALineOfMoreThanTheLimit) {
+    std::string long_line = "[1";
+    for (std::size_t i = 0; i < max_highlighted_line_units; ++i) {
+        long_line += ",1";
+    }
+    const Text text = text_of(long_line + "]\n[2]\n");
+    const auto highlighter = json_highlighter(text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_FALSE(highlighter->spans(0).empty());
+    const auto snapshot = highlighter->snapshot();
+    EXPECT_TRUE(snapshot->spans(0).empty());
+    EXPECT_EQ(snapshot->spans(1).size(), 1u);
+}
+
+TEST(TreeSitterHighlighter, ASnapshotCanBeReadWhileTheHighlighterGoesOnEditing) {
+    TextBuffer buffer(text_of(nested_json(100)));
+    const auto highlighter = json_highlighter(buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    const auto snapshot = highlighter->snapshot();
+    const Text original = buffer.snapshot();
+    const std::string expected = render(*snapshot, original);
+
+    std::atomic<bool> done = false;
+    // A second snapshot of the same tree, read on this thread's behalf while the first is.
+    std::thread reader([&] {
+        while (!done) {
+            EXPECT_EQ(render(*snapshot, original), expected);
+        }
+    });
+    for (int i = 0; i < 200; ++i) {
+        const auto change = buffer.insert(buffer.snapshot().line_start(3) + 3, "x");
+        ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    }
+    done = true;
+    reader.join();
+    EXPECT_EQ(render(*snapshot, original), expected);
 }
 
 #else

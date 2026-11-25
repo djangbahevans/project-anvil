@@ -184,7 +184,10 @@ TEST(HighlightWorker, AnEditThatWasNotReportedIsFollowedByAParseFromScratch) {
     ASSERT_TRUE(worker.has_value());
     ASSERT_TRUE(results.wait_for_version(1));
 
-    const auto missed = buffer.insert(buffer.snapshot().line_start(3), "[]\n");
+    // The same size as before, so that only the version tells that an edit is missing.
+    const std::size_t one = buffer.snapshot().line_start(3) + 11;
+    ASSERT_EQ(buffer.snapshot().slice(one, 1), "1");
+    const auto missed = buffer.replace(one, one + 1, "\"");
     ASSERT_TRUE(missed.has_value());
     const auto reported = buffer.insert(buffer.snapshot().line_start(5) + 2, "x");
     ASSERT_TRUE(reported.has_value());
@@ -206,6 +209,18 @@ TEST(HighlightWorker, ReplacingTheTextParsesItFromScratch) {
     (*worker)->replace(other, 9);
     ASSERT_TRUE(results.wait_for_version(9));
     EXPECT_EQ(render(*results.last(), other), fresh_render(other));
+}
+
+TEST(HighlightWorker, AResultIsNotDeliveredWhenAnEditArrivedWhileItWasParsed) {
+    Results results;
+    TextBuffer buffer(text_of(document_of(40000)));
+    auto worker = HighlightWorker::create("json", buffer.snapshot(), 1, results.deliver());
+    ASSERT_TRUE(worker.has_value());
+    // The first parse of a document this size takes far longer than this call.
+    const auto change = buffer.insert(buffer.snapshot().line_start(2) + 3, "x");
+    (*worker)->edit(DocumentChange{2, ChangeCause::edit, {*change}}, buffer.snapshot());
+    ASSERT_TRUE(results.wait_for_version(2));
+    EXPECT_EQ(results.versions(), std::vector<std::uint64_t>{2});
 }
 
 TEST(HighlightWorker, AnEditWithNoChangesAtTheSameVersionIsIgnored) {
