@@ -528,6 +528,20 @@ TEST_F(ExplorerFollowTest, TheSelectionMovesToTheNeighborOfARowThatDisappears) {
     EXPECT_EQ(current_name(), "src");
 }
 
+TEST_F(ExplorerFollowTest, ASelectionInsideAFolderThatDisappearsMovesToTheNeighborOfTheFolder) {
+    open_workspace();
+    tree()->expand(index_of("/w/src"));
+    tree()->expand(index_of("/w/src/util"));
+    tree()->setCurrentIndex(index_of("/w/src/util/strings.cpp"));
+    ASSERT_EQ(current_name(), "strings.cpp");
+
+    files_.set("/w", {file("zeta.txt"), file("a10.txt"), file("a9.txt"), dir("docs"), dir(".git"),
+                      dir("build")});
+    events({"/w/src"});
+    EXPECT_EQ(current_name(), "a9.txt") << "the row that took the place of src";
+    EXPECT_TRUE(tree()->selectionModel()->isSelected(tree()->currentIndex()));
+}
+
 TEST_F(ExplorerFollowTest, TheSelectionDoesNotMoveWhenAnotherRowDisappears) {
     open_workspace();
     tree()->setCurrentIndex(index_of("/w/zeta.txt"));
