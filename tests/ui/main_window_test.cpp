@@ -8735,12 +8735,23 @@ TEST_F(CommentCommandsTest, EachCommandIsOneUndoStep) {
 }
 
 TEST_F(CommentCommandsTest, AddAndRemoveLineCommentForceTheirDirection) {
-    open("a.py", "# a\nb\n");
-    select({core::Selection{0, 5}});
+    open("a.py", "# a\n# b\n");
+    select({core::Selection{0, 6}});
     run("editor.action.addCommentLine");
-    EXPECT_EQ(text(), "# # a\n# b\n");
+    EXPECT_EQ(text(), "# # a\n# # b\n");
     run("editor.action.removeCommentLine");
-    EXPECT_EQ(text(), "# a\nb\n");
+    EXPECT_EQ(text(), "# a\n# b\n");
+    run("editor.action.removeCommentLine");
+    EXPECT_EQ(text(), "a\nb\n");
+    run("editor.action.removeCommentLine");
+    EXPECT_EQ(text(), "a\nb\n");
+}
+
+TEST_F(CommentCommandsTest, RemoveLineCommentRemovesWhereToggleWouldAdd) {
+    open("a.py", "# a\nb\n");
+    select({core::Selection{0, 6}});
+    run("editor.action.removeCommentLine");
+    EXPECT_EQ(text(), "a\nb\n");
 }
 
 TEST_F(CommentCommandsTest, ToggleBlockCommentWrapsTheSelectionAndUnwrapsIt) {

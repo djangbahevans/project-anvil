@@ -261,6 +261,77 @@ TEST(CommentCommands, ABlockCommentAroundACaretStartsEmptyWithTheCaretInside) {
                   {"fi<!@#  #@!>rst line"}, {1, 8, 1, 8});
 }
 
+// --- a block comment for a language that has no line comment, from VS Code's tests ---
+
+LanguageComments parentheses() {
+    return tokens_of({{"lineComment", ""}, {"blockComment", {"(", ")"}}});
+}
+
+TEST(CommentCommands, ALineCommandWithoutALineTokenWrapsTheLineInTheBlockComment) {
+    expect_result(Command::toggle, parentheses(),
+                  {"first", "\tsecond line", "third line", "fourth line", "fifth"}, {1, 1, 1, 1},
+                  {"( first )", "\tsecond line", "third line", "fourth line", "fifth"},
+                  {1, 3, 1, 3});
+}
+
+TEST(CommentCommands, ALineCommandWithoutALineTokenUnwrapsTheBlockCommentOfTheSelection) {
+    expect_result(Command::toggle, parentheses(),
+                  {"(first)", "\tsecond line", "third line", "fourth line", "fifth"}, {1, 7, 1, 2},
+                  {"first", "\tsecond line", "third line", "fourth line", "fifth"}, {1, 6, 1, 1});
+}
+
+TEST(CommentCommands, TheBlockCommentOfALineCommandReachesTheEdgesOfTheLines) {
+    expect_result(Command::toggle, parentheses(),
+                  {"first", "\tsecond line", "third line", "fourth line", "fifth"}, {3, 2, 1, 3},
+                  {"( first", "\tsecond line", "third line )", "fourth line", "fifth"},
+                  {3, 2, 1, 5});
+    expect_result(Command::toggle, parentheses(),
+                  {"(first", "\tsecond line", "third line)", "fourth line", "fifth"}, {3, 11, 1, 2},
+                  {"first", "\tsecond line", "third line", "fourth line", "fifth"}, {3, 11, 1, 1});
+}
+
+TEST(CommentCommands, ACaretAnywhereOnALineWithABlockCommentRemovesIt) {
+    const LanguageComments bang = tokens_of({{"blockComment", {"<!@#", "#@!>"}}});
+    const std::vector<std::string> lines = {"\t\tfirst\t    ", "\t\tsecond line", "\tthird line",
+                                            "fourth line", "\t\t<!@#fifth#@!>\t\t"};
+    const std::vector<std::string> without = {"\t\tfirst\t    ", "\t\tsecond line", "\tthird line",
+                                              "fourth line", "\t\tfifth\t\t"};
+    expect_result(Command::toggle, bang, lines, {5, 1, 5, 1}, without, {5, 1, 5, 1});
+    expect_result(Command::toggle, bang, lines, {5, 3, 5, 3}, without, {5, 3, 5, 3});
+    expect_result(Command::toggle, bang, lines, {5, 4, 5, 4}, without, {5, 3, 5, 3});
+    expect_result(Command::toggle, bang, lines, {5, 16, 5, 3}, without, {5, 8, 5, 3});
+    expect_result(Command::toggle, bang, lines, {5, 12, 5, 7}, without, {5, 8, 5, 3});
+    expect_result(Command::toggle, bang, lines, {5, 18, 5, 18}, without, {5, 10, 5, 10});
+}
+
+TEST(CommentCommands, ACaretOnALineWithoutABlockCommentWrapsTheLineFromItsIndentation) {
+    const LanguageComments bang = tokens_of({{"blockComment", {"<!@#", "#@!>"}}});
+    expect_result(Command::toggle, bang,
+                  {"\t\tfirst\t    ", "\t\tsecond line", "\tthird line", "fourth line",
+                   "\t\t<!@#fifth#@!>\t\t"},
+                  {1, 1, 1, 1},
+                  {"\t\t<!@# first\t     #@!>", "\t\tsecond line", "\tthird line", "fourth line",
+                   "\t\t<!@#fifth#@!>\t\t"},
+                  {1, 1, 1, 1});
+}
+
+TEST(CommentCommands, AddForcesTheTokenAndRemoveTheRemovalOnLinesThatAreNotAllCommented) {
+    expect_result(Command::add, bang_tokens(), {"!@# a", "!@# b"}, {1, 1, 2, 5},
+                  {"!@# !@# a", "!@# !@# b"}, {1, 5, 2, 9});
+    expect_result(Command::remove, bang_tokens(), {"!@# a", "b"}, {1, 1, 2, 2}, {"a", "b"},
+                  {1, 1, 2, 2});
+}
+
+TEST(CommentCommands, TheCursorThatComesFirstDecidesWhichLineASharedLineIsPartOf) {
+    // Two selections share line 2. The primary cursor wins it: the other ignores its first line.
+    const std::vector<std::string> lines = {"a", "b", "c"};
+    const LanguageComments tokens = bang_tokens();
+    const Outcome first = run(tokens, Command::toggle, {}, lines, {{1, 1, 2, 2}, {2, 2, 3, 2}}, 0);
+    const Outcome second = run(tokens, Command::toggle, {}, lines, {{1, 1, 2, 2}, {2, 2, 3, 2}}, 1);
+    EXPECT_EQ(first.lines, (std::vector<std::string>{"!@# a", "!@# b", "!@# c"}));
+    EXPECT_NE(second.lines, first.lines);
+}
+
 // --- several selections ---
 
 TEST(CommentCommands, SelectionsOnTheSameLineCommentItOnce) {
@@ -323,8 +394,13 @@ TEST(CommentCommands, TheRecordedCasesGiveVsCodesTextAndSelections) {
             expected_cursors.push_back(c.get<Cursor>());
         }
         const auto expected_lines = entry["expectedLines"].get<std::vector<std::string>>();
-        const Outcome outcome =
-            run(tokens, commands.at(entry["command"].get<std::string>()), options, lines, cursors);
+        // VS Code lists the primary cursor first; the selections of the document are in the order
+        // of the text.
+        const std::vector<Cursor> in_text_order = ordered(cursors);
+        const std::size_t primary = static_cast<std::size_t>(
+            std::ranges::find(in_text_order, cursors.front()) - in_text_order.begin());
+        const Outcome outcome = run(tokens, commands.at(entry["command"].get<std::string>()),
+                                    options, lines, in_text_order, primary);
         if (outcome.lines != expected_lines ||
             ordered(outcome.cursors) != ordered(expected_cursors)) {
             if (++failures <= 8) {

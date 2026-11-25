@@ -233,7 +233,12 @@ async function run(config, command, options, lines, selections) {
 const cases = [];
 const names = Object.keys(configurations);
 const commands = ['toggle', 'toggle', 'add', 'remove', 'block'];
-for (let n = 0; n < 1600; n++) {
+// The first cases of the stream, and the cases of it that need a rule that the others rarely meet:
+// a reversed selection that the edits empty, a selection pushed past the end of its line, cursors
+// that merge, a block comment over a blank line.
+const kept = 3000;
+const rare = new Set([4116, 7199, 9133, 10973, 11078, 11529]);
+for (let n = 0; n < 12000; n++) {
     const config = pick(names);
     const command = pick(commands);
     const options = {
@@ -256,8 +261,16 @@ for (let n = 0; n < 1600; n++) {
             }
         }
     }
-    const result = await run(config, command, options, lines, selectionsFor(lines));
-    cases.push({ config, command, ...options, lines, ...result });
+    // The primary cursor, which VS Code lists first, decides which of two cursors that share a line
+    // comments it.
+    const selections = selectionsFor(lines);
+    if (selections.length > 1 && chance(0.4)) {
+        selections.unshift(...selections.splice(between(1, selections.length - 1), 1));
+    }
+    if (n < kept || rare.has(n)) {
+        const result = await run(config, command, options, lines, selections);
+        cases.push({ config, command, ...options, lines, ...result });
+    }
 }
 
 const generated = JSON.stringify({ vscode: version, configurations, cases }, null, 0)
