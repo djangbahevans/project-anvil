@@ -35,6 +35,9 @@ public:
         : QStyledItemDelegate(parent), colors_(colors), view_(view), hovered_(hovered) {}
 
     QColor text_color(const QModelIndex& index) const {
+        if (index.data(ExplorerModel::PlaceholderRole).toBool()) {
+            return colors_.color("descriptionForeground");
+        }
         if (view_.selectionModel()->isSelected(index)) {
             return colors_.color(view_.hasFocus() ? "list.activeSelectionForeground"
                                                   : "list.inactiveSelectionForeground");
@@ -45,7 +48,9 @@ public:
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
                const QModelIndex& index) const override {
         painter->save();
-        painter->setFont(option.font);
+        QFont font = option.font;
+        font.setItalic(index.data(ExplorerModel::PlaceholderRole).toBool());
+        painter->setFont(font);
         painter->setPen(text_color(index));
         const QRect text = option.rect.adjusted(label_padding, 0, -4, 0);
         painter->drawText(
@@ -127,7 +132,7 @@ protected:
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
                  const QModelIndex& index) const override {
         const bool selected = selectionModel()->isSelected(index);
-        const bool hovered = index == hovered_;
+        const bool hovered = index == hovered_ && (model()->flags(index) & Qt::ItemIsEnabled);
         const QRect row(0, option.rect.top(), viewport()->width(), option.rect.height());
         if (selected) {
             painter->fillRect(row, colors_.color(hasFocus() ? "list.activeSelectionBackground"
@@ -227,9 +232,10 @@ private:
 };
 
 ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
-                           core::DirectoryLister lister, DirectoryWatchFactory watch)
+                           core::DirectoryLister lister, DirectoryWatchFactory watch,
+                           std::unique_ptr<ListingRunner> runner)
     : QWidget(parent), colors_(colors),
-      model_(new ExplorerModel(std::move(lister), std::move(watch), this)) {
+      model_(new ExplorerModel(std::move(lister), std::move(watch), std::move(runner), this)) {
     setAutoFillBackground(true);
 
     auto* folder_page = new QWidget(this);
@@ -240,6 +246,9 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
     tree_ = new ExplorerTree(
         colors_,
         [this](const QModelIndex& index) {
+            if (model_->data(index, ExplorerModel::PlaceholderRole).toBool()) {
+                return;
+            }
             if (model_->is_directory(index)) {
                 tree_->setExpanded(index, !tree_->isExpanded(index));
             } else {
@@ -248,6 +257,8 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
         },
         folder_page);
     tree_->setModel(model_);
+    connect(tree_, &QTreeView::collapsed, model_,
+            [this](const QModelIndex& index) { model_->cancel_loading(index); });
     folder_layout->addWidget(header_);
     folder_layout->addWidget(tree_, 1);
 

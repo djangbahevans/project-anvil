@@ -9004,8 +9004,19 @@ protected:
         window_->resize(1000, 700);
         window_->sidebar()->activate("workbench.view.explorer");
         QApplication::processEvents();
-        return qobject_cast<ui::ExplorerView*>(
+        auto* explorer = qobject_cast<ui::ExplorerView*>(
             window_->sidebar()->container_widget("workbench.view.explorer"));
+        settle(explorer);
+        return explorer;
+    }
+
+    // The directories are read on worker threads: waits until none is being read.
+    static void settle(ui::ExplorerView* explorer) {
+        QElapsedTimer timer;
+        timer.start();
+        while (explorer && explorer->model()->loading() && timer.elapsed() < 10000) {
+            QTest::qWait(10);
+        }
     }
 
     static std::vector<std::string> names_of(const ui::ExplorerView* view) {
@@ -9035,6 +9046,7 @@ TEST_F(ExplorerWindowTest, TheExplorerIsTheFirstContainerOfTheSideBarAndIsMadeWh
     EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
 
     explorer->tree()->expand(explorer->model()->index_of(workspace_->folder / "src"));
+    settle(explorer);
     explorer->tree()->setCurrentIndex(
         explorer->model()->index_of(workspace_->folder / "src" / "main.cpp"));
     QApplication::processEvents();
@@ -9082,6 +9094,7 @@ TEST_F(ExplorerWindowTest, TheExcludeSettingHidesAFolderAndShowsItAgainWhenItCha
     ASSERT_NE(explorer, nullptr);
     EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));
     explorer->tree()->expand(explorer->model()->index_of(workspace_->folder / "src"));
+    settle(explorer);
 
     window_->change_setting("files.exclude", json{{"**/build", true}});
     QApplication::processEvents();
@@ -9127,6 +9140,7 @@ TEST_F(ExplorerWindowTest, WithNoFolderTheExplorerOffersToOpenOneAndFollowsTheWo
 
     ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
     QApplication::processEvents();
+    settle(explorer);
     EXPECT_TRUE(explorer->shows_folder());
     EXPECT_EQ(explorer->folder_name(), "project");
     EXPECT_EQ(names_of(explorer), (std::vector<std::string>{"build", "src", "a.txt"}));

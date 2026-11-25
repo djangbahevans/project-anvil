@@ -3,12 +3,15 @@
 #include "anvil/platform/file_system.hpp"
 #include "anvil/platform/file_watcher.hpp"
 
+#include <QMetaObject>
 #include <QString>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <iterator>
 #include <set>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 
 namespace anvil::ui {
@@ -18,7 +21,13 @@ struct ExplorerModel::Node {
     int row = 0;
     core::FileTreeEntry entry;
     std::filesystem::path path;
-    bool read = false;
+    State state = State::unread;
+    // The load that reads the directory, while it is loading.
+    std::uint64_t load_id = 0;
+    // An event named the directory while it was loading, so that it is read again afterwards.
+    bool dirty = false;
+    // The "Loading…" row of a directory that is loading.
+    bool placeholder = false;
     std::vector<std::unique_ptr<Node>> children;
 };
 
@@ -86,6 +95,57 @@ DirectoryWatchFactory platform_directory_watch() {
     };
 }
 
+namespace {
+
+class ThreadListingRunner : public ListingRunner {
+public:
+    explicit ThreadListingRunner(QObject* context) : context_(context) {}
+
+    void run(std::stop_token stop, Task task, Done done) override {
+        std::erase_if(workers_, [](const Worker& worker) { return worker.finished->load(); });
+        auto finished = std::make_shared<std::atomic<bool>>(false);
+        auto delivered = std::make_shared<Done>(std::move(done));
+        workers_.push_back({std::jthread([context = context_, stop, task = std::move(task),
+                                          delivered, finished]() mutable {
+                                std::optional<core::FileTreeListing> result = task(stop);
+                                QMetaObject::invokeMethod(
+                                    context,
+                                    [delivered, result = std::move(result)]() mutable {
+                                        (*delivered)(std::move(result));
+                                    },
+                                    Qt::QueuedConnection);
+                                finished->store(true);
+                            }),
+                            finished});
+    }
+
+private:
+    struct Worker {
+        std::jthread thread;
+        std::shared_ptr<std::atomic<bool>> finished;
+    };
+
+    QObject* context_;
+    std::vector<Worker> workers_;
+};
+
+class ImmediateListingRunner : public ListingRunner {
+public:
+    void run(std::stop_token stop, Task task, Done done) override {
+        done(task(stop));
+    }
+};
+
+} // namespace
+
+std::unique_ptr<ListingRunner> thread_listing_runner(QObject* context) {
+    return std::make_unique<ThreadListingRunner>(context);
+}
+
+std::unique_ptr<ListingRunner> immediate_listing_runner() {
+    return std::make_unique<ImmediateListingRunner>();
+}
+
 constexpr int poll_interval_ms = 100;
 
 namespace {
@@ -97,14 +157,20 @@ QString text_of(const std::filesystem::path& path) {
 } // namespace
 
 ExplorerModel::ExplorerModel(core::DirectoryLister lister, DirectoryWatchFactory watch,
-                             QObject* parent)
+                             std::unique_ptr<ListingRunner> runner, QObject* parent)
     : QAbstractItemModel(parent), lister_(std::move(lister)), watch_factory_(std::move(watch)),
-      poll_timer_(new QTimer(this)), root_(std::make_unique<Node>()) {
+      poll_timer_(new QTimer(this)),
+      runner_(runner ? std::move(runner) : thread_listing_runner(this)),
+      root_(std::make_unique<Node>()) {
     poll_timer_->setInterval(poll_interval_ms);
     connect(poll_timer_, &QTimer::timeout, this, [this] { process_file_events(); });
 }
 
-ExplorerModel::~ExplorerModel() = default;
+ExplorerModel::~ExplorerModel() {
+    cancel_all();
+    // Ends the workers before the members that their results would reach.
+    runner_.reset();
+}
 
 ExplorerModel::Node* ExplorerModel::node_of(const QModelIndex& index) const {
     return index.isValid() ? static_cast<Node*>(index.internalPointer()) : root_.get();
@@ -117,31 +183,163 @@ QModelIndex ExplorerModel::index_of_node(const Node* node) const {
     return createIndex(node->row, 0, const_cast<Node*>(node));
 }
 
-void ExplorerModel::fill(Node& directory) {
+void ExplorerModel::begin_load(Node& directory) {
     // The watch starts before the listing so that a change in between is not missed.
     watch_directory(directory.path);
-    const std::vector<core::FileTreeEntry>& entries = tree_->children(directory.path);
-    directory.read = true;
-    if (entries.empty()) {
+    const std::uint64_t id = next_load_++;
+    directory.state = State::loading;
+    directory.load_id = id;
+    directory.dirty = false;
+
+    auto placeholder = std::make_unique<Node>();
+    placeholder->parent = &directory;
+    placeholder->placeholder = true;
+    placeholder->entry.name = tr("Loading…").toStdString();
+    const QModelIndex parent = index_of_node(&directory);
+    beginInsertRows(parent, 0, 0);
+    directory.children.push_back(std::move(placeholder));
+    endInsertRows();
+
+    std::stop_source stop;
+    loads_.emplace(id, Load{&directory, stop});
+    // The view calls `fetchMore` while it lays out an expansion, and it cannot take the rows of the
+    // "Loading…" row replaced from inside that call: a result that a runner gives before `run`
+    // returns waits for the event loop like one that a worker gives.
+    starting_ = true;
+    runner_->run(
+        stop.get_token(),
+        [reader = tree_->reader(), path = directory.path](std::stop_token token) {
+            return reader.read(path, token);
+        },
+        [this, id](std::optional<core::FileTreeListing> listing) {
+            if (starting_) {
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, id, listing = std::move(listing)]() mutable {
+                        finish_load(id, std::move(listing));
+                    },
+                    Qt::QueuedConnection);
+            } else {
+                finish_load(id, std::move(listing));
+            }
+        });
+    starting_ = false;
+}
+
+void ExplorerModel::finish_load(std::uint64_t id, std::optional<core::FileTreeListing> listing) {
+    const auto found = loads_.find(id);
+    if (found == loads_.end()) {
         return;
     }
-    std::vector<std::unique_ptr<Node>> children;
-    children.reserve(entries.size());
-    for (const core::FileTreeEntry& entry : entries) {
-        auto node = std::make_unique<Node>();
-        node->parent = &directory;
-        node->row = static_cast<int>(children.size());
-        node->entry = entry;
-        node->path = directory.path / entry.name;
-        children.push_back(std::move(node));
+    Node& directory = *found->second.node;
+    if (!listing) {
+        cancel_node(directory);
+        return;
     }
     const QModelIndex parent = index_of_node(&directory);
-    beginInsertRows(parent, 0, static_cast<int>(children.size()) - 1);
-    directory.children = std::move(children);
-    endInsertRows();
+    beginRemoveRows(parent, 0, 0);
+    directory.children.clear();
+    endRemoveRows();
+    tree_->adopt(directory.path, std::move(*listing));
+    directory.state = State::filling;
+    insert_batch(id);
+}
+
+void ExplorerModel::insert_batch(std::uint64_t id) {
+    const auto found = loads_.find(id);
+    if (found == loads_.end()) {
+        return;
+    }
+    Node& directory = *found->second.node;
+    const std::vector<core::FileTreeEntry>& entries = tree_->children(directory.path);
+    const std::size_t from = directory.children.size();
+    const std::size_t to = std::min(from + static_cast<std::size_t>(batch_size), entries.size());
+    if (from < to) {
+        std::vector<std::unique_ptr<Node>> added;
+        added.reserve(to - from);
+        for (std::size_t i = from; i < to; ++i) {
+            auto node = std::make_unique<Node>();
+            node->parent = &directory;
+            node->row = static_cast<int>(i);
+            node->entry = entries[i];
+            node->path = directory.path / entries[i].name;
+            added.push_back(std::move(node));
+        }
+        beginInsertRows(index_of_node(&directory), static_cast<int>(from),
+                        static_cast<int>(to) - 1);
+        directory.children.insert(directory.children.end(), std::make_move_iterator(added.begin()),
+                                  std::make_move_iterator(added.end()));
+        endInsertRows();
+    }
+    if (to < entries.size()) {
+        QMetaObject::invokeMethod(this, [this, id] { insert_batch(id); }, Qt::QueuedConnection);
+        return;
+    }
+    directory.state = State::read;
+    directory.load_id = 0;
+    loads_.erase(found);
+    if (directory.dirty) {
+        directory.dirty = false;
+        refresh(directory);
+    }
+}
+
+void ExplorerModel::cancel_node(Node& directory) {
+    if (directory.state != State::loading && directory.state != State::filling) {
+        return;
+    }
+    if (const auto found = loads_.find(directory.load_id); found != loads_.end()) {
+        found->second.stop.request_stop();
+        loads_.erase(found);
+    }
+    drop_loads_below(directory);
+    if (!directory.children.empty()) {
+        const QModelIndex parent = index_of_node(&directory);
+        beginRemoveRows(parent, 0, static_cast<int>(directory.children.size()) - 1);
+        directory.children.clear();
+        endRemoveRows();
+    }
+    if (directory.state == State::filling && tree_) {
+        tree_->forget(directory.path);
+    }
+    unwatch_below(directory.path);
+    directory.state = State::unread;
+    directory.load_id = 0;
+    directory.dirty = false;
+}
+
+void ExplorerModel::drop_loads_below(Node& node) {
+    if (node.state == State::loading || node.state == State::filling) {
+        if (const auto found = loads_.find(node.load_id); found != loads_.end()) {
+            found->second.stop.request_stop();
+            loads_.erase(found);
+        }
+    }
+    for (const std::unique_ptr<Node>& child : node.children) {
+        drop_loads_below(*child);
+    }
+}
+
+void ExplorerModel::cancel_all() {
+    for (auto& [id, load] : loads_) {
+        load.stop.request_stop();
+    }
+    loads_.clear();
+}
+
+bool ExplorerModel::is_loading(const QModelIndex& directory) const {
+    const Node* node = node_of(directory);
+    return node->state == State::loading || node->state == State::filling;
+}
+
+void ExplorerModel::cancel_loading(const QModelIndex& directory) {
+    if (directory.isValid()) {
+        cancel_node(*node_of(directory));
+    }
 }
 
 void ExplorerModel::set_folder(std::optional<std::filesystem::path> folder) {
+    cancel_all();
     beginResetModel();
     folder_ = std::move(folder);
     root_ = std::make_unique<Node>();
@@ -156,7 +354,7 @@ void ExplorerModel::set_folder(std::optional<std::filesystem::path> folder) {
         root_->entry = {.name = folder_->filename().string(), .is_directory = true};
         root_->path = tree_->root();
         start_watch();
-        fill(*root_);
+        begin_load(*root_);
     }
 }
 
@@ -229,15 +427,21 @@ void ExplorerModel::refresh(Node& directory) {
 }
 
 void ExplorerModel::refresh_open_directories(Node& directory) {
+    if (directory.state != State::read) {
+        if (directory.state != State::unread) {
+            directory.dirty = true;
+        }
+        return;
+    }
     refresh(directory);
     for (const std::unique_ptr<Node>& child : directory.children) {
-        if (child->read) {
+        if (child->entry.is_directory) {
             refresh_open_directories(*child);
         }
     }
 }
 
-ExplorerModel::Node* ExplorerModel::open_directory(const std::filesystem::path& path) const {
+ExplorerModel::Node* ExplorerModel::find_directory(const std::filesystem::path& path) const {
     if (!folder_) {
         return nullptr;
     }
@@ -250,18 +454,19 @@ ExplorerModel::Node* ExplorerModel::open_directory(const std::filesystem::path& 
         if (part.empty() || part == ".") {
             continue;
         }
-        if (part == ".." || !node->read) {
+        if (part == "..") {
             return nullptr;
         }
         const std::string name = part.string();
-        const auto found = std::ranges::find_if(
-            node->children, [&](const auto& child) { return child->entry.name == name; });
+        const auto found = std::ranges::find_if(node->children, [&](const auto& child) {
+            return !child->placeholder && child->entry.name == name;
+        });
         if (found == node->children.end()) {
             return nullptr;
         }
         node = found->get();
     }
-    return node->read && node->entry.is_directory ? node : nullptr;
+    return node->state != State::unread && node->entry.is_directory ? node : nullptr;
 }
 
 void ExplorerModel::process_file_events() {
@@ -285,8 +490,12 @@ void ExplorerModel::process_file_events() {
         directories.insert(path.parent_path());
     }
     for (const std::filesystem::path& directory : directories) {
-        if (Node* node = open_directory(directory)) {
-            refresh(*node);
+        if (Node* node = find_directory(directory)) {
+            if (node->state == State::read) {
+                refresh(*node);
+            } else {
+                node->dirty = true;
+            }
         }
     }
 }
@@ -320,6 +529,7 @@ void ExplorerModel::synchronize(Node& directory) {
             --begin;
         }
         for (std::size_t row = begin; row < end; ++row) {
+            drop_loads_below(*directory.children[row]);
             unwatch_below(directory.children[row]->path);
         }
         beginRemoveRows(parent, static_cast<int>(begin), static_cast<int>(end) - 1);
@@ -421,12 +631,12 @@ bool ExplorerModel::hasChildren(const QModelIndex& parent) const {
 
 bool ExplorerModel::canFetchMore(const QModelIndex& parent) const {
     const Node* node = node_of(parent);
-    return tree_ && node->entry.is_directory && !node->read;
+    return tree_ && node->entry.is_directory && node->state == State::unread;
 }
 
 void ExplorerModel::fetchMore(const QModelIndex& parent) {
     if (canFetchMore(parent)) {
-        fill(*node_of(parent));
+        begin_load(*node_of(parent));
     }
 }
 
@@ -435,9 +645,17 @@ QVariant ExplorerModel::data(const QModelIndex& index, int role) const {
         return {};
     }
     const Node& node = *node_of(index);
+    if (node.placeholder) {
+        return role == Qt::DisplayRole   ? QVariant(QString::fromStdString(node.entry.name))
+               : role == PlaceholderRole ? QVariant(true)
+               : role == IsDirectoryRole ? QVariant(false)
+                                         : QVariant();
+    }
     switch (role) {
     case Qt::DisplayRole:
         return QString::fromStdString(node.entry.name);
+    case PlaceholderRole:
+        return false;
     case Qt::ToolTipRole: {
         const Error* error = tree_ ? tree_->error(node.path) : nullptr;
         return error ? QString::fromStdString(error->message) : text_of(node.path);
@@ -456,7 +674,10 @@ QVariant ExplorerModel::data(const QModelIndex& index, int role) const {
 }
 
 Qt::ItemFlags ExplorerModel::flags(const QModelIndex& index) const {
-    return index.isValid() ? Qt::ItemIsEnabled | Qt::ItemIsSelectable : Qt::NoItemFlags;
+    if (!index.isValid() || node_of(index)->placeholder) {
+        return Qt::NoItemFlags;
+    }
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }
 
 } // namespace anvil::ui
