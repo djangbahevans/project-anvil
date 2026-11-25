@@ -7781,6 +7781,27 @@ TEST_F(HighlightingWindowTest, ADocumentInALanguageWithAGrammarIsHighlightedOffT
                                                            "constant.numeric.json"}));
 }
 
+TEST_F(HighlightingWindowTest, JavascriptAndTypescriptDocumentsAreHighlightedByTheirLanguage) {
+    create_window();
+    const struct {
+        const char* file;
+        const char* text;
+        const char* first_scope;
+    } cases[] = {
+        {"a.js", "const x = 1;\n", "storage.type.js"},
+        {"a.jsx", "const x = <a b=\"c\" />;\n", "storage.type.js.jsx"},
+        {"a.ts", "interface A { b: string }\n", "storage.type.ts"},
+        {"a.tsx", "const x: number = 1;\n", "storage.type.tsx"},
+    };
+    for (const auto& c : cases) {
+        ASSERT_TRUE(open(write(c.file, c.text))) << c.file;
+        ASSERT_NE(shown_highlighter(), nullptr) << c.file;
+        ASSERT_TRUE(spans_arrive_on(0)) << c.file;
+        EXPECT_EQ(scopes_of_line(0).front(), c.first_scope) << c.file;
+    }
+    EXPECT_EQ(window_->highlighting().worker_count(), 4u);
+}
+
 TEST_F(HighlightingWindowTest, CAndCppDocumentsAreHighlighted) {
     create_window();
     ASSERT_TRUE(open(write("a.c", "#include <stdio.h>\nint main(void) { return 0; }\n")));
@@ -7804,13 +7825,15 @@ TEST_F(HighlightingWindowTest, TheSamplesAreShownInDarkAndLightModern) {
                                std::string(R"j({"workbench.colorTheme": ")j") + theme + R"j("})j");
         create_window();
         window_->resize(900, 700);
-        for (const char* sample : {"highlight_c_sample.c", "highlight_cpp_sample.cpp"}) {
+        for (const char* sample :
+             {"highlight_c_sample.c", "highlight_cpp_sample.cpp", "highlight_js_sample.js",
+              "highlight_jsx_sample.jsx", "highlight_ts_sample.ts", "highlight_tsx_sample.tsx"}) {
             std::ifstream in(std::string(ANVIL_CORE_TEST_DATA_DIR) + "/" + sample,
                              std::ios::binary);
             std::stringstream text;
             text << in.rdbuf();
             ASSERT_TRUE(open(write(sample, text.str())));
-            ASSERT_TRUE(spans_arrive_on(1));
+            ASSERT_TRUE(spans_arrive_on(0));
             QTest::qWait(100);
             const QImage image = window_->grab().toImage();
             EXPECT_FALSE(image.isNull());
