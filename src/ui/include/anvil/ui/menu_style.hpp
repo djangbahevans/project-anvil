@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QProxyStyle>
 
@@ -15,7 +16,7 @@ namespace anvil::ui {
 // each menu, submenus included, is given this style with `QWidget::setStyle`.
 class MenuStyle : public QProxyStyle {
 public:
-    // The measures of an item, in logical pixels.
+    // The measures of an item, in logical pixels at zoom level 0.
     static constexpr int item_height = 24;
     static constexpr int separator_height = 9;
     static constexpr int label_left = 30;
@@ -30,6 +31,16 @@ public:
 
     explicit MenuStyle(const WorkbenchColors& colors);
 
+    // The zoom that the measures are read through, which must outlive the style. The menus lay
+    // themselves out when they are shown, so a change applies from the next time one opens. Null
+    // means level 0.
+    void set_zoom(const Zoom* zoom) {
+        zoom_ = zoom;
+    }
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* painter,
                        const QWidget* widget) const override;
     void drawControl(ControlElement element, const QStyleOption* option, QPainter* painter,
@@ -41,6 +52,7 @@ public:
 
 private:
     const WorkbenchColors& colors_;
+    const Zoom* zoom_ = nullptr;
 };
 
 } // namespace anvil::ui

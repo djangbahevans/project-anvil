@@ -10,10 +10,11 @@
 #include <string_view>
 
 class QHBoxLayout;
-class QSplitter;
 class QVBoxLayout;
 
 namespace anvil::ui {
+
+class Splitter;
 
 // The fixed parts of the window, in VS Code's positions and with its part ids: the title bar above
 // everything, the activity bar at the left edge, then the sidebar, then the editor area above the
@@ -58,6 +59,7 @@ class Workbench : public QWidget {
 public:
     // The width at zoom level 0.
     static constexpr int activity_bar_width = 48;
+    // The sizes that follow, at zoom level 0.
     static constexpr int sidebar_minimum_width = 170;
     static constexpr int panel_minimum_height = 77;
     // The least width of a panel that is at the left or the right of the editor area.
@@ -72,9 +74,13 @@ public:
     // and `sash` keys.
     explicit Workbench(const WorkbenchColors& colors, QWidget* parent = nullptr);
 
-    // The zoom that the width of the activity bar is read through, which must outlive the
-    // workbench. Null means level 0.
+    // The zoom that the sizes of the workbench are read through (the width of the activity bar, the
+    // minimum sizes of the parts, the sashes), which must outlive the workbench. A change of the
+    // level keeps each part at the size it has, to the new minimum at least. Null means level 0.
     void set_zoom(const Zoom* zoom);
+    const Zoom* zoom() const {
+        return zoom_;
+    }
     ~Workbench() override;
 
     // The editor area is the widget that fills the middle; the workbench owns it.
@@ -122,6 +128,7 @@ signals:
 
 protected:
     void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class PartWidget;
@@ -139,12 +146,24 @@ private:
     PartWidget* sidebar_ = nullptr;
     PartWidget* panel_ = nullptr;
     QWidget* editor_host_ = nullptr;
-    QSplitter* across_ = nullptr;
-    QSplitter* down_ = nullptr;
+    Splitter* across_ = nullptr;
+    Splitter* down_ = nullptr;
     QVBoxLayout* root_layout_ = nullptr;
     QHBoxLayout* row_layout_ = nullptr;
     QPointer<QWidget> status_bar_;
     QPointer<QWidget> title_bar_;
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    // Sets the minimum sizes of the parts: the ones of the zoom, but no more than the window has
+    // room for, so that a window at a high level still lays out inside itself.
+    void apply_minimums();
+    int room_across() const;
+    int room_down() const;
+    int capped(int base, int room) const;
+    int sidebar_minimum() const;
+    int panel_minimum() const;
+    int default_size_now_ = default_size;
     int sidebar_size_ = default_size;
     std::array<int, 4> panel_sizes_{default_size, default_size, default_size, default_size};
     Side sidebar_side_ = Side::left;

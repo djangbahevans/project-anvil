@@ -9851,3 +9851,102 @@ TEST_F(ZoomChromeTest, TheTitleBarOfAFramelessWindowFollowsTheZoom) {
         EXPECT_EQ(window_->menu_bar()->height(), window_->title_bar()->height());
     }
 }
+
+class ZoomWholeWindowTest : public ZoomChromeTest {
+protected:
+    void show_every_part() {
+        window_->workbench()->set_visible(ui::Part::activity_bar, true);
+        window_->workbench()->set_visible(ui::Part::sidebar, true);
+        window_->workbench()->set_visible(ui::Part::panel, true);
+        QApplication::processEvents();
+    }
+    void save_screenshot(const char* name) {
+        if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+            window_->grab().save(QString::fromUtf8(directory) + "/" + name);
+        }
+    }
+};
+
+TEST_F(ZoomWholeWindowTest, TheWindowAtTheEndsOfTheRangeLaysOutWithoutOverlapOrPartsWiderThanIt) {
+    for (const double level : {-8.0, -2.0, 3.0, 8.0}) {
+        window_.reset();
+        start_shown_with(R"j({"window.zoomLevel": )j" + std::to_string(level) + "}");
+        show_every_part();
+        SCOPED_TRACE(level);
+        ui::Workbench* workbench = window_->workbench();
+        const auto rect_of = [&](QWidget* widget) {
+            return QRect(widget->mapTo(window_.get(), QPoint(0, 0)), widget->size());
+        };
+        const QRect activity = rect_of(workbench->activity_bar());
+        const QRect sidebar = rect_of(workbench->sidebar());
+        const QRect panel = rect_of(workbench->panel());
+        const QRect editor = rect_of(window_->editor_area());
+        const QRect status = rect_of(&window_->status_bar());
+        for (const QRect& part : {activity, sidebar, panel, editor, status}) {
+            EXPECT_GE(part.left(), 0);
+            if (part.right() > window_->width() - 1) {
+                ADD_FAILURE() << "a part reaches to " << part.right() << " in a window of "
+                              << window_->width() << ": activity " << activity.right()
+                              << ", sidebar " << sidebar.right() << ", panel " << panel.right()
+                              << ", editor " << editor.right() << ", status " << status.right();
+            }
+            EXPECT_LE(part.right(), window_->width() - 1);
+            EXPECT_LE(part.bottom(), window_->height() - 1);
+        }
+        EXPECT_FALSE(activity.intersects(sidebar));
+        EXPECT_FALSE(sidebar.intersects(editor));
+        EXPECT_FALSE(sidebar.intersects(panel));
+        EXPECT_FALSE(panel.intersects(editor));
+        EXPECT_FALSE(editor.intersects(status));
+        EXPECT_FALSE(panel.intersects(status));
+        EXPECT_GE(editor.width(),
+                  std::min(window_->zoom().scaled(ui::Workbench::editor_minimum_width),
+                           (window_->width() - activity.width()) * 2 / 5))
+            << "the editor keeps its minimum, or a share of the room that is left";
+        save_screenshot(
+            ("zoom-window-" + std::to_string(static_cast<int>(level)) + ".png").c_str());
+    }
+}
+
+TEST_F(ZoomWholeWindowTest, TheEditorsScrollBarsAndPaddingFollowTheLevel) {
+    start_shown_with("{}");
+    const int bar = window_->view()->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    for (const double level : {-2.0, 0.0, 3.0}) {
+        window_->change_setting("window.zoomLevel", static_cast<int>(level), "Zoom");
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        EXPECT_EQ(window_->view()->verticalScrollBar()->width(), window_->zoom().scaled(bar));
+        EXPECT_EQ(window_->view()->horizontalScrollBar()->height(), window_->zoom().scaled(bar));
+        EXPECT_EQ(window_->view()->text_padding(), window_->zoom().scaled(6));
+        EXPECT_EQ(window_->view()->gutter_padding(), window_->zoom().scaled(8));
+    }
+}
+
+TEST_F(ZoomWholeWindowTest, TheCommandPaletteAndAMenuHaveItemsOfTheScaledHeightAtLevelThree) {
+    custom_title_bar_ = true;
+    start_shown_with(R"j({"window.zoomLevel": 3})j");
+    window_->commands().execute("workbench.action.showCommands");
+    QApplication::processEvents();
+    ui::QuickPick* palette = window_->command_palette();
+    ASSERT_NE(palette, nullptr);
+    ASSERT_TRUE(palette->isVisible());
+    EXPECT_EQ(palette->row_size(), window_->zoom().scaled(ui::QuickPick::row_height));
+    EXPECT_EQ(palette->list()->sizeHintForRow(0),
+              window_->zoom().scaled(ui::QuickPick::row_height));
+    save_screenshot("zoom-palette-3.png");
+    palette->close();
+
+    QMenu* file = window_->menu_bar()->actions().front()->menu();
+    ASSERT_NE(file, nullptr);
+    file->popup(window_->mapToGlobal(QPoint(40, 60)));
+    QApplication::processEvents();
+    const auto actions = file->actions();
+    const auto first =
+        std::ranges::find_if(actions, [](const QAction* action) { return !action->isSeparator(); });
+    ASSERT_NE(first, actions.end());
+    EXPECT_GE(file->actionGeometry(*first).height(),
+              window_->zoom().scaled(ui::MenuStyle::item_height));
+    EXPECT_EQ(file->font().pixelSize(),
+              window_->zoom().scaled(QFontInfo(QApplication::font("QMenu")).pixelSize()));
+    file->close();
+}

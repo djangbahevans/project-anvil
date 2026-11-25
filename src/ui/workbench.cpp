@@ -74,7 +74,35 @@ void Workbench::set_zoom(const Zoom* zoom) {
     }
     zoom_ = zoom;
     const auto apply = [this] {
-        activity_bar_->setFixedWidth(scaled_by(zoom_, activity_bar_width));
+        // The size a part has now is the size it keeps; only the minimum can move it.
+        if (sidebar_->isVisible()) {
+            sidebar_size_ = sidebar_->width();
+        }
+        if (panel_->isVisible() && !panel_maximized_) {
+            panel_size() = panel_extent();
+        }
+        const int previous_default = default_size_now_;
+        default_size_now_ = zoomed(default_size);
+        if (sidebar_size_ == previous_default) {
+            sidebar_size_ = default_size_now_;
+        }
+        for (int& size : panel_sizes_) {
+            if (size == previous_default) {
+                size = default_size_now_;
+            }
+        }
+        activity_bar_->setFixedWidth(zoomed(activity_bar_width));
+        apply_minimums();
+        sidebar_size_ = std::max(sidebar_size_, sidebar_minimum());
+        for (std::size_t i = 0; i < panel_sizes_.size(); ++i) {
+            const bool beside = i == static_cast<std::size_t>(PanelPosition::left) ||
+                                i == static_cast<std::size_t>(PanelPosition::right);
+            panel_sizes_[i] = std::max(panel_sizes_[i],
+                                       zoomed(beside ? panel_minimum_width : panel_minimum_height));
+        }
+        for (Splitter* splitter : {across_, down_}) {
+            splitter->set_zoom(zoom_);
+        }
         apply_sizes();
     };
     if (zoom_) {
@@ -83,21 +111,62 @@ void Workbench::set_zoom(const Zoom* zoom) {
     apply();
 }
 
+// What is left of the width of the window beside the activity bar and the sashes, and of the
+// height below the title bar and above the status bar.
+int Workbench::room_across() const {
+    const int sashes = zoomed(Splitter::sash_width) * (panel_is_beside_editor() ? 2 : 1);
+    return std::max(2, width() - (activity_bar_->isHidden() ? 0 : activity_bar_->width()) - sashes);
+}
+
+int Workbench::room_down() const {
+    int taken = 0;
+    for (const QWidget* bar : {title_bar_.data(), status_bar_.data()}) {
+        taken += bar && !bar->isHidden() ? bar->height() : 0;
+    }
+    return std::max(2, height() - taken);
+}
+
+// The minimum of a part at the zoom, and at a level above 0 no more than the part may take of the
+// room so that two parts that share it both fit, though never under the minimum at level 0.
+int Workbench::capped(int base, int room) const {
+    const int scaled = zoomed(base);
+    return scaled <= base ? scaled : std::max(base, std::min(scaled, room / 2));
+}
+
+int Workbench::sidebar_minimum() const {
+    return capped(sidebar_minimum_width, room_across());
+}
+
+int Workbench::panel_minimum() const {
+    return panel_is_beside_editor() ? capped(panel_minimum_width, room_across() * 2 / 3)
+                                    : capped(panel_minimum_height, room_down());
+}
+
+void Workbench::apply_minimums() {
+    sidebar_->setMinimumWidth(sidebar_minimum());
+    editor_host_->setMinimumSize(capped(editor_minimum_width, room_across()),
+                                 capped(editor_minimum_height, room_down()));
+    const bool beside = panel_is_beside_editor();
+    panel_->setMinimumSize(beside ? panel_minimum() : 0, beside ? 0 : panel_minimum());
+}
+
+void Workbench::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    apply_minimums();
+}
+
 Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
     activity_bar_ = new PartWidget(colors_, "activityBar.background", this);
-    activity_bar_->setFixedWidth(activity_bar_width);
+    activity_bar_->setFixedWidth(zoomed(activity_bar_width));
     activity_bar_->hide();
 
     sidebar_ = new PartWidget(colors_, "sideBar.background", this);
-    sidebar_->setMinimumWidth(sidebar_minimum_width);
     sidebar_->hide();
     panel_ = new PartWidget(colors_, "panel.background", this);
-    panel_->setMinimumHeight(panel_minimum_height);
     panel_->hide();
 
     editor_host_ = new QWidget(this);
-    editor_host_->setMinimumSize(editor_minimum_width, editor_minimum_height);
     auto* editor_layout = new QVBoxLayout(editor_host_);
     editor_layout->setContentsMargins(0, 0, 0, 0);
 
@@ -119,6 +188,7 @@ Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     row_layout_->setSpacing(0);
     row_layout_->addWidget(activity_bar_);
     row_layout_->addWidget(across_, 1);
+    apply_minimums();
 
     root_layout_ = new QVBoxLayout(this);
     root_layout_->setContentsMargins(0, 0, 0, 0);
@@ -277,10 +347,10 @@ int Workbench::size(Part part) const {
 
 void Workbench::set_size(Part part, int pixels) {
     if (part == Part::sidebar) {
-        sidebar_size_ = std::max(pixels, sidebar_minimum_width);
+        sidebar_size_ = std::max(pixels, sidebar_minimum());
     } else if (part == Part::panel) {
-        panel_size() =
-            std::max(pixels, panel_is_beside_editor() ? panel_minimum_width : panel_minimum_height);
+        panel_size() = std::max(
+            pixels, zoomed(panel_is_beside_editor() ? panel_minimum_width : panel_minimum_height));
     } else {
         return;
     }
@@ -350,8 +420,7 @@ void Workbench::arrange() {
     down_->insertWidget(panel_first ? 0 : 1, panel_);
     down_->setStretchFactor(down_->indexOf(panel_), 0);
     down_->setStretchFactor(down_->indexOf(editor_host_), 1);
-    panel_->setMinimumSize(beside ? panel_minimum_width : 0, beside ? 0 : panel_minimum_height);
-
+    apply_minimums();
     apply_sizes();
 }
 

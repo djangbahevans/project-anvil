@@ -167,6 +167,7 @@ if(TARGET anvil_ui)
     ui/workbench_colors_test.cpp
     ui/workbench_test.cpp
     ui/zoom_parts_test.cpp
+    ui/zoom_sources_test.cpp
     ui/zoom_test.cpp
     ui/ui_test_main.cpp
   )
@@ -175,6 +176,7 @@ if(TARGET anvil_ui)
   target_compile_definitions(anvil_ui_tests PRIVATE
     ANVIL_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/data"
     ANVIL_CMAKELISTS="${CMAKE_SOURCE_DIR}/CMakeLists.txt"
+    ANVIL_UI_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/ui"
     ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
     ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
     ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"

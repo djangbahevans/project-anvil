@@ -25,6 +25,7 @@ class Panel : public QObject {
     Q_OBJECT
 
 public:
+    // The height of the header at zoom level 0.
     static constexpr int header_height = 35;
 
     // The header and the containers are filled in the workbench's panel. All the arguments must
@@ -49,6 +50,8 @@ public:
     std::vector<std::string> tab_ids() const;
     // The title a tab shows, in capitals.
     QString tab_title(const std::string& id) const;
+    // The height of the header at the zoom now.
+    int header_size() const;
     QToolButton* maximize_button() const {
         return maximize_;
     }

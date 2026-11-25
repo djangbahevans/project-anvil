@@ -3,6 +3,7 @@
 #include "anvil/ui/codicons.hpp"
 
 #include <QApplication>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QLabel>
@@ -19,11 +20,19 @@
 namespace anvil::ui {
 namespace {
 
+// The sizes at zoom level 0; the view reads them through its zoom.
 constexpr int row_height = 22;
 constexpr int indent = 8;
 constexpr int twistie_size = 16;
 constexpr int label_padding = 8;
+constexpr int label_right_padding = 4;
 constexpr int header_padding = 20;
+constexpr int header_right_padding = 8;
+constexpr int header_font_pixels = 11;
+constexpr int empty_top_padding = 12;
+constexpr int empty_spacing = 12;
+constexpr int button_vertical_padding = 4;
+constexpr int button_horizontal_padding = 12;
 
 } // namespace
 
@@ -33,6 +42,10 @@ public:
     ExplorerLabelDelegate(const WorkbenchColors& colors, const QAbstractItemView& view,
                           const QPersistentModelIndex& hovered, QObject* parent)
         : QStyledItemDelegate(parent), colors_(colors), view_(view), hovered_(hovered) {}
+
+    void set_zoom(const Zoom* zoom) {
+        zoom_ = zoom;
+    }
 
     QColor text_color(const QModelIndex& index) const {
         if (index.data(ExplorerModel::PlaceholderRole).toBool()) {
@@ -52,7 +65,8 @@ public:
         font.setItalic(index.data(ExplorerModel::PlaceholderRole).toBool());
         painter->setFont(font);
         painter->setPen(text_color(index));
-        const QRect text = option.rect.adjusted(label_padding, 0, -4, 0);
+        const QRect text = option.rect.adjusted(scaled_by(zoom_, label_padding), 0,
+                                                -scaled_by(zoom_, label_right_padding), 0);
         painter->drawText(
             text, Qt::AlignVCenter | Qt::AlignLeft,
             option.fontMetrics.elidedText(index.data().toString(), Qt::ElideRight, text.width()));
@@ -60,14 +74,16 @@ public:
     }
 
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
-        return {option.fontMetrics.horizontalAdvance(index.data().toString()) + label_padding + 4,
-                row_height};
+        return {option.fontMetrics.horizontalAdvance(index.data().toString()) +
+                    scaled_by(zoom_, label_padding) + scaled_by(zoom_, label_right_padding),
+                scaled_by(zoom_, row_height)};
     }
 
 private:
     const WorkbenchColors& colors_;
     const QAbstractItemView& view_;
     const QPersistentModelIndex& hovered_;
+    const Zoom* zoom_ = nullptr;
 };
 
 class ExplorerTree : public QTreeView {
@@ -77,7 +93,6 @@ public:
         : QTreeView(parent), colors_(colors), activate_(std::move(activate)) {
         setHeaderHidden(true);
         setUniformRowHeights(true);
-        setIndentation(indent);
         setRootIsDecorated(true);
         setExpandsOnDoubleClick(false);
         setEditTriggers(NoEditTriggers);
@@ -87,9 +102,17 @@ public:
         setVerticalScrollMode(ScrollPerPixel);
         setMouseTracking(true);
         setTextElideMode(Qt::ElideRight);
-        setItemDelegate(new ExplorerLabelDelegate(colors, *this, hovered_, this));
+        delegate_ = new ExplorerLabelDelegate(colors, *this, hovered_, this);
+        setItemDelegate(delegate_);
+        apply_zoom();
         connect(this, &QTreeView::doubleClicked, this,
                 [this](const QModelIndex& index) { activate_(index); });
+    }
+
+    void set_zoom(const Zoom* zoom) {
+        zoom_ = zoom;
+        delegate_->set_zoom(zoom);
+        apply_zoom();
     }
 
     void setModel(QAbstractItemModel* model) override {
@@ -156,15 +179,23 @@ protected:
         }
         painter->save();
         QFont font(family);
-        font.setPixelSize(twistie_size);
+        font.setPixelSize(scaled_by(zoom_, twistie_size));
         painter->setFont(font);
         painter->setPen(delegate->text_color(index));
-        const QRect twistie(rect.right() + 1 - indent, rect.top(), twistie_size, rect.height());
+        const QRect twistie(rect.right() + 1 - scaled_by(zoom_, indent), rect.top(),
+                            scaled_by(zoom_, twistie_size), rect.height());
         painter->drawText(twistie, Qt::AlignCenter, QString(QChar(*glyph)));
         painter->restore();
     }
 
 private:
+    void apply_zoom() {
+        setIndentation(scaled_by(zoom_, indent));
+        scale_scroll_bars(*this, zoom_ ? zoom_->level() : 0);
+        doItemsLayout();
+        viewport()->update();
+    }
+
     // The selection of a row that is about to go, or of a row below one, goes to the row that takes
     // its place, which is what a view of a folder shows when a file is deleted under the cursor.
     void remember_selection_in(const QModelIndex& parent, int first, int last) {
@@ -192,6 +223,8 @@ private:
 
     const WorkbenchColors& colors_;
     std::function<void(const QModelIndex&)> activate_;
+    ExplorerLabelDelegate* delegate_ = nullptr;
+    const Zoom* zoom_ = nullptr;
     QPersistentModelIndex hovered_;
     bool selection_moves_ = false;
 };
@@ -200,7 +233,13 @@ private:
 class ExplorerView::Header : public QWidget {
 public:
     Header(const WorkbenchColors& colors, QWidget* parent) : QWidget(parent), colors_(colors) {
-        setFixedHeight(row_height);
+        setFixedHeight(scaled_by(zoom_, row_height));
+    }
+
+    void set_zoom(const Zoom* zoom) {
+        zoom_ = zoom;
+        setFixedHeight(scaled_by(zoom_, row_height));
+        update();
     }
 
     void set_text(const QString& text) {
@@ -216,11 +255,13 @@ protected:
         QPainter painter(this);
         painter.fillRect(rect(), colors_.color("sideBar.background"));
         QFont font = painter.font();
-        font.setPixelSize(11);
+        font.setPixelSize(scaled_by(zoom_, header_font_pixels));
         font.setBold(true);
         painter.setFont(font);
         painter.setPen(colors_.color("sideBar.foreground"));
-        const QRect text(header_padding, 0, width() - header_padding - 8, height());
+        const int padding = scaled_by(zoom_, header_padding);
+        const QRect text(padding, 0, width() - padding - scaled_by(zoom_, header_right_padding),
+                         height());
         painter.drawText(
             text, Qt::AlignVCenter | Qt::AlignLeft,
             painter.fontMetrics().elidedText(name_.toUpper(), Qt::ElideRight, text.width()));
@@ -228,6 +269,7 @@ protected:
 
 private:
     const WorkbenchColors& colors_;
+    const Zoom* zoom_ = nullptr;
     QString name_;
 };
 
@@ -264,8 +306,7 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
 
     auto* empty_page = new QWidget(this);
     auto* empty_layout = new QVBoxLayout(empty_page);
-    empty_layout->setContentsMargins(header_padding, 12, header_padding, 0);
-    empty_layout->setSpacing(12);
+    empty_layout_ = empty_layout;
     message_ = new QLabel(tr("You have not yet opened a folder."), empty_page);
     message_->setWordWrap(true);
     open_folder_ = new QPushButton(tr("Open Folder"), empty_page);
@@ -283,6 +324,33 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
     connect(open_folder_, &QPushButton::clicked, this, &ExplorerView::open_folder_requested);
     connect(model_, &ExplorerModel::watch_problem, this, &ExplorerView::watch_problem);
     connect(&colors_, &WorkbenchColors::changed, this, [this] { apply_colors(); });
+    base_font_pixels_ = QFontInfo(font()).pixelSize();
+    apply_zoom();
+}
+
+void ExplorerView::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &ExplorerView::apply_zoom);
+    }
+    apply_zoom();
+}
+
+void ExplorerView::apply_zoom() {
+    header_->set_zoom(zoom_);
+    static_cast<ExplorerTree*>(tree_)->set_zoom(zoom_);
+    QFont view_font = font();
+    view_font.setPixelSize(scaled_by(zoom_, base_font_pixels_));
+    setFont(view_font);
+    // A push button has a font of its own that a parent's font does not reach.
+    message_->setFont(view_font);
+    open_folder_->setFont(view_font);
+    const int padding = scaled_by(zoom_, header_padding);
+    empty_layout_->setContentsMargins(padding, scaled_by(zoom_, empty_top_padding), padding, 0);
+    empty_layout_->setSpacing(scaled_by(zoom_, empty_spacing));
     apply_colors();
 }
 
@@ -295,11 +363,14 @@ void ExplorerView::apply_colors() {
     setPalette(palette);
     message_->setPalette(palette);
     open_folder_->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; color: %2; border: none; padding: 4px 12px; }"
-                       "QPushButton:hover { background: %3; }")
+        QStringLiteral(
+            "QPushButton { background: %1; color: %2; border: none; padding: %4px %5px; }"
+            "QPushButton:hover { background: %3; }")
             .arg(colors_.color("button.background").name(QColor::HexArgb),
                  colors_.color("button.foreground").name(QColor::HexArgb),
-                 colors_.color("button.hoverBackground").name(QColor::HexArgb)));
+                 colors_.color("button.hoverBackground").name(QColor::HexArgb))
+            .arg(scaled_by(zoom_, button_vertical_padding))
+            .arg(scaled_by(zoom_, button_horizontal_padding)));
     QPalette tree_palette = tree_->palette();
     tree_palette.setColor(QPalette::Base, colors_.color("sideBar.background"));
     // The tree draws the selection itself; the style would paint the Highlight over the twistie

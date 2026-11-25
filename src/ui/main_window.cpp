@@ -24,6 +24,7 @@
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontInfo>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
@@ -142,6 +143,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                                                : std::nullopt);
     resize(1000, 700);
     palette_ = new QuickPick(this, colors_);
+    palette_->set_zoom(&zoom_);
     palette_->set_ignored_prefix(">");
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));
@@ -168,6 +170,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         }
     });
     go_to_line_ = new QuickPick(this, colors_);
+    go_to_line_->set_zoom(&zoom_);
     go_to_line_->set_ignored_prefix(":");
     go_to_line_->set_placeholder(tr("Type a line number, then : and a column"));
     go_to_line_->set_filtering(false);
@@ -230,7 +233,6 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         menu_bar_ = menuBar();
     }
     sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
-    sidebar_->set_zoom(&zoom_);
     panel_ = new Panel(*workbench_, view_containers_, colors_, this);
     register_explorer();
 
@@ -465,6 +467,7 @@ void MainWindow::register_explorer() {
                 [this] { commands_.execute("workbench.action.files.openFolder"); });
         connect(view, &ExplorerView::watch_problem, this,
                 [this](const QString& message) { status_bar_->show_message(message, 15000); });
+        view->set_zoom(&zoom_);
         view->set_excludes(file_excludes_);
         view->set_workspace(
             options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
@@ -1384,9 +1387,18 @@ QString menu_text(const workbench::MenuLabel& label) {
 void MainWindow::style_menu(QMenu* menu) {
 #if !defined(Q_OS_MACOS)
     menu->setStyle(menu_style_.get());
+    menu->setFont(menu_font());
 #else
     Q_UNUSED(menu);
 #endif
+}
+
+QFont MainWindow::menu_font() const {
+    QFont font = QApplication::font("QMenu");
+    if (zoom_.level() != 0) {
+        font.setPixelSize(zoom_.scaled(QFontInfo(font).pixelSize()));
+    }
+    return font;
 }
 
 core::ContextKeys MainWindow::menu_context() const {
@@ -1457,6 +1469,18 @@ void MainWindow::populate_menu(QMenu* menu, const std::vector<workbench::MenuIte
 
 void MainWindow::build_menus() {
     menu_style_ = std::make_unique<MenuStyle>(colors_);
+    menu_style_->set_zoom(&zoom_);
+    const auto apply_menu_fonts = [this] {
+        for (QMenu* menu : findChildren<QMenu*>()) {
+            menu->setFont(menu_font());
+        }
+        // The menu bar of a window with the system's frame; the title bar sizes its own.
+        if (!has_custom_title_bar()) {
+            menu_bar_->setFont(menu_font());
+        }
+    };
+    connect(&zoom_, &Zoom::changed, this, apply_menu_fonts);
+    apply_menu_fonts();
     const core::ContextKeys context = menu_context();
     for (workbench::MenuItem top : workbench::top_level_menus(context)) {
         // Alt+C, Alt+W and Alt+R are the find bar's option shortcuts, and a menu that shares one

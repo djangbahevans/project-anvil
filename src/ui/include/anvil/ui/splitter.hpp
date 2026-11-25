@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QSplitter>
 #include <string_view>
@@ -16,11 +17,16 @@ class Splitter : public QSplitter {
     Q_OBJECT
 
 public:
+    // The width at zoom level 0.
     static constexpr int sash_width = 4;
 
     // The colors must outlive the splitter, and the key of the border must outlive it too.
     Splitter(Qt::Orientation orientation, const WorkbenchColors& colors, std::string_view border,
              QWidget* parent = nullptr);
+
+    // The zoom that the width of the sashes is read through, which must outlive the splitter.
+    // Null means level 0.
+    void set_zoom(const Zoom* zoom);
 
 protected:
     QSplitterHandle* createHandle() override;
@@ -28,6 +34,7 @@ protected:
 private:
     const WorkbenchColors& colors_;
     std::string_view border_;
+    const Zoom* zoom_ = nullptr;
 };
 
 } // namespace anvil::ui
