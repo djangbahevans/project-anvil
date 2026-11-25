@@ -125,6 +125,45 @@ BENCHMARK(ReparseAndSpansOfAScreen)
     ->ArgName("nested")
     ->Unit(benchmark::kMicrosecond);
 
+// A Markdown document of paragraphs with emphasis, code and links, about 1 MB: the block parse,
+// the parse of every inline node, and what an edit costs after.
+Text markdown_document() {
+    std::string out;
+    for (int i = 0; i < 9000; ++i) {
+        out +=
+            "## Section " + std::to_string(i) +
+            "\n\nA paragraph with *emphasis*, **strong text**, `code` and a [link](https://x.y/" +
+            std::to_string(i) + ") that goes on.\n\n- item one\n- item two\n\n";
+    }
+    return *Text::from_utf8(out);
+}
+
+void MarkdownFirstParse(benchmark::State& state) {
+    const Text text = markdown_document();
+    for (auto _ : state) {
+        auto highlighter = TreeSitterHighlighter::create("markdown", text);
+        benchmark::DoNotOptimize(highlighter);
+    }
+    state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(text.size()));
+}
+BENCHMARK(MarkdownFirstParse)->Unit(benchmark::kMillisecond);
+
+void MarkdownReparseAfterOneCharacter(benchmark::State& state) {
+    TextBuffer buffer(markdown_document());
+    auto highlighter = TreeSitterHighlighter::create("markdown", buffer.snapshot());
+    const std::size_t at = buffer.snapshot().size() / 2;
+    bool insert = true;
+    for (auto _ : state) {
+        const auto change = insert ? buffer.insert(at, "x") : buffer.erase(at, at + 1);
+        insert = !insert;
+        if (!change || !(*highlighter)->apply(*change, buffer.snapshot())) {
+            state.SkipWithError("edit failed");
+            break;
+        }
+    }
+}
+BENCHMARK(MarkdownReparseAfterOneCharacter)->Unit(benchmark::kMillisecond);
+
 // From an edit of one character to the worker's result for it, with the parse on the worker's
 // thread: the time before the editor can show the colors of what was typed.
 void WorkerRoundTrip(benchmark::State& state) {

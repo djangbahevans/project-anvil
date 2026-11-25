@@ -424,7 +424,8 @@ struct InlineNode {
 };
 
 using InlineLayer = std::vector<InlineNode>;
-using InlineCache = std::unordered_map<std::string, std::shared_ptr<const InlineTree>>;
+// The keys view the text of the trees they belong to.
+using InlineCache = std::unordered_map<std::string_view, std::shared_ptr<const InlineTree>>;
 
 const char* read_string(void* payload, std::uint32_t byte, TSPoint, std::uint32_t* bytes_read) {
     const auto& text = *static_cast<const std::string*>(payload);
