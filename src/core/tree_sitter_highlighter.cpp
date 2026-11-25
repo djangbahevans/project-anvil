@@ -7,18 +7,26 @@
 #include <atomic>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 #include <tree_sitter/api.h>
 #include <unordered_map>
 
 extern "C" const TSLanguage* tree_sitter_json(void);
+extern "C" const TSLanguage* tree_sitter_c(void);
+extern "C" const TSLanguage* tree_sitter_cpp(void);
 
 namespace anvil::core::grammar_queries {
 extern const std::string_view json;
-}
+extern const std::string_view c;
+extern const std::string_view cpp;
+} // namespace anvil::core::grammar_queries
 
 namespace anvil::core {
 
@@ -32,10 +40,12 @@ struct Grammar {
     std::span<const CaptureScope> (*scopes)();
 };
 
-const std::array<Grammar, 1>& grammars() {
-    static const std::array<Grammar, 1> table = {
+const std::array<Grammar, 3>& grammars() {
+    static const std::array<Grammar, 3> table = {
         Grammar{"json", "source.json", tree_sitter_json, grammar_queries::json,
                 json_capture_scopes},
+        Grammar{"c", "source.c", tree_sitter_c, grammar_queries::c, c_capture_scopes},
+        Grammar{"cpp", "source.cpp", tree_sitter_cpp, grammar_queries::cpp, cpp_capture_scopes},
     };
     return table;
 }
@@ -176,12 +186,96 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
 
 // What the query of a grammar says about its captures, shared by the highlighter that parses and
 // the snapshots that the editor reads, which run it concurrently.
+struct RegexDeleter {
+    void operator()(pcre2_code* code) const {
+        pcre2_code_free(code);
+    }
+};
+
+// `(#match? @capture "regex")` and `(#not-match? @capture "regex")`, which the query cursor leaves
+// to the caller: the match counts only when the captured text satisfies them.
+struct TextPredicate {
+    std::uint32_t capture = 0;
+    bool negated = false;
+    std::shared_ptr<pcre2_code> regex;
+};
+
 struct QueryData {
     std::unique_ptr<TSQuery, QueryDeleter> query;
+    // The predicates of each pattern, by pattern index.
+    std::vector<std::vector<TextPredicate>> predicates;
     // The scope of each capture of the query, by capture index; empty for a capture the table does
     // not map.
     std::vector<std::string_view> capture_scopes;
 };
+
+// Reads the predicates of every pattern of the query. Fails with a message for a predicate that is
+// not understood, because a pattern whose condition is ignored would match what it should not.
+std::expected<std::vector<std::vector<TextPredicate>>, std::string>
+read_predicates(TSQuery& query) {
+    std::vector<std::vector<TextPredicate>> all(ts_query_pattern_count(&query));
+    for (std::uint32_t pattern = 0; pattern < all.size(); ++pattern) {
+        std::uint32_t count = 0;
+        const TSQueryPredicateStep* steps =
+            ts_query_predicates_for_pattern(&query, pattern, &count);
+        const auto string_of = [&](const TSQueryPredicateStep& step) {
+            std::uint32_t length = 0;
+            const char* value = ts_query_string_value_for_id(&query, step.value_id, &length);
+            return std::string(value, length);
+        };
+        for (std::uint32_t begin = 0; begin < count;) {
+            std::uint32_t end = begin;
+            while (end < count && steps[end].type != TSQueryPredicateStepTypeDone) {
+                ++end;
+            }
+            const std::string name = string_of(steps[begin]);
+            if (name.ends_with('?')) {
+                const bool negated = name == "not-match?";
+                if ((name != "match?" && !negated) || end - begin != 3 ||
+                    steps[begin + 1].type != TSQueryPredicateStepTypeCapture ||
+                    steps[begin + 2].type != TSQueryPredicateStepTypeString) {
+                    return std::unexpected("unsupported predicate #" + name);
+                }
+                const std::string source = string_of(steps[begin + 2]);
+                int error_code = 0;
+                PCRE2_SIZE error_offset = 0;
+                pcre2_code* code =
+                    pcre2_compile(reinterpret_cast<PCRE2_SPTR>(source.data()), source.size(),
+                                  PCRE2_UTF, &error_code, &error_offset, nullptr);
+                if (!code) {
+                    return std::unexpected("invalid regular expression in #" + name + ": " +
+                                           source);
+                }
+                all[pattern].push_back({steps[begin + 1].value_id, negated,
+                                        std::shared_ptr<pcre2_code>(code, RegexDeleter{})});
+            }
+            begin = end + 1;
+        }
+    }
+    return all;
+}
+
+// Whether the captures of `match` satisfy the predicates of its pattern.
+bool satisfies(const QueryData& data, const TSQueryMatch& match, const Text& text,
+               pcre2_match_data* scratch) {
+    for (const TextPredicate& predicate : data.predicates[match.pattern_index]) {
+        for (std::uint16_t i = 0; i < match.capture_count; ++i) {
+            const TSQueryCapture& capture = match.captures[i];
+            if (capture.index != predicate.capture) {
+                continue;
+            }
+            const std::size_t begin = ts_node_start_byte(capture.node);
+            const std::string subject = text.slice(begin, ts_node_end_byte(capture.node) - begin);
+            const int result =
+                pcre2_match(predicate.regex.get(), reinterpret_cast<PCRE2_SPTR>(subject.data()),
+                            subject.size(), 0, 0, scratch, nullptr);
+            if ((result >= 0) == predicate.negated) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 constexpr std::size_t no_line_limit = std::numeric_limits<std::size_t>::max();
 
@@ -210,7 +304,14 @@ std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, cons
     std::vector<Capture> captures;
     TSQueryMatch match;
     std::uint32_t index = 0;
+    const std::unique_ptr<pcre2_match_data, void (*)(pcre2_match_data*)> scratch(
+        pcre2_match_data_create(1, nullptr), pcre2_match_data_free);
     while (ts_query_cursor_next_capture(cursor.get(), &match, &index)) {
+        if (!data.predicates[match.pattern_index].empty() &&
+            !satisfies(data, match, text, scratch.get())) {
+            ts_query_cursor_remove_match(cursor.get(), match.id);
+            continue;
+        }
         const TSQueryCapture& capture = match.captures[index];
         const std::string_view scope = data.capture_scopes[capture.index];
         if (scope.empty()) {
@@ -279,6 +380,64 @@ private:
     mutable std::unordered_map<std::size_t, std::vector<HighlightSpan>> cache_;
 };
 
+// Compiles `source` as a highlights query of the grammar.
+std::expected<std::shared_ptr<const QueryData>, Error> build_query_data(const Grammar& grammar,
+                                                                        std::string_view source) {
+    const std::string language_id(grammar.language_id);
+    const TSLanguage* language = grammar.language();
+    std::uint32_t error_offset = 0;
+    TSQueryError error_type = TSQueryErrorNone;
+    std::unique_ptr<TSQuery, QueryDeleter> query(
+        ts_query_new(language, source.data(), static_cast<std::uint32_t>(source.size()),
+                     &error_offset, &error_type));
+    if (!query) {
+        static constexpr const char* kinds[] = {"none",       "syntax error", "node type",
+                                                "field name", "capture name", "structure",
+                                                "language"};
+        const std::string_view near = source.substr(error_offset, 40);
+        return std::unexpected(Error{ErrorCode::environment_unavailable,
+                                     "the highlights query of " + language_id + " has an invalid " +
+                                         kinds[error_type] + " at byte " +
+                                         std::to_string(error_offset) + ", near \"" +
+                                         std::string(near.substr(0, near.find('\n'))) + "\""});
+    }
+
+    auto data = std::make_shared<QueryData>();
+    data->query = std::move(query);
+    auto predicates = read_predicates(*data->query);
+    if (!predicates) {
+        return std::unexpected(
+            Error{ErrorCode::environment_unavailable,
+                  "the highlights query of " + language_id + ": " + predicates.error()});
+    }
+    data->predicates = std::move(*predicates);
+    const std::span<const CaptureScope> table = grammar.scopes();
+    const std::uint32_t captures = ts_query_capture_count(data->query.get());
+    data->capture_scopes.reserve(captures);
+    for (std::uint32_t i = 0; i < captures; ++i) {
+        std::uint32_t length = 0;
+        const char* name = ts_query_capture_name_for_id(data->query.get(), i, &length);
+        data->capture_scopes.push_back(scope_for_capture(table, std::string_view(name, length)));
+    }
+    return data;
+}
+
+// The embedded query of a grammar, compiled once for the process: compiling the query of a large
+// grammar takes longer than parsing a small document, and the result only reads.
+std::expected<std::shared_ptr<const QueryData>, Error> query_data_for(const Grammar& grammar) {
+    static std::mutex mutex;
+    static std::map<const Grammar*, std::shared_ptr<const QueryData>> cache;
+    const std::lock_guard lock(mutex);
+    if (const auto found = cache.find(&grammar); found != cache.end()) {
+        return found->second;
+    }
+    auto data = build_query_data(grammar, grammar.highlights);
+    if (data) {
+        cache.emplace(&grammar, *data);
+    }
+    return data;
+}
+
 } // namespace
 
 struct TreeSitterHighlighter::Impl {
@@ -304,6 +463,12 @@ bool TreeSitterHighlighter::supports(std::string_view language_id) {
 
 std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
 TreeSitterHighlighter::create(std::string_view language_id, Text text, std::stop_token stop) {
+    return create_with_query(language_id, {}, std::move(text), stop);
+}
+
+std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
+TreeSitterHighlighter::create_with_query(std::string_view language_id, std::string_view query,
+                                         Text text, std::stop_token stop) {
     const Grammar* grammar = find_grammar(language_id);
     if (!grammar) {
         return std::unexpected(Error{ErrorCode::unsupported,
@@ -322,32 +487,15 @@ TreeSitterHighlighter::create(std::string_view language_id, Text text, std::stop
                                          " grammar does not fit the tree-sitter runtime"});
     }
 
-    std::uint32_t error_offset = 0;
-    TSQueryError error_type = TSQueryErrorNone;
-    std::unique_ptr<TSQuery, QueryDeleter> query(ts_query_new(
-        language, grammar->highlights.data(),
-        static_cast<std::uint32_t>(grammar->highlights.size()), &error_offset, &error_type));
-    if (!query) {
-        return std::unexpected(Error{ErrorCode::environment_unavailable,
-                                     "the highlights query of " + std::string(language_id) +
-                                         " is invalid at byte " + std::to_string(error_offset)});
-    }
-
-    auto data = std::make_shared<QueryData>();
-    data->query = std::move(query);
-    const std::span<const CaptureScope> table = grammar->scopes();
-    const std::uint32_t captures = ts_query_capture_count(data->query.get());
-    data->capture_scopes.reserve(captures);
-    for (std::uint32_t i = 0; i < captures; ++i) {
-        std::uint32_t length = 0;
-        const char* name = ts_query_capture_name_for_id(data->query.get(), i, &length);
-        data->capture_scopes.push_back(scope_for_capture(table, std::string_view(name, length)));
+    auto data = query.empty() ? query_data_for(*grammar) : build_query_data(*grammar, query);
+    if (!data) {
+        return std::unexpected(data.error());
     }
 
     auto impl = std::make_unique<Impl>();
     impl->text = std::move(text);
     impl->grammar = grammar;
-    impl->data = std::move(data);
+    impl->data = std::move(*data);
     impl->parser = std::move(parser);
     const std::stop_callback cancel_on_stop(stop, [flag = &impl->cancel] { flag->store(true); });
     ReadState state{&impl->text, &impl->bytes_read};
@@ -386,6 +534,24 @@ std::shared_ptr<const Highlighter> TreeSitterHighlighter::snapshot() const {
     }
     return std::make_shared<FrozenHighlighter>(impl_->text, std::move(tree), impl_->data,
                                                impl_->grammar->root_scope);
+}
+
+std::vector<std::string> TreeSitterHighlighter::unmapped_captures(std::string_view language_id) {
+    const Grammar* grammar = find_grammar(language_id);
+    const auto data = grammar ? query_data_for(*grammar) : std::unexpected(Error{});
+    std::vector<std::string> names;
+    if (!data) {
+        return names;
+    }
+    const TSQuery& query = *(*data)->query;
+    for (std::uint32_t i = 0; i < (*data)->capture_scopes.size(); ++i) {
+        if ((*data)->capture_scopes[i].empty()) {
+            std::uint32_t length = 0;
+            const char* name = ts_query_capture_name_for_id(&query, i, &length);
+            names.emplace_back(name, length);
+        }
+    }
+    return names;
 }
 
 std::string_view TreeSitterHighlighter::root_scope_of(std::string_view language_id) {

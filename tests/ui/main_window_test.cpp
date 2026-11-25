@@ -29,6 +29,7 @@
 #include <functional>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <unistd.h>
 
 using namespace anvil;
@@ -7778,6 +7779,49 @@ TEST_F(HighlightingWindowTest, ADocumentInALanguageWithAGrammarIsHighlightedOffT
     ASSERT_TRUE(spans_arrive_on(0));
     EXPECT_EQ(scopes_of_line(0), (std::vector<std::string>{"support.type.property-name.json",
                                                            "constant.numeric.json"}));
+}
+
+TEST_F(HighlightingWindowTest, CAndCppDocumentsAreHighlighted) {
+    create_window();
+    ASSERT_TRUE(open(write("a.c", "#include <stdio.h>\nint main(void) { return 0; }\n")));
+    ASSERT_NE(shown_highlighter(), nullptr);
+    ASSERT_TRUE(spans_arrive_on(1));
+    EXPECT_EQ(scopes_of_line(0), (std::vector<std::string>{"keyword.control.directive.c",
+                                                           "string.quoted.other.lt-gt.include.c"}));
+    EXPECT_EQ(scopes_of_line(1).front(), "storage.type.c");
+
+    ASSERT_TRUE(open(write("a.cpp", "class A { public: int f() const; };\n")));
+    ASSERT_NE(shown_highlighter(), nullptr);
+    ASSERT_TRUE(spans_arrive_on(0));
+    EXPECT_EQ(scopes_of_line(0).front(), "storage.type.cpp");
+    EXPECT_EQ(window_->highlighting().worker_count(), 2u);
+}
+
+// The samples of the grammars in a window with the theme of VS Code, to look at.
+TEST_F(HighlightingWindowTest, TheSamplesAreShownInDarkAndLightModern) {
+    for (const char* theme : {"Dark Modern", "Light Modern"}) {
+        settings_file_ = write("settings.json",
+                               std::string(R"j({"workbench.colorTheme": ")j") + theme + R"j("})j");
+        create_window();
+        window_->resize(900, 700);
+        for (const char* sample : {"highlight_c_sample.c", "highlight_cpp_sample.cpp"}) {
+            std::ifstream in(std::string(ANVIL_CORE_TEST_DATA_DIR) + "/" + sample,
+                             std::ios::binary);
+            std::stringstream text;
+            text << in.rdbuf();
+            ASSERT_TRUE(open(write(sample, text.str())));
+            ASSERT_TRUE(spans_arrive_on(1));
+            QTest::qWait(100);
+            const QImage image = window_->grab().toImage();
+            EXPECT_FALSE(image.isNull());
+            if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+                QString name = QString("%1_%2.png").arg(sample).arg(theme);
+                name.replace(' ', '_');
+                image.save(QString::fromUtf8(directory) + "/" + name);
+            }
+        }
+        window_.reset();
+    }
 }
 
 TEST_F(HighlightingWindowTest, ADocumentInALanguageWithoutAGrammarCostsNothing) {

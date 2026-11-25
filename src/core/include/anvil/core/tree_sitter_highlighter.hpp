@@ -39,6 +39,17 @@ public:
     static std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
     create(std::string_view language_id, Text text, std::stop_token stop = {});
 
+    // Like `create`, with `query` as the highlights query instead of the embedded one, for tests
+    // and for trying a query out. Fails with ErrorCode::environment_unavailable when the query
+    // does not compile for the grammar or has a predicate that is not understood.
+    static std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
+    create_with_query(std::string_view language_id, std::string_view query, Text text,
+                      std::stop_token stop = {});
+
+    // The names of the captures of the grammar's highlights query that have no scope, which leave
+    // their text with the style of what encloses it. Empty for a language without a grammar.
+    static std::vector<std::string> unmapped_captures(std::string_view language_id);
+
     // The root scope of the grammar of `language_id`, empty when there is none.
     static std::string_view root_scope_of(std::string_view language_id);
 

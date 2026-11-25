@@ -5,6 +5,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <random>
+#include <span>
 #include <sstream>
 #include <stop_token>
 #include <string>
@@ -31,10 +32,15 @@ Text text_of(std::string_view utf8) {
     return text ? *text : Text{};
 }
 
-std::unique_ptr<TreeSitterHighlighter> json_highlighter(const Text& text) {
-    auto highlighter = TreeSitterHighlighter::create("json", text);
-    EXPECT_TRUE(highlighter.has_value());
+std::unique_ptr<TreeSitterHighlighter> highlighter_for(std::string_view language,
+                                                       const Text& text) {
+    auto highlighter = TreeSitterHighlighter::create(language, text);
+    EXPECT_TRUE(highlighter.has_value()) << (highlighter ? "" : highlighter.error().message);
     return highlighter ? std::move(*highlighter) : nullptr;
+}
+
+std::unique_ptr<TreeSitterHighlighter> json_highlighter(const Text& text) {
+    return highlighter_for("json", text);
 }
 
 // One line per span: `<line> <begin>-<end> <scope>`.
@@ -64,8 +70,8 @@ void expect_well_formed(const Highlighter& highlighter, const Text& text) {
 }
 
 // What a fresh highlighter says about the text, which an edited one must agree with.
-std::string fresh_render(const Text& text) {
-    const auto highlighter = json_highlighter(text);
+std::string fresh_render(const Text& text, std::string_view language = "json") {
+    const auto highlighter = highlighter_for(language, text);
     return highlighter ? render(*highlighter, text) : std::string();
 }
 
@@ -108,7 +114,8 @@ struct RandomEdit {
     std::string text;
 };
 
-RandomEdit random_edit(std::mt19937& random, const Text& text) {
+RandomEdit random_edit(std::mt19937& random, const Text& text,
+                       std::span<const char* const> pieces = fragments) {
     const std::size_t size = text.size();
     auto boundary = [&](std::size_t offset) {
         offset = std::min(offset, size);
@@ -123,7 +130,7 @@ RandomEdit random_edit(std::mt19937& random, const Text& text) {
     edit.end = boundary(edit.start + length);
     const int parts = static_cast<int>(random() % 4);
     for (int i = 0; i < parts; ++i) {
-        edit.text += fragments[random() % std::size(fragments)];
+        edit.text += pieces[random() % pieces.size()];
     }
     return edit;
 }
@@ -138,6 +145,90 @@ TEST(TreeSitterHighlighter, TheJsonSampleMatchesTheGoldenFile) {
     expect_well_formed(*highlighter, text);
 }
 
+TEST(TreeSitterHighlighter, TheCSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_c_sample.c"));
+    const auto highlighter = highlighter_for("c", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_c_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
+TEST(TreeSitterHighlighter, TheCppSampleMatchesTheGoldenFile) {
+    const Text text = text_of(read_file("highlight_cpp_sample.cpp"));
+    const auto highlighter = highlighter_for("cpp", text);
+    ASSERT_TRUE(highlighter);
+    EXPECT_EQ(render(*highlighter, text), read_file("highlight_cpp_sample.spans"));
+    expect_well_formed(*highlighter, text);
+}
+
+TEST(TreeSitterHighlighter, TheCapturesWithoutAScopeAreTheOnesTheTablesLeaveOut) {
+    EXPECT_TRUE(TreeSitterHighlighter::unmapped_captures("json").empty());
+    const std::vector<std::string> c = {"variable", "delimiter"};
+    EXPECT_EQ(TreeSitterHighlighter::unmapped_captures("c"), c);
+    EXPECT_EQ(TreeSitterHighlighter::unmapped_captures("cpp"), c);
+    EXPECT_TRUE(TreeSitterHighlighter::unmapped_captures("python").empty());
+}
+
+TEST(TreeSitterHighlighter, AnIdentifierIsAConstantOnlyWhenItsTextMatchesThePredicate) {
+    const Text text = text_of("int a = MAX_SIZE + x + Y2 + v1 + _A;\n");
+    const auto highlighter = highlighter_for("c", text);
+    ASSERT_TRUE(highlighter);
+    std::string constants;
+    for (const HighlightSpan& span : highlighter->spans(0)) {
+        if (span.scope == "variable.other.constant.c") {
+            constants += text.line(0).substr(span.begin, span.end - span.begin) + " ";
+        }
+    }
+    EXPECT_EQ(constants, "MAX_SIZE Y2 ");
+}
+
+namespace {
+
+std::vector<std::string> strings_matching(std::string_view predicate) {
+    const Text text = text_of(R"(["apple", "banana", "avocado", 7])");
+    const std::string query = "((string) @string " + std::string(predicate) + ")";
+    const auto highlighter = TreeSitterHighlighter::create_with_query("json", query, text);
+    EXPECT_TRUE(highlighter.has_value()) << (highlighter ? "" : highlighter.error().message);
+    std::vector<std::string> found;
+    if (highlighter) {
+        for (const HighlightSpan& span : (*highlighter)->spans(0)) {
+            found.push_back(text.line(0).substr(span.begin, span.end - span.begin));
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST(TreeSitterHighlighter, AMatchPredicateKeepsTheNodesWhoseTextMatches) {
+    EXPECT_EQ(strings_matching(R"q((#match? @string "^\"a"))q"),
+              (std::vector<std::string>{"\"apple\"", "\"avocado\""}));
+    EXPECT_TRUE(strings_matching(R"q((#match? @string "zzz"))q").empty());
+}
+
+TEST(TreeSitterHighlighter, ANotMatchPredicateKeepsTheNodesWhoseTextDoesNotMatch) {
+    EXPECT_EQ(strings_matching(R"q((#not-match? @string "^\"a"))q"),
+              (std::vector<std::string>{"\"banana\""}));
+}
+
+TEST(TreeSitterHighlighter, AQueryWithAPredicateThatIsNotUnderstoodIsRefused) {
+    const auto refused = TreeSitterHighlighter::create_with_query(
+        "json", R"q(((string) @s (#eq? @s "\"a\"")))q", Text{});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_EQ(refused.error().code, ErrorCode::environment_unavailable);
+    EXPECT_NE(refused.error().message.find("#eq?"), std::string::npos) << refused.error().message;
+}
+
+TEST(TreeSitterHighlighter, AQueryThatDoesNotCompileSaysWhatIsWrongAndWhere) {
+    const auto refused =
+        TreeSitterHighlighter::create_with_query("json", "(string) @s\n(nonsense) @t", Text{});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_NE(refused.error().message.find("node type"), std::string::npos)
+        << refused.error().message;
+    EXPECT_NE(refused.error().message.find("nonsense"), std::string::npos)
+        << refused.error().message;
+}
+
 TEST(TreeSitterHighlighter, TheRootScopeIsTheLanguages) {
     const auto highlighter = json_highlighter(text_of("[]"));
     ASSERT_TRUE(highlighter);
@@ -146,9 +237,11 @@ TEST(TreeSitterHighlighter, TheRootScopeIsTheLanguages) {
 
 TEST(TreeSitterHighlighter, AGrammarIsFoundByLanguageId) {
     EXPECT_TRUE(TreeSitterHighlighter::supports("json"));
-    EXPECT_FALSE(TreeSitterHighlighter::supports("cpp"));
+    EXPECT_TRUE(TreeSitterHighlighter::supports("c"));
+    EXPECT_TRUE(TreeSitterHighlighter::supports("cpp"));
+    EXPECT_FALSE(TreeSitterHighlighter::supports("python"));
     EXPECT_FALSE(TreeSitterHighlighter::supports(""));
-    const auto missing = TreeSitterHighlighter::create("cpp", Text{});
+    const auto missing = TreeSitterHighlighter::create("python", Text{});
     ASSERT_FALSE(missing.has_value());
     EXPECT_EQ(missing.error().code, ErrorCode::unsupported);
 }
@@ -324,6 +417,56 @@ TEST(TreeSitterHighlighter, EditedHighlightingEqualsAFreshParseOfTheNewText) {
                 << buffer.snapshot().to_string();
         }
     }
+}
+
+namespace {
+
+const char* const c_fragments[] = {"",     "{",         "}",           "(",
+                                   ")",    ";",         "\n",          "\n\n",
+                                   "\"",   "'",         "/*",          "*/",
+                                   "//",   "#include ", "#if",         "#define X ",
+                                   "int ", "const ",    "if (",        "return ",
+                                   "x",    "_t",        "1",           "0x",
+                                   "->",   "struct ",   "caf\xC3\xA9", "\xF0\x9F\x98\x80",
+                                   "\\",   "<",         ">",           "NULL",
+                                   "FOO",  "::",        "class ",      "template <typename T> ",
+                                   "new ", "nullptr",   "R\"("};
+
+// Random edits to a sample document, after each of which an edited highlighter must agree with a
+// fresh one on every line and on the tree.
+void expect_edits_to_agree_with_a_fresh_parse(std::string_view language, const char* sample,
+                                              unsigned seed) {
+    std::mt19937 random(seed);
+    for (int round = 0; round < 3; ++round) {
+        TextBuffer buffer(text_of(read_file(sample)));
+        const auto highlighter = highlighter_for(language, buffer.snapshot());
+        ASSERT_TRUE(highlighter);
+        for (int step = 0; step < 100; ++step) {
+            (void)render(*highlighter, buffer.snapshot());
+            const RandomEdit edit = random_edit(random, buffer.snapshot(), c_fragments);
+            const auto change = buffer.replace(edit.start, edit.end, edit.text);
+            ASSERT_TRUE(change.has_value());
+            ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+            ASSERT_EQ(highlighter->describe_tree(),
+                      highlighter_for(language, buffer.snapshot())->describe_tree())
+                << "round " << round << " step " << step;
+            ASSERT_EQ(render(*highlighter, buffer.snapshot()),
+                      fresh_render(buffer.snapshot(), language))
+                << "round " << round << " step " << step << " edit [" << edit.start << ", "
+                << edit.end << ") -> \"" << edit.text << "\"\n"
+                << buffer.snapshot().to_string();
+        }
+    }
+}
+
+} // namespace
+
+TEST(TreeSitterHighlighter, EditedCHighlightingEqualsAFreshParseOfTheNewText) {
+    expect_edits_to_agree_with_a_fresh_parse("c", "highlight_c_sample.c", 11);
+}
+
+TEST(TreeSitterHighlighter, EditedCppHighlightingEqualsAFreshParseOfTheNewText) {
+    expect_edits_to_agree_with_a_fresh_parse("cpp", "highlight_cpp_sample.cpp", 12);
 }
 
 TEST(TreeSitterHighlighter, ADocumentChangeOfSeveralEditsIsFollowed) {

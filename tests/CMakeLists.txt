@@ -163,6 +163,7 @@ if(TARGET anvil_ui)
   target_link_libraries(anvil_ui_tests
     PRIVATE anvil::ui anvil::platform Qt6::Test nlohmann_json::nlohmann_json GTest::gtest anvil_compile_options)
   target_compile_definitions(anvil_ui_tests PRIVATE
+    ANVIL_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/data"
     ANVIL_NODE_EXECUTABLE="${ANVIL_NODE}"
     ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
     ANVIL_DOCUMENTS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/documents-extension"
