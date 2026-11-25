@@ -11,18 +11,42 @@ namespace anvil::ui {
 
 StatusBar::StatusBar(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
-    setFixedHeight(height_pixels);
+    setFixedHeight(bar_height());
     setMouseTracking(true);
     // Before the name is set, which makes Qt look for the interface of the widget and keep it.
     install_painted_accessibility();
     setAccessibleName(tr("Status Bar"));
     QFont bar_font = font();
-    bar_font.setPixelSize(font_pixels);
+    bar_font.setPixelSize(zoomed(font_pixels));
     setFont(bar_font);
 
     message_timer_.setSingleShot(true);
     connect(&message_timer_, &QTimer::timeout, this, &StatusBar::clear_message);
     connect(&colors_, &WorkbenchColors::changed, this, qOverload<>(&StatusBar::update));
+}
+
+void StatusBar::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &StatusBar::apply_zoom);
+    }
+    apply_zoom();
+}
+
+void StatusBar::apply_zoom() {
+    setFixedHeight(bar_height());
+    QFont bar_font = font();
+    bar_font.setPixelSize(zoomed(font_pixels));
+    setFont(bar_font);
+    layout_valid_ = false;
+    update();
+}
+
+int StatusBar::bar_height() const {
+    return zoomed(height_pixels);
 }
 
 void StatusBar::set_item(const std::string& id, StatusBarSide side, StatusBarItem item) {
@@ -164,21 +188,22 @@ void StatusBar::ensure_layout() const {
     }
     const QFontMetrics metrics(font());
     const auto width_of = [&](const Entry* entry) {
-        return metrics.horizontalAdvance(entry->item.text) + 2 * item_padding;
+        return metrics.horizontalAdvance(entry->item.text) + 2 * zoomed(item_padding);
     };
-    int x = item_margin;
+    const int margin = zoomed(item_margin);
+    int x = margin;
     for (const Entry* entry : ordered(StatusBarSide::left)) {
         const int width = width_of(entry);
-        entry->rect = QRect(x, 0, width, height_pixels);
-        x += width + 2 * item_margin;
+        entry->rect = QRect(x, 0, width, bar_height());
+        x += width + 2 * margin;
     }
-    x = width() - item_margin;
+    x = width() - margin;
     const auto right = ordered(StatusBarSide::right);
     for (auto it = right.rbegin(); it != right.rend(); ++it) {
         const int item_width = width_of(*it);
         x -= item_width;
-        (*it)->rect = QRect(x, 0, item_width, height_pixels);
-        x -= 2 * item_margin;
+        (*it)->rect = QRect(x, 0, item_width, bar_height());
+        x -= 2 * margin;
     }
     layout_valid_ = true;
 }
@@ -232,7 +257,7 @@ void StatusBar::paintEvent(QPaintEvent*) {
 
     const auto draw = [&](const QRect& area, const QString& text, const QColor& foreground) {
         painter.setPen(foreground);
-        painter.drawText(area.adjusted(item_padding, 0, -item_padding, 0),
+        painter.drawText(area.adjusted(zoomed(item_padding), 0, -zoomed(item_padding), 0),
                          Qt::AlignVCenter | Qt::AlignLeft, text);
     };
 
@@ -240,12 +265,12 @@ void StatusBar::paintEvent(QPaintEvent*) {
         int right_edge = width();
         for (const Entry& entry : entries_) {
             if (entry.side == StatusBarSide::right) {
-                right_edge = std::min(right_edge, entry.rect.left() - item_margin);
+                right_edge = std::min(right_edge, entry.rect.left() - zoomed(item_margin));
             }
         }
         painter.save();
         painter.setClipRect(QRect(0, 0, std::max(0, right_edge), height()));
-        draw(QRect(item_margin, 0, width(), height_pixels), message_,
+        draw(QRect(zoomed(item_margin), 0, width(), bar_height()), message_,
              colors_.color("statusBar.foreground"));
         painter.restore();
     }

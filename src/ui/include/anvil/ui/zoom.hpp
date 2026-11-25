@@ -35,4 +35,9 @@ private:
     double factor_ = 1;
 };
 
+// A size read through the zoom that a part was given, or as it is for a part that has none.
+inline int scaled_by(const Zoom* zoom, int size) {
+    return zoom ? zoom->scaled(size) : size;
+}
+
 } // namespace anvil::ui

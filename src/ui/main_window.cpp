@@ -181,6 +181,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             return found == documents_.end() ? std::shared_ptr<core::Document>() : found->second;
         });
     highlighting_ = new Highlighting(this);
+    area_->set_zoom(&zoom_);
     area_->set_highlighter_lookup([this](const core::Uri& uri) { return highlighter_of(uri); });
     connect(highlighting_, &Highlighting::spans_arrived, this,
             [this](const core::Highlighter* highlighter) {
@@ -193,8 +194,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     watcher_ = std::make_unique<LayoutWatcher>(*this);
     layout_.add_observer(watcher_.get());
     workbench_ = new Workbench(colors_, this);
+    workbench_->set_zoom(&zoom_);
     workbench_->set_editor_area(area_);
     status_bar_ = new StatusBar(colors_, this);
+    status_bar_->set_zoom(&zoom_);
     workbench_->set_status_bar(status_bar_);
     setCentralWidget(workbench_);
 
@@ -226,6 +229,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         menu_bar_ = menuBar();
     }
     sidebar_ = new Sidebar(*workbench_, view_containers_, colors_, this);
+    sidebar_->set_zoom(&zoom_);
     panel_ = new Panel(*workbench_, view_containers_, colors_, this);
     register_explorer();
 
@@ -2624,6 +2628,7 @@ QString MainWindow::title_text() const {
 void MainWindow::set_up_title_bar() {
     setWindowFlag(Qt::FramelessWindowHint, true);
     title_bar_ = new TitleBar(colors_, this);
+    title_bar_->set_zoom(&zoom_);
     workbench_->set_title_bar(title_bar_);
     menu_bar_ = new QMenuBar;
     title_bar_->set_menu_bar(menu_bar_);
@@ -2652,7 +2657,7 @@ void MainWindow::set_up_title_bar() {
         }
         if (y <= 1) {
             workbench_->set_visible(Part::title_bar, true);
-        } else if (y > TitleBar::bar_height) {
+        } else if (y > title_bar_->height()) {
             workbench_->set_visible(Part::title_bar, false);
         }
     });

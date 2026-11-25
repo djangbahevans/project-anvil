@@ -186,6 +186,7 @@ void EditorArea::refresh_tab(workbench::GroupId id, std::size_t index) {
 EditorGroupWidget* EditorArea::add_group(workbench::GroupId id) {
     auto* widget = new EditorGroupWidget(id, colors_, this);
     widget->view()->apply_settings(settings_);
+    widget->tabs()->set_zoom(zoom_);
     groups_.push_back(widget);
 
     TabStrip* tabs = widget->tabs();
@@ -368,6 +369,13 @@ void EditorArea::set_tabs_mode(core::TabsMode mode) {
     tabs_mode_ = mode;
     for (EditorGroupWidget* widget : groups_) {
         widget->set_tabs_mode(mode);
+    }
+}
+
+void EditorArea::set_zoom(const Zoom* zoom) {
+    zoom_ = zoom;
+    for (EditorGroupWidget* widget : groups_) {
+        widget->tabs()->set_zoom(zoom);
     }
 }
 

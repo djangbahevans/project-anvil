@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QIconEngine>
 #include <QPainter>
 #include <QScreen>
 #include <algorithm>
@@ -57,6 +58,44 @@ QPixmap draw(char16_t code, const QColor& color, int size, qreal ratio, const QS
     return pixmap;
 }
 
+// Draws the glyph at the size that is asked for, so that an icon stays sharp at any zoom level; a
+// bitmap of one size would be scaled.
+class CodiconEngine final : public QIconEngine {
+public:
+    CodiconEngine(char16_t code, QColor color, int size, QString family)
+        : code_(code), color_(color), size_(size), family_(std::move(family)) {}
+
+    QIconEngine* clone() const override {
+        return new CodiconEngine(*this);
+    }
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State) override {
+        const int side = std::max(1, std::min(size.width(), size.height()));
+        QColor color = color_;
+        if (mode == QIcon::Disabled) {
+            color.setAlpha(qRound(color.alpha() * 0.4));
+        }
+        const QScreen* screen = QGuiApplication::primaryScreen();
+        return draw(code_, color, side, screen ? screen->devicePixelRatio() : 1.0, family_);
+    }
+    QSize actualSize(const QSize& size, QIcon::Mode, QIcon::State) override {
+        const int side = std::max(1, std::min(size.width(), size.height()));
+        return {side, side};
+    }
+    QList<QSize> availableSizes(QIcon::Mode, QIcon::State) override {
+        return {QSize(size_, size_)};
+    }
+    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode,
+               QIcon::State state) override {
+        painter->drawPixmap(rect.topLeft(), pixmap(rect.size(), mode, state));
+    }
+
+private:
+    char16_t code_;
+    QColor color_;
+    int size_;
+    QString family_;
+};
+
 } // namespace
 
 QIcon codicon_icon(std::string_view name, const QColor& color, int size) {
@@ -68,19 +107,7 @@ QIcon codicon_icon(std::string_view name, const QColor& color, int size) {
     if (family.isEmpty()) {
         return {};
     }
-    const QScreen* screen = QGuiApplication::primaryScreen();
-    const qreal ratio = screen ? screen->devicePixelRatio() : 1.0;
-
-    QColor faded = color;
-    faded.setAlpha(qRound(color.alpha() * 0.4));
-    const QPixmap normal = draw(*code, color, size, ratio, family);
-    const QPixmap disabled = draw(*code, faded, size, ratio, family);
-    QIcon icon;
-    icon.addPixmap(normal, QIcon::Normal);
-    icon.addPixmap(normal, QIcon::Active);
-    icon.addPixmap(normal, QIcon::Selected);
-    icon.addPixmap(disabled, QIcon::Disabled);
-    return icon;
+    return QIcon(new CodiconEngine(*code, color, size, family));
 }
 
 namespace {

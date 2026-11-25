@@ -57,6 +57,10 @@ private:
     QWidget* actions_ = nullptr;
 };
 
+void Sidebar::set_zoom(const Zoom* zoom) {
+    activity_bar_->set_zoom(zoom);
+}
+
 Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
                  const WorkbenchColors& colors, QObject* parent)
     : QObject(parent), workbench_(workbench), registry_(registry) {

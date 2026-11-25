@@ -133,6 +133,22 @@ TEST(CodiconsTest, ABiggerSizeDrawsAGlyphThatCoversMore) {
     EXPECT_GT(covered(32), covered(16) * 2);
 }
 
+TEST(CodiconsTest, TheSameIconIsDrawnAtWhateverSizeIsAskedForAndStaysSharp) {
+    const QIcon drawn = codicon_icon("circle-filled", QColor(10, 200, 30), 24);
+    const qreal ratio = QApplication::primaryScreen()->devicePixelRatio();
+    for (const int size : {12, 24, 29, 58}) {
+        const QPixmap pixmap = drawn.pixmap(QSize(size, size), QIcon::Normal);
+        EXPECT_EQ(pixmap.size(), QSize(size, size) * ratio) << size;
+        const QImage image = pixmap.toImage();
+        const QColor center(image.pixel(image.width() / 2, image.height() / 2));
+        EXPECT_EQ(center.alpha(), 255) << size;
+        EXPECT_EQ(center.green(), 200) << size;
+    }
+    EXPECT_EQ(
+        drawn.pixmap(QSize(48, 48)).toImage(),
+        codicon_icon("circle-filled", QColor(10, 200, 30), 48).pixmap(QSize(48, 48)).toImage());
+}
+
 TEST(CodiconsTest, TheActiveAndSelectedStatesDrawLikeTheNormalOneAndTheDisabledStateIsFainter) {
     const QIcon drawn = codicon_icon("circle-filled", Qt::white, 16);
     const QImage normal = render(drawn, QIcon::Normal, 16);

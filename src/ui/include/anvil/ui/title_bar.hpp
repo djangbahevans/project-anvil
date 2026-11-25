@@ -2,6 +2,7 @@
 
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QPointer>
 #include <QString>
@@ -32,6 +33,10 @@ public:
     const QString& title() const {
         return title_;
     }
+
+    // The zoom that the sizes of the bar and its buttons are read through, which must outlive the
+    // bar; the bar lays itself out again when it changes. Null means level 0.
+    void set_zoom(const Zoom* zoom);
 
     // The widget that follows the icon, which the title bar lays out and does not own.
     void set_menu_bar(QWidget* menu_bar);
@@ -105,12 +110,18 @@ private:
     class LayoutButton;
     class CommandCenter;
 
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    void apply_zoom();
     void style_menu_bar();
     void place_command_center();
     // Where the buttons on the right begin.
     int buttons_left() const;
 
     const WorkbenchColors& colors_;
+    const Zoom* zoom_ = nullptr;
+    int menu_bar_font_pixels_ = 0;
     QString title_;
     bool active_ = true;
     QHBoxLayout* layout_ = nullptr;

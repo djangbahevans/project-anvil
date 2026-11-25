@@ -2,6 +2,7 @@
 
 #include "anvil/ui/painted_accessibility.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QColor>
 #include <QRect>
@@ -50,6 +51,7 @@ class StatusBar : public QWidget, public AccessibleItems {
     Q_OBJECT
 
 public:
+    // The sizes at zoom level 0. A bar that has a zoom (`set_zoom`) uses them scaled by it.
     static constexpr int height_pixels = 22;
     static constexpr int font_pixels = 12;
     // Space around the text inside an item, and between the edge of the bar or a neighbor and the
@@ -60,6 +62,12 @@ public:
     // The colors, which must outlive the widget, come from the `statusBar` and `statusBarItem`
     // keys. The status bar repaints when they change.
     StatusBar(const WorkbenchColors& colors, QWidget* parent = nullptr);
+
+    // The zoom that the sizes of the bar are read through, which must outlive the bar; the bar
+    // lays itself out again when it changes. Null means level 0.
+    void set_zoom(const Zoom* zoom);
+    // The height of the bar at the zoom now.
+    int bar_height() const;
 
     // Adds the item, or replaces the one with this id, which moves to `side` if it was on the
     // other one. Setting an item to what it already is does no work.
@@ -107,6 +115,12 @@ protected:
     bool event(QEvent* event) override;
 
 private:
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    void apply_zoom();
+    const Zoom* zoom_ = nullptr;
+
     struct Entry {
         std::string id;
         StatusBarSide side;

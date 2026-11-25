@@ -7,17 +7,28 @@
 
 namespace anvil::ui {
 
+namespace {
+
+constexpr int indicator_width = 2;
+
+} // namespace
+
 class ActivityBar::Button : public QToolButton {
 public:
-    Button(const WorkbenchColors& colors, Entry entry, QWidget* parent)
-        : QToolButton(parent), colors_(colors), entry_(std::move(entry)) {
+    Button(const ActivityBar& bar, Entry entry, QWidget* parent)
+        : QToolButton(parent), bar_(bar), colors_(bar.colors_), entry_(std::move(entry)) {
         setCheckable(true);
         setAutoRaise(true);
         setFocusPolicy(Qt::TabFocus);
-        setFixedSize(button_size, button_size);
         setText(entry_.title);
         setToolTip(entry_.title);
         setAccessibleName(entry_.title);
+        apply_zoom();
+    }
+
+    void apply_zoom() {
+        setFixedSize(bar_.zoomed(button_size), bar_.zoomed(button_size));
+        update();
     }
 
     const std::string& id() const {
@@ -33,15 +44,18 @@ protected:
         QPainter painter(this);
         const bool active = isChecked();
         if (active) {
-            painter.fillRect(QRect(side_ == Side::left ? 0 : width() - 2, 0, 2, height()),
-                             colors_.color("activityBar.activeBorder"));
+            const int indicator = bar_.zoomed(indicator_width);
+            painter.fillRect(
+                QRect(side_ == Side::left ? 0 : width() - indicator, 0, indicator, height()),
+                colors_.color("activityBar.activeBorder"));
         }
         const QColor color =
             colors_.color(active || underMouse() || hasFocus() ? "activityBar.foreground"
                                                                : "activityBar.inactiveForeground");
 
         // The icon is a mask: only its shape is used, in the color of the state.
-        QPixmap icon = entry_.icon.pixmap(QSize(icon_size, icon_size), devicePixelRatioF());
+        QPixmap icon = entry_.icon.pixmap(QSize(bar_.zoomed(icon_size), bar_.zoomed(icon_size)),
+                                          devicePixelRatioF());
         QPainter tint(&icon);
         tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
         tint.fillRect(icon.rect(), color);
@@ -52,6 +66,7 @@ protected:
     }
 
 private:
+    const ActivityBar& bar_;
     const WorkbenchColors& colors_;
     Entry entry_;
     Side side_ = Side::left;
@@ -70,6 +85,23 @@ ActivityBar::ActivityBar(const WorkbenchColors& colors, QWidget* parent)
     });
 }
 
+void ActivityBar::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &ActivityBar::apply_zoom);
+    }
+    apply_zoom();
+}
+
+void ActivityBar::apply_zoom() {
+    for (Button* button : buttons_) {
+        button->apply_zoom();
+    }
+}
+
 void ActivityBar::set_entries(const std::vector<Entry>& entries) {
     for (Button* button : buttons_) {
         layout_->removeWidget(button);
@@ -77,7 +109,7 @@ void ActivityBar::set_entries(const std::vector<Entry>& entries) {
     }
     buttons_.clear();
     for (const Entry& entry : entries) {
-        auto* button = new Button(colors_, entry, this);
+        auto* button = new Button(*this, entry, this);
         button->set_side(side_);
         layout_->insertWidget(static_cast<int>(buttons_.size()), button);
         buttons_.push_back(button);

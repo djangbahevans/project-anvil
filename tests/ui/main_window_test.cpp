@@ -9591,3 +9591,75 @@ TEST_F(ZoomTest, TheLineHeightAndTheCharacterWidthFollowTheFont) {
     EXPECT_GT(window_->view()->line_height(), line_height);
     EXPECT_GT(window_->view()->char_width(), char_width);
 }
+
+class ZoomChromeTest : public ZoomTest {
+protected:
+    void start_shown_with(const std::string& settings) {
+        start_with(settings);
+        window_->resize(1100, 800);
+        window_->show();
+        QApplication::processEvents();
+    }
+};
+
+TEST_F(ZoomChromeTest, TheBarsOfTheWindowAreTheSizesAtLevelZeroScaledAndNothingOverlaps) {
+    for (const double level : {-2.0, 0.0, 3.0}) {
+        window_.reset();
+        start_shown_with(R"j({"window.zoomLevel": )j" + std::to_string(level) + "}");
+        SCOPED_TRACE(level);
+        const ui::Zoom& zoom = window_->zoom();
+        EXPECT_EQ(window_->status_bar().height(), zoom.scaled(ui::StatusBar::height_pixels));
+        auto* group = window_->editor_area()->groups().front();
+        EXPECT_EQ(group->tabs()->height(), zoom.scaled(ui::TabStrip::height_pixels));
+        EXPECT_EQ(group->tabs()->font().pixelSize(), zoom.scaled(ui::TabStrip::font_pixels));
+        EXPECT_EQ(group->view()->geometry().top(), group->tabs()->geometry().bottom() + 1);
+        const QRect editor_area(window_->editor_area()->mapTo(window_.get(), QPoint(0, 0)),
+                                window_->editor_area()->size());
+        const QRect status(window_->status_bar().mapTo(window_.get(), QPoint(0, 0)),
+                           window_->status_bar().size());
+        EXPECT_LE(editor_area.bottom(), status.top() - 1);
+        EXPECT_EQ(status.bottom() + 1, window_->height());
+    }
+}
+
+TEST_F(ZoomChromeTest, TheLayoutFollowsAChangeOfTheLevelWithoutRecreatingAnyPart) {
+    start_shown_with("{}");
+    ui::StatusBar* status = &window_->status_bar();
+    ui::TabStrip* tabs = window_->editor_area()->groups().front()->tabs();
+    const int strip_before = tabs->height();
+    const int editor_top_before = window_->view()->mapTo(window_.get(), QPoint(0, 0)).y();
+    const int status_top_before = status->mapTo(window_.get(), QPoint(0, 0)).y();
+    window_->commands().execute("workbench.action.zoomIn");
+    window_->commands().execute("workbench.action.zoomIn");
+    QApplication::processEvents();
+    EXPECT_EQ(&window_->status_bar(), status);
+    EXPECT_EQ(window_->editor_area()->groups().front()->tabs(), tabs);
+    EXPECT_EQ(tabs->height(), window_->zoom().scaled(ui::TabStrip::height_pixels));
+    EXPECT_GT(tabs->height(), strip_before);
+    EXPECT_GT(window_->view()->mapTo(window_.get(), QPoint(0, 0)).y(), editor_top_before);
+    EXPECT_LT(status->mapTo(window_.get(), QPoint(0, 0)).y(), status_top_before);
+    window_->commands().execute("workbench.action.zoomReset");
+    QApplication::processEvents();
+    EXPECT_EQ(tabs->height(), strip_before);
+    EXPECT_EQ(window_->view()->mapTo(window_.get(), QPoint(0, 0)).y(), editor_top_before);
+}
+
+TEST_F(ZoomChromeTest, AGroupMadeAtAHigherLevelStartsWithTheZoomedStrip) {
+    start_shown_with(R"j({"window.zoomLevel": 3})j");
+    window_->commands().execute("workbench.action.splitEditor");
+    for (auto* group : window_->editor_area()->groups()) {
+        EXPECT_EQ(group->tabs()->height(), window_->zoom().scaled(ui::TabStrip::height_pixels));
+    }
+}
+
+TEST_F(ZoomChromeTest, TheTitleBarOfAFramelessWindowFollowsTheZoom) {
+    custom_title_bar_ = true;
+    for (const double level : {-2.0, 0.0, 3.0}) {
+        window_.reset();
+        start_shown_with(R"j({"window.zoomLevel": )j" + std::to_string(level) + "}");
+        SCOPED_TRACE(level);
+        ASSERT_TRUE(window_->has_custom_title_bar());
+        EXPECT_EQ(window_->title_bar()->height(), window_->zoom().scaled(ui::TitleBar::bar_height));
+        EXPECT_EQ(window_->menu_bar()->height(), window_->title_bar()->height());
+    }
+}
