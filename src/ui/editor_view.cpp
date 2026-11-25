@@ -627,6 +627,18 @@ void EditorView::jump_to_bracket() {
     }
 }
 
+void EditorView::comment_lines(core::LineCommentType type, const core::CommentOptions& options) {
+    if (controller_) {
+        apply(controller_->comment_lines(type, options));
+    }
+}
+
+void EditorView::toggle_block_comment(const core::CommentOptions& options) {
+    if (controller_) {
+        apply(controller_->toggle_block_comment(options));
+    }
+}
+
 void EditorView::expand_selection() {
     if (controller_) {
         apply(controller_->expand_selection());

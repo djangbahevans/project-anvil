@@ -90,7 +90,10 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
         }
     }
     for (const auto& [key, field] :
-         {std::pair{"zenMode.fullScreen", &EditorSettings::zen_full_screen},
+         {std::pair{"editor.comments.insertSpace", &EditorSettings::comments_insert_space},
+          std::pair{"editor.comments.ignoreEmptyLines",
+                    &EditorSettings::comments_ignore_empty_lines},
+          std::pair{"zenMode.fullScreen", &EditorSettings::zen_full_screen},
           std::pair{"zenMode.centerLayout", &EditorSettings::zen_center_layout},
           std::pair{"zenMode.hideStatusBar", &EditorSettings::zen_hide_status_bar},
           std::pair{"zenMode.hideActivityBar", &EditorSettings::zen_hide_activity_bar}}) {

@@ -199,6 +199,22 @@ TEST(EditorSettings, ATabsSettingThatIsNotAModeIsReportedByName) {
     }
 }
 
+TEST(EditorSettings, CommentsInsertASpaceAndIgnoreEmptyLinesUnlessTheSettingsSayOtherwise) {
+    EXPECT_TRUE(read("{}")->comments_insert_space);
+    EXPECT_TRUE(read("{}")->comments_ignore_empty_lines);
+    EXPECT_FALSE(read(R"j({"editor.comments.insertSpace": false})j")->comments_insert_space);
+    EXPECT_TRUE(read(R"j({"editor.comments.insertSpace": false})j")->comments_ignore_empty_lines);
+    EXPECT_FALSE(read(R"j({"editor": {"comments": {"ignoreEmptyLines": false}}})j")
+                     ->comments_ignore_empty_lines);
+    EXPECT_TRUE(
+        read(R"j({"editor": {"comments": {"ignoreEmptyLines": false}}})j")->comments_insert_space);
+    for (const char* key : {"editor.comments.insertSpace", "editor.comments.ignoreEmptyLines"}) {
+        const auto result = read(std::string(R"j({")j") + key + R"j(": "no"})j");
+        ASSERT_FALSE(result.has_value()) << key;
+        EXPECT_NE(result.error().message.find(key), std::string::npos) << key;
+    }
+}
+
 TEST(EditorSettings, AZenModeSettingOfTheWrongKindIsReportedByName) {
     for (const char* key : {"zenMode.fullScreen", "zenMode.centerLayout", "zenMode.hideStatusBar",
                             "zenMode.hideActivityBar"}) {

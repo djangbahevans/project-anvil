@@ -404,3 +404,19 @@ TEST(DefaultKeybindingsTest, ZenModeHasVSCodesKeys) {
     EXPECT_EQ(keys_of(macos, "workbench.action.toggleZenMode"), chords({"cmd+k z"}));
     EXPECT_EQ(keys_of(macos, "workbench.action.exitZenMode"), chords({"escape escape"}));
 }
+
+TEST(DefaultKeybindingsTest, TheCommentCommandsHaveVSCodesKeys) {
+    const auto linux = default_keybindings(KeyPlatform::linux);
+    const auto windows = default_keybindings(KeyPlatform::windows);
+    const auto macos = default_keybindings(KeyPlatform::macos);
+    EXPECT_EQ(keys_of(linux, "editor.action.commentLine"), chords({"ctrl+/"}));
+    EXPECT_EQ(keys_of(windows, "editor.action.commentLine"), chords({"ctrl+/"}));
+    EXPECT_EQ(keys_of(macos, "editor.action.commentLine"), chords({"cmd+/"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.addCommentLine"), chords({"ctrl+k ctrl+c"}));
+    EXPECT_EQ(keys_of(macos, "editor.action.addCommentLine"), chords({"cmd+k cmd+c"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.removeCommentLine"), chords({"ctrl+k ctrl+u"}));
+    EXPECT_EQ(keys_of(macos, "editor.action.removeCommentLine"), chords({"cmd+k cmd+u"}));
+    EXPECT_EQ(keys_of(linux, "editor.action.blockComment"), chords({"ctrl+shift+a"}));
+    EXPECT_EQ(keys_of(windows, "editor.action.blockComment"), chords({"shift+alt+a"}));
+    EXPECT_EQ(keys_of(macos, "editor.action.blockComment"), chords({"shift+alt+a"}));
+}

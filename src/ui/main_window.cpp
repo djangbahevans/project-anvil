@@ -1206,6 +1206,14 @@ void MainWindow::register_commands() {
         [this] { navigate(history_.go_to_last_edit(), true); });
     add("workbench.action.gotoLine", tr("Go to Line/Column..."), [this] { show_go_to_line(); });
     add("editor.action.jumpToBracket", tr("Go to Bracket"), [this] { view()->jump_to_bracket(); });
+    add("editor.action.commentLine", tr("Toggle Line Comment"),
+        [this] { run_comment_command(false, core::LineCommentType::toggle); });
+    add("editor.action.addCommentLine", tr("Add Line Comment"),
+        [this] { run_comment_command(false, core::LineCommentType::add); });
+    add("editor.action.removeCommentLine", tr("Remove Line Comment"),
+        [this] { run_comment_command(false, core::LineCommentType::remove); });
+    add("editor.action.blockComment", tr("Toggle Block Comment"),
+        [this] { run_comment_command(true, core::LineCommentType::toggle); });
     add("editor.action.smartSelect.expand", tr("Expand Selection"),
         [this] { view()->expand_selection(); });
     add("editor.action.smartSelect.shrink", tr("Shrink Selection"),
@@ -2578,6 +2586,33 @@ void MainWindow::apply_part_visibility() {
                                            core::ActivityBarLocation::hidden &&
                                        !(zen_.active && editor.zen_hide_activity_bar));
     area_->set_tabs_mode(zen_.active ? editor.zen_show_tabs : editor.show_tabs);
+}
+
+void MainWindow::run_comment_command(bool block, core::LineCommentType type) {
+    const core::Uri* uri = current_uri_ptr();
+    if (!uri) {
+        return;
+    }
+    const DocumentLanguage& language = language_of_document(*uri);
+    const core::EditorSettings& editor = settings_->editor();
+    core::CommentOptions options;
+    options.tokens = language_comments(language.id).value_or(core::LanguageComments{});
+    options.indent_size = static_cast<std::size_t>(editor.tab_size);
+    options.insert_space = editor.comments_insert_space;
+    options.ignore_empty_lines = editor.comments_ignore_empty_lines;
+    if (block) {
+        if (!options.tokens.block) {
+            status_bar_->show_message(tr("%1 has no block comment.").arg(language.name), 5000);
+            return;
+        }
+        view()->toggle_block_comment(options);
+        return;
+    }
+    if (!options.tokens.line && !options.tokens.block) {
+        status_bar_->show_message(tr("%1 has no comment tokens.").arg(language.name), 5000);
+        return;
+    }
+    view()->comment_lines(type, options);
 }
 
 void MainWindow::toggle_zen_mode() {
