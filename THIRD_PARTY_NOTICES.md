@@ -57,3 +57,17 @@ Anvil includes the following material from other projects. Each keeps its own li
 - **From:** https://github.com/tree-sitter/tree-sitter-cpp, release v0.23.4, fetched and checked by `scripts/fetch-tree-sitter.sh`.
 - **Copyright:** Copyright (c) 2014 Max Brunsfeld.
 - **License:** MIT.
+
+## tree-sitter-javascript
+
+- **What:** the JavaScript grammar with JSX (`src/parser.c`, `src/scanner.c`) and its `queries/highlights.scm` and `queries/highlights-jsx.scm`, compiled and embedded into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository.
+- **From:** https://github.com/tree-sitter/tree-sitter-javascript, release v0.25.0, fetched and checked by `scripts/fetch-tree-sitter.sh`.
+- **Copyright:** Copyright (c) 2014 Max Brunsfeld.
+- **License:** MIT.
+
+## tree-sitter-typescript
+
+- **What:** the TypeScript and TSX grammars (`typescript/src`, `tsx/src` and the scanner in `common`) and its `queries/highlights.scm`, compiled and embedded into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository.
+- **From:** https://github.com/tree-sitter/tree-sitter-typescript, release v0.23.2, fetched and checked by `scripts/fetch-tree-sitter.sh`.
+- **Copyright:** Copyright (c) 2017 Max Brunsfeld.
+- **License:** MIT.

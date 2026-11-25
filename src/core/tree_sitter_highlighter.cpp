@@ -21,11 +21,17 @@
 extern "C" const TSLanguage* tree_sitter_json(void);
 extern "C" const TSLanguage* tree_sitter_c(void);
 extern "C" const TSLanguage* tree_sitter_cpp(void);
+extern "C" const TSLanguage* tree_sitter_javascript(void);
+extern "C" const TSLanguage* tree_sitter_typescript(void);
+extern "C" const TSLanguage* tree_sitter_tsx(void);
 
 namespace anvil::core::grammar_queries {
 extern const std::string_view json;
 extern const std::string_view c;
 extern const std::string_view cpp;
+extern const std::string_view javascript;
+extern const std::string_view typescript;
+extern const std::string_view typescriptreact;
 } // namespace anvil::core::grammar_queries
 
 namespace anvil::core {
@@ -35,17 +41,29 @@ namespace {
 struct Grammar {
     std::string_view language_id;
     std::string_view root_scope;
+    // What ends the scopes of the language, as the scopes of its TextMate grammar do: `json`,
+    // `js.jsx`.
+    std::string_view scope_suffix;
     const TSLanguage* (*language)();
     const std::string_view& highlights;
     std::span<const CaptureScope> (*scopes)();
 };
 
-const std::array<Grammar, 3>& grammars() {
-    static const std::array<Grammar, 3> table = {
-        Grammar{"json", "source.json", tree_sitter_json, grammar_queries::json,
+const std::array<Grammar, 7>& grammars() {
+    static const std::array<Grammar, 7> table = {
+        Grammar{"json", "source.json", "json", tree_sitter_json, grammar_queries::json,
                 json_capture_scopes},
-        Grammar{"c", "source.c", tree_sitter_c, grammar_queries::c, c_capture_scopes},
-        Grammar{"cpp", "source.cpp", tree_sitter_cpp, grammar_queries::cpp, cpp_capture_scopes},
+        Grammar{"c", "source.c", "c", tree_sitter_c, grammar_queries::c, c_capture_scopes},
+        Grammar{"cpp", "source.cpp", "cpp", tree_sitter_cpp, grammar_queries::cpp,
+                cpp_capture_scopes},
+        Grammar{"javascript", "source.js", "js", tree_sitter_javascript,
+                grammar_queries::javascript, javascript_capture_scopes},
+        Grammar{"javascriptreact", "source.js.jsx", "js.jsx", tree_sitter_javascript,
+                grammar_queries::javascript, javascript_capture_scopes},
+        Grammar{"typescript", "source.ts", "ts", tree_sitter_typescript,
+                grammar_queries::typescript, typescript_capture_scopes},
+        Grammar{"typescriptreact", "source.tsx", "tsx", tree_sitter_tsx,
+                grammar_queries::typescriptreact, typescript_capture_scopes},
     };
     return table;
 }
@@ -132,11 +150,13 @@ struct Capture {
     std::size_t end = 0;
     std::uint32_t pattern = 0;
     std::string_view scope;
+    bool weak = false;
 };
 
 // Turns captures, which may nest and share ranges, into byte spans that do not overlap, where the
 // innermost capture of a stretch gives it its scope and, for the same range, the pattern that
-// comes first in the query. Nodes of a tree nest properly, which lets a stack do it in one pass.
+// comes first in the query, a weak capture after any other. Nodes of a tree nest properly, which
+// lets a stack do it in one pass.
 std::vector<Capture> flatten(std::vector<Capture> captures) {
     std::ranges::stable_sort(captures, [](const Capture& a, const Capture& b) {
         if (a.begin != b.begin) {
@@ -144,6 +164,9 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
         }
         if (a.end != b.end) {
             return a.end > b.end;
+        }
+        if (a.weak != b.weak) {
+            return b.weak;
         }
         return a.pattern < b.pattern;
     });
@@ -153,7 +176,7 @@ std::vector<Capture> flatten(std::vector<Capture> captures) {
     std::size_t position = 0;
     const auto close_until = [&](std::size_t end, const Capture& top) {
         if (position < end) {
-            out.push_back({position, end, top.pattern, top.scope});
+            out.push_back({position, end, top.pattern, top.scope, top.weak});
             position = end;
         }
     };
@@ -192,21 +215,30 @@ struct RegexDeleter {
     }
 };
 
-// `(#match? @capture "regex")` and `(#not-match? @capture "regex")`, which the query cursor leaves
-// to the caller: the match counts only when the captured text satisfies them.
+// A condition of a pattern on the text it captured, which the query cursor leaves to the caller:
+// the match counts only when it holds.
+// - `(#match? @capture "regex")` and `(#not-match? @capture "regex")`
+// - `(#eq? @capture "text")` and `(#not-eq? @capture "text")`
+// - `(#is? local)` never holds and `(#is-not? local)` always does, because the highlighter does
+//   not track which identifiers are local variables.
 struct TextPredicate {
+    enum class Kind { regex, text, never };
+    Kind kind = Kind::regex;
     std::uint32_t capture = 0;
     bool negated = false;
     std::shared_ptr<pcre2_code> regex;
+    std::string text;
 };
 
 struct QueryData {
     std::unique_ptr<TSQuery, QueryDeleter> query;
     // The predicates of each pattern, by pattern index.
     std::vector<std::vector<TextPredicate>> predicates;
-    // The scope of each capture of the query, by capture index; empty for a capture the table does
-    // not map.
+    // The scope of each capture of the query, by capture index, with the suffix of the language;
+    // empty for a capture the table does not map. The views are into `scope_names`.
     std::vector<std::string_view> capture_scopes;
+    std::vector<bool> capture_weak;
+    std::vector<std::string> scope_names;
 };
 
 // Reads the predicates of every pattern of the query. Fails with a message for a predicate that is
@@ -229,12 +261,14 @@ read_predicates(TSQuery& query) {
                 ++end;
             }
             const std::string name = string_of(steps[begin]);
-            if (name.ends_with('?')) {
-                const bool negated = name == "not-match?";
-                if ((name != "match?" && !negated) || end - begin != 3 ||
-                    steps[begin + 1].type != TSQueryPredicateStepTypeCapture ||
-                    steps[begin + 2].type != TSQueryPredicateStepTypeString) {
-                    return std::unexpected("unsupported predicate #" + name);
+            const std::uint32_t arguments = end - begin - 1;
+            const auto capture_and_string = [&] {
+                return arguments == 2 && steps[begin + 1].type == TSQueryPredicateStepTypeCapture &&
+                       steps[begin + 2].type == TSQueryPredicateStepTypeString;
+            };
+            if (name == "match?" || name == "not-match?") {
+                if (!capture_and_string()) {
+                    return std::unexpected("unsupported use of #" + name);
                 }
                 const std::string source = string_of(steps[begin + 2]);
                 int error_code = 0;
@@ -246,8 +280,27 @@ read_predicates(TSQuery& query) {
                     return std::unexpected("invalid regular expression in #" + name + ": " +
                                            source);
                 }
-                all[pattern].push_back({steps[begin + 1].value_id, negated,
-                                        std::shared_ptr<pcre2_code>(code, RegexDeleter{})});
+                all[pattern].push_back({TextPredicate::Kind::regex,
+                                        steps[begin + 1].value_id,
+                                        name == "not-match?",
+                                        std::shared_ptr<pcre2_code>(code, RegexDeleter{}),
+                                        {}});
+            } else if (name == "eq?" || name == "not-eq?") {
+                if (!capture_and_string()) {
+                    return std::unexpected("unsupported use of #" + name);
+                }
+                all[pattern].push_back({TextPredicate::Kind::text, steps[begin + 1].value_id,
+                                        name == "not-eq?", nullptr, string_of(steps[begin + 2])});
+            } else if (name == "is?" || name == "is-not?") {
+                if (arguments != 1 || steps[begin + 1].type != TSQueryPredicateStepTypeString ||
+                    string_of(steps[begin + 1]) != "local") {
+                    return std::unexpected("unsupported use of #" + name);
+                }
+                if (name == "is?") {
+                    all[pattern].push_back({TextPredicate::Kind::never, 0, false, nullptr, {}});
+                }
+            } else if (name.ends_with('?')) {
+                return std::unexpected("unsupported predicate #" + name);
             }
             begin = end + 1;
         }
@@ -259,6 +312,9 @@ read_predicates(TSQuery& query) {
 bool satisfies(const QueryData& data, const TSQueryMatch& match, const Text& text,
                pcre2_match_data* scratch) {
     for (const TextPredicate& predicate : data.predicates[match.pattern_index]) {
+        if (predicate.kind == TextPredicate::Kind::never) {
+            return false;
+        }
         for (std::uint16_t i = 0; i < match.capture_count; ++i) {
             const TSQueryCapture& capture = match.captures[i];
             if (capture.index != predicate.capture) {
@@ -266,10 +322,12 @@ bool satisfies(const QueryData& data, const TSQueryMatch& match, const Text& tex
             }
             const std::size_t begin = ts_node_start_byte(capture.node);
             const std::string subject = text.slice(begin, ts_node_end_byte(capture.node) - begin);
-            const int result =
-                pcre2_match(predicate.regex.get(), reinterpret_cast<PCRE2_SPTR>(subject.data()),
-                            subject.size(), 0, 0, scratch, nullptr);
-            if ((result >= 0) == predicate.negated) {
+            const bool holds = predicate.kind == TextPredicate::Kind::text
+                                   ? subject == predicate.text
+                                   : pcre2_match(predicate.regex.get(),
+                                                 reinterpret_cast<PCRE2_SPTR>(subject.data()),
+                                                 subject.size(), 0, 0, scratch, nullptr) >= 0;
+            if (holds == predicate.negated) {
                 return false;
             }
         }
@@ -321,7 +379,8 @@ std::vector<HighlightSpan> line_spans(const Text& text, const TSTree& tree, cons
             std::max<std::size_t>(ts_node_start_byte(capture.node), line_begin);
         const std::size_t end = std::min<std::size_t>(ts_node_end_byte(capture.node), line_end);
         if (begin < end) {
-            captures.push_back({begin - line_begin, end - line_begin, match.pattern_index, scope});
+            captures.push_back({begin - line_begin, end - line_begin, match.pattern_index, scope,
+                                data.capture_weak[capture.index]});
         }
     }
 
@@ -413,11 +472,22 @@ std::expected<std::shared_ptr<const QueryData>, Error> build_query_data(const Gr
     data->predicates = std::move(*predicates);
     const std::span<const CaptureScope> table = grammar.scopes();
     const std::uint32_t captures = ts_query_capture_count(data->query.get());
-    data->capture_scopes.reserve(captures);
+    std::vector<const CaptureScope*> rows;
     for (std::uint32_t i = 0; i < captures; ++i) {
         std::uint32_t length = 0;
         const char* name = ts_query_capture_name_for_id(data->query.get(), i, &length);
-        data->capture_scopes.push_back(scope_for_capture(table, std::string_view(name, length)));
+        rows.push_back(find_capture_scope(table, std::string_view(name, length)));
+    }
+    data->scope_names.reserve(captures);
+    for (const CaptureScope* row : rows) {
+        data->capture_weak.push_back(row && row->weak);
+        if (row) {
+            data->scope_names.push_back(std::string(row->scope) + "." +
+                                        std::string(grammar.scope_suffix));
+            data->capture_scopes.push_back(data->scope_names.back());
+        } else {
+            data->capture_scopes.emplace_back();
+        }
     }
     return data;
 }
