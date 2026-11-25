@@ -440,8 +440,6 @@ const char* read_string(void* payload, std::uint32_t byte, TSPoint, std::uint32_
 struct InlineBuild {
     std::shared_ptr<const InlineLayer> layer;
     InlineCache cache;
-    // The document ranges of the nodes whose text was not parsed before.
-    std::vector<std::pair<std::size_t, std::size_t>> fresh;
 };
 
 // A range of the document, `end` included: the nodes that touch it are the ones to look at.
@@ -502,7 +500,6 @@ std::expected<InlineBuild, Error> build_inline_layer(const Text& text, const TST
             if (!parsed->tree) {
                 return false;
             }
-            build.fresh.emplace_back(inline_node.begin, inline_node.end);
             inline_node.parsed = std::move(parsed);
             build.cache.emplace(inline_node.parsed->text, inline_node.parsed);
             layer->push_back(std::move(inline_node));
@@ -806,12 +803,8 @@ struct TreeSitterHighlighter::Impl {
     // The parser polls it while it parses and stops when it is set; a `std::stop_callback` sets it
     // from the thread that asks for the stop.
     std::atomic<bool> cancel{false};
-    // The spans of each line once asked for, kept until an edit or a change of the tree reaches
-    // the line. One slot per line of `text`.
-    mutable std::vector<std::optional<std::vector<HighlightSpan>>> cache;
     std::uint64_t version = 1;
     std::size_t bytes_read = 0;
-    mutable std::size_t line_queries = 0;
 };
 
 bool TreeSitterHighlighter::supports(std::string_view language_id) {
@@ -862,7 +855,6 @@ TreeSitterHighlighter::create_with_query(std::string_view language_id, std::stri
         return std::unexpected(Error{ErrorCode::environment_unavailable,
                                      impl->cancel.load() ? "cancelled" : "parsing failed"});
     }
-    impl->cache.resize(impl->text.line_count());
     if (grammar->inline_grammar) {
         impl->inline_parser.reset(ts_parser_new());
         if (!ts_parser_set_language(impl->inline_parser.get(),
@@ -885,7 +877,7 @@ TreeSitterHighlighter::create_with_query(std::string_view language_id, std::stri
     return highlighter;
 }
 
-std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error>
+std::expected<void, Error>
 TreeSitterHighlighter::rebuild_inlines(std::optional<std::pair<std::size_t, std::size_t>> changed,
                                        std::ptrdiff_t shift) {
     Impl& impl = *impl_;
@@ -905,7 +897,7 @@ TreeSitterHighlighter::rebuild_inlines(std::optional<std::pair<std::size_t, std:
     if (!partial) {
         impl.inlines = std::move(build->layer);
         impl.inline_cache = std::move(build->cache);
-        return std::move(build->fresh);
+        return {};
     }
 
     // The nodes before the window and after it are the ones of the last parse, the later ones moved
@@ -942,7 +934,7 @@ TreeSitterHighlighter::rebuild_inlines(std::optional<std::pair<std::size_t, std:
             impl.inline_cache.emplace(kept.parsed->text, kept.parsed);
         }
     }
-    return std::move(build->fresh);
+    return {};
 }
 
 TreeSitterHighlighter::TreeSitterHighlighter(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -950,19 +942,13 @@ TreeSitterHighlighter::TreeSitterHighlighter(std::unique_ptr<Impl> impl) : impl_
 TreeSitterHighlighter::~TreeSitterHighlighter() = default;
 
 std::vector<HighlightSpan> TreeSitterHighlighter::spans(std::size_t line) const {
-    if (line >= impl_->cache.size()) {
+    if (!impl_->tree) {
         return {};
     }
-    auto& slot = impl_->cache[line];
-    if (!slot) {
-        ++impl_->line_queries;
-        slot = impl_->tree ? line_spans(impl_->text,
-                                        Layers{impl_->tree.get(), impl_->data.get(),
-                                               impl_->inlines.get(), impl_->inline_data.get()},
-                                        line, no_line_limit)
-                           : std::vector<HighlightSpan>{};
-    }
-    return *slot;
+    return line_spans(impl_->text,
+                      Layers{impl_->tree.get(), impl_->data.get(), impl_->inlines.get(),
+                             impl_->inline_data.get()},
+                      line, no_line_limit);
 }
 
 std::shared_ptr<const Highlighter> TreeSitterHighlighter::snapshot() const {
@@ -1032,10 +1018,6 @@ std::size_t TreeSitterHighlighter::inline_nodes_visited() const {
     return impl_->inline_nodes_visited;
 }
 
-std::size_t TreeSitterHighlighter::line_queries() const {
-    return impl_->line_queries;
-}
-
 std::expected<void, Error> TreeSitterHighlighter::apply(const TextChange& change,
                                                         const Text& new_text) {
     return apply(std::span<const TextChange>(&change, 1), new_text);
@@ -1059,14 +1041,8 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
 
     // Each change is described against the text the ones before it left, which the highlighter
     // rebuilds from its own text; the points of an edit need the lines of those texts.
-    struct Step {
-        TSInputEdit edit;
-        std::size_t first_row = 0;
-        std::size_t old_rows = 0;
-        std::size_t new_rows = 0;
-    };
-    std::vector<Step> steps;
-    steps.reserve(changes.size());
+    std::vector<TSInputEdit> edits;
+    edits.reserve(changes.size());
     Text current = impl_->text;
     for (const TextChange& change : changes) {
         const std::size_t old_end = change.offset + change.removed_bytes;
@@ -1075,17 +1051,10 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
             return std::unexpected(next.error());
         }
         const std::size_t new_end = change.offset + change.text.size();
-        Step step;
-        step.edit = TSInputEdit{static_cast<std::uint32_t>(change.offset),
-                                static_cast<std::uint32_t>(old_end),
-                                static_cast<std::uint32_t>(new_end),
-                                point_at(current, change.offset),
-                                point_at(current, old_end),
-                                point_at(*next, new_end)};
-        step.first_row = step.edit.start_point.row;
-        step.old_rows = step.edit.old_end_point.row - step.first_row + 1;
-        step.new_rows = step.edit.new_end_point.row - step.first_row + 1;
-        steps.push_back(step);
+        edits.push_back(TSInputEdit{
+            static_cast<std::uint32_t>(change.offset), static_cast<std::uint32_t>(old_end),
+            static_cast<std::uint32_t>(new_end), point_at(current, change.offset),
+            point_at(current, old_end), point_at(*next, new_end)});
         current = std::move(*next);
     }
     if (current.size() != new_text.size()) {
@@ -1097,10 +1066,10 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
     // what lies after it and adds its own range.
     constexpr std::size_t nowhere = std::numeric_limits<std::size_t>::max();
     std::pair<std::size_t, std::size_t> hull{nowhere, 0};
-    for (const Step& step : steps) {
-        const std::size_t start = step.edit.start_byte;
-        const std::size_t old_end = step.edit.old_end_byte;
-        const std::size_t new_end = step.edit.new_end_byte;
+    for (const TSInputEdit& edit : edits) {
+        const std::size_t start = edit.start_byte;
+        const std::size_t old_end = edit.old_end_byte;
+        const std::size_t new_end = edit.new_end_byte;
         if (hull.first != nowhere) {
             const auto moved = [&](std::size_t position) {
                 if (position >= old_end) {
@@ -1114,18 +1083,8 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
         }
     }
 
-    for (const Step& step : steps) {
-        ts_tree_edit(impl_->tree.get(), &step.edit);
-        auto& cache = impl_->cache;
-        const auto first =
-            cache.begin() + static_cast<std::ptrdiff_t>(std::min(step.first_row, cache.size()));
-        const auto last =
-            first + static_cast<std::ptrdiff_t>(
-                        std::min(step.old_rows, static_cast<std::size_t>(cache.end() - first)));
-        cache.erase(first, last);
-        cache.insert(cache.begin() +
-                         static_cast<std::ptrdiff_t>(std::min(step.first_row, cache.size())),
-                     step.new_rows, std::nullopt);
+    for (const TSInputEdit& edit : edits) {
+        ts_tree_edit(impl_->tree.get(), &edit);
     }
 
     const std::size_t old_size = impl_->text.size();
@@ -1137,53 +1096,38 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
         parse(*impl_->parser, impl_->tree.get(), input, impl_->cancel));
     if (!tree) {
         impl_->tree.reset();
-        impl_->cache.assign(impl_->text.line_count(), std::nullopt);
         ++impl_->version;
         return std::unexpected(Error{ErrorCode::environment_unavailable,
                                      impl_->cancel.load() ? "cancelled" : "parsing failed"});
     }
 
-    std::uint32_t range_count = 0;
-    TSRange* ranges = ts_tree_get_changed_ranges(impl_->tree.get(), tree.get(), &range_count);
-    impl_->tree = std::move(tree);
-    impl_->cache.resize(impl_->text.line_count());
-    for (std::uint32_t i = 0; i < range_count; ++i) {
-        const std::size_t last_row =
-            std::min<std::size_t>(ranges[i].end_point.row, impl_->cache.size() - 1);
-        for (std::size_t row = ranges[i].start_point.row; row <= last_row; ++row) {
-            impl_->cache[row].reset();
-        }
-    }
+    // The ranges where the syntax changed matter to the inline content of the nodes of the new
+    // tree, which are looked at again where they touch them. Comparing the trees costs time in
+    // proportion to the number of siblings, so it is not done for a language without inline
+    // content.
+    std::expected<void, Error> inlines;
     if (impl_->inline_parser) {
-        // The part of the document that the edits and the changed ranges can have touched, as one
-        // range in the coordinates of the new text. The nodes outside it keep their trees.
+        std::uint32_t range_count = 0;
+        TSRange* ranges = ts_tree_get_changed_ranges(impl_->tree.get(), tree.get(), &range_count);
         std::pair<std::size_t, std::size_t> window = hull;
         for (std::uint32_t i = 0; i < range_count; ++i) {
             window.first = std::min<std::size_t>(window.first, ranges[i].start_byte);
             window.second = std::max<std::size_t>(window.second, ranges[i].end_byte);
         }
-        std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error> fresh =
-            std::vector<std::pair<std::size_t, std::size_t>>{};
+        std::free(ranges);
+        impl_->tree = std::move(tree);
         if (window.first <= window.second) {
-            fresh = rebuild_inlines(window, static_cast<std::ptrdiff_t>(impl_->text.size()) -
-                                                static_cast<std::ptrdiff_t>(old_size));
+            inlines = rebuild_inlines(window, static_cast<std::ptrdiff_t>(impl_->text.size()) -
+                                                  static_cast<std::ptrdiff_t>(old_size));
         }
-        if (!fresh) {
-            std::free(ranges);
-            impl_->tree.reset();
-            impl_->cache.assign(impl_->text.line_count(), std::nullopt);
-            ++impl_->version;
-            return std::unexpected(fresh.error());
-        }
-        for (const auto& [begin, end] : *fresh) {
-            const std::size_t last =
-                std::min(impl_->text.position_at(end).line, impl_->cache.size() - 1);
-            for (std::size_t row = impl_->text.position_at(begin).line; row <= last; ++row) {
-                impl_->cache[row].reset();
-            }
-        }
+    } else {
+        impl_->tree = std::move(tree);
     }
-    std::free(ranges);
+    if (!inlines) {
+        impl_->tree.reset();
+        ++impl_->version;
+        return std::unexpected(inlines.error());
+    }
     ++impl_->version;
     return {};
 }

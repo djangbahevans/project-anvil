@@ -91,17 +91,19 @@ std::string read_source_file(const char* relative) {
 
 } // namespace
 
-TEST(ThirdPartyNotices, NameEveryReleaseThatTheTreeSitterFetchScriptPins) {
+TEST(ThirdPartyNotices, NameEveryVersionThatTheTreeSitterFetchScriptPins) {
     const std::string script = read_source_file("scripts/fetch-tree-sitter.sh");
     const std::string notices = read_source_file("THIRD_PARTY_NOTICES.md");
-    const std::regex pin(R"(github\.com/([\w-]+/[\w-]+)/archive/refs/tags/(v[\d.]+)\.tar\.gz)");
+    // A release is `archive/refs/tags/<tag>`, a commit is `archive/<40 hexadecimal digits>`.
+    const std::regex pin(
+        R"(github\.com/([\w-]+/[\w-]+)/archive/(?:refs/tags/(v[\d.]+)|([0-9a-f]{40}))\.tar\.gz)");
     int pins = 0;
     for (std::sregex_iterator it(script.begin(), script.end(), pin), end; it != end; ++it) {
         ++pins;
-        EXPECT_NE(
-            notices.find("https://github.com/" + (*it)[1].str() + ", release " + (*it)[2].str()),
-            std::string::npos)
-            << (*it)[0];
+        const std::string repository = "https://github.com/" + (*it)[1].str();
+        const std::string named =
+            (*it)[2].matched ? ", release " + (*it)[2].str() : ", commit " + (*it)[3].str();
+        EXPECT_NE(notices.find(repository + named), std::string::npos) << (*it)[0];
     }
     EXPECT_GE(pins, 2);
 }

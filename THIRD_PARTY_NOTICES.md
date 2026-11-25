@@ -33,7 +33,7 @@ Anvil includes the following material from other projects. Each keeps its own li
 ## tree-sitter
 
 - **What:** the runtime library (`lib/src`, `lib/include`), compiled into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository. The runtime includes a few headers of ICU in `lib/src/unicode`, (Copyright (c) 1991-2019 Unicode, Inc.) under the Unicode license that the `LICENSE` file next to them holds.
-- **From:** https://github.com/tree-sitter/tree-sitter, release v0.27.2, fetched and checked by `scripts/fetch-tree-sitter.sh`.
+- **From:** https://github.com/tree-sitter/tree-sitter, commit d63dc4a67b7995a7069654cf3d05c8493be8d509 (a state of the 0.28 development line, after release v0.27.2), fetched and checked by `scripts/fetch-tree-sitter.sh`.
 - **Copyright:** Copyright (c) 2018 Max Brunsfeld.
 - **License:** MIT.
 

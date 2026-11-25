@@ -61,8 +61,7 @@ public:
 
     // Follows an edit of the text this highlighter describes: `new_text` is the text after the
     // change. The tree is edited and parsed again with the old tree, which reads only what the edit
-    // reached, and the spans kept for a line stay unless the line was edited or lies in a range
-    // whose syntax changed. The result of `spans` is that of a highlighter made from `new_text`.
+    // reached. The result of `spans` is that of a highlighter made from `new_text`.
     //
     // A list of changes is in the order they were applied, each described against the text the
     // ones before left (a `DocumentChange` is that). Fails with ErrorCode::invalid_argument when
@@ -81,12 +80,11 @@ public:
     std::shared_ptr<const Highlighter> snapshot() const;
 
     // Diagnostics for tests and benchmarks, counted since the highlighter was made: the bytes the
-    // parser read from the text, and the times the query ran for a line.
+    // parser read from the text.
     std::size_t bytes_read() const;
     // The tree as nested node types with their start and end rows and byte columns, which an
     // edited tree and a fresh one must agree on.
     std::string describe_tree() const;
-    std::size_t line_queries() const;
     // How many inline nodes were looked at, when finding them and when parsing again.
     std::size_t inline_nodes_visited() const;
 
@@ -98,11 +96,11 @@ private:
     struct Impl;
     explicit TreeSitterHighlighter(std::unique_ptr<Impl> impl);
 
-    // Finds the inline nodes of the tree and parses those whose text is new, and returns the
-    // ranges of the document of those. Nothing for a language without inline content. With a
-    // `changed` range the nodes before it and after it are the ones that were there, moved by
-    // `shift` where they are after it, and only the nodes that touch the range are looked at.
-    std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error>
+    // Finds the inline nodes of the tree and parses those whose text is new. Nothing for a
+    // language without inline content. With a `changed` range the nodes before it and after it
+    // are the ones that were there, moved by `shift` where they are after it, and only the nodes
+    // that touch the range are looked at.
+    std::expected<void, Error>
     rebuild_inlines(std::optional<std::pair<std::size_t, std::size_t>> changed = std::nullopt,
                     std::ptrdiff_t shift = 0);
 
