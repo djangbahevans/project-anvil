@@ -10,6 +10,7 @@ add_library(anvil_core STATIC
   fuzzy.cpp
   glob.cpp
   go_to_line.cpp
+  language_comments.cpp
   language_registry.cpp
   live_highlighter.cpp
   jsonc.cpp

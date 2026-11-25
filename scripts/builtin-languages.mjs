@@ -21,16 +21,11 @@ function isValid(value) {
     );
 }
 
-export async function readBuiltinLanguages(vscodeDir) {
-    const { ModesRegistry } = await import(path.join(vscodeDir, 'out/vs/editor/common/languages/modesRegistry.js'));
-    const registered = ModesRegistry.getLanguages();
-    if (registered.length !== 1 || registered[0].id !== 'plaintext') {
-        throw new Error('the editor registers languages other than plaintext of its own; the generator has to learn them');
-    }
-
-    const contributions = [...registered];
+// The `contributes.languages` entries of the built-in extensions with the folder of their extension,
+// in the order the editor registers them. The extension scanner sorts the built-in extensions by the
+// name of their folder.
+export function* builtinLanguageContributions(vscodeDir) {
     const extensionsDir = path.join(vscodeDir, 'extensions');
-    // The extension scanner sorts the built-in extensions by the name of their folder.
     const folders = fs
         .readdirSync(extensionsDir, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
@@ -43,20 +38,33 @@ export async function readBuiltinLanguages(vscodeDir) {
         }
         const languages = JSON.parse(fs.readFileSync(manifest, 'utf8')).contributes?.languages;
         for (const language of languages ?? []) {
-            if (!isValid(language)) {
-                throw new Error(`${folder}: invalid language contribution ${JSON.stringify(language)}`);
-            }
-            contributions.push({
-                id: language.id,
-                extensions: language.extensions,
-                filenames: language.filenames,
-                filenamePatterns: language.filenamePatterns,
-                firstLine: language.firstLine,
-                aliases: language.aliases,
-                mimetypes: language.mimetypes,
-                configuration: language.configuration,
-            });
+            yield { folder: path.join(extensionsDir, folder), language };
         }
+    }
+}
+
+export async function readBuiltinLanguages(vscodeDir) {
+    const { ModesRegistry } = await import(path.join(vscodeDir, 'out/vs/editor/common/languages/modesRegistry.js'));
+    const registered = ModesRegistry.getLanguages();
+    if (registered.length !== 1 || registered[0].id !== 'plaintext') {
+        throw new Error('the editor registers languages other than plaintext of its own; the generator has to learn them');
+    }
+
+    const contributions = [...registered];
+    for (const { folder, language } of builtinLanguageContributions(vscodeDir)) {
+        if (!isValid(language)) {
+            throw new Error(`${path.basename(folder)}: invalid language contribution ${JSON.stringify(language)}`);
+        }
+        contributions.push({
+            id: language.id,
+            extensions: language.extensions,
+            filenames: language.filenames,
+            filenamePatterns: language.filenamePatterns,
+            firstLine: language.firstLine,
+            aliases: language.aliases,
+            mimetypes: language.mimetypes,
+            configuration: language.configuration,
+        });
     }
     return contributions;
 }
