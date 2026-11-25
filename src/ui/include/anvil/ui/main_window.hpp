@@ -46,6 +46,7 @@
 #include <vector>
 
 class QMenu;
+class QUrl;
 class QMenuBar;
 
 namespace anvil::ui {
@@ -78,6 +79,9 @@ struct MainWindowOptions {
     // Starts that program; the platform's start of a process that outlives this one when unset.
     // Tests replace it to see what would be started.
     std::function<std::expected<std::int64_t, Error>(const platform::ProcessSpec&)> start_process;
+    // Opens an address in the system's browser and tells whether that worked; the platform's
+    // way of opening it when unset. Tests replace it to see what would be opened.
+    std::function<bool(const QUrl&)> open_url;
     // Whether the window has no frame of its own and draws the title bar, with the menu bar and the
     // window buttons in it (ADR 0015). Without it, and always on macOS, the window has the
     // system's frame. The environment variable ANVIL_NATIVE_FRAME also turns it off.
@@ -454,6 +458,8 @@ private:
     void set_up_title_bar();
     void update_chrome();
     void toggle_zen_mode();
+    // Opens a page of the project in the browser, or says in the status bar that it cannot.
+    void open_project_page(std::string_view address);
     // Runs one of the comment commands on the shown editor, or says in the status bar that the
     // language of the document has no token for it.
     void run_comment_command(bool block, core::LineCommentType type);
