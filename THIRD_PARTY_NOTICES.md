@@ -25,7 +25,7 @@ Anvil includes the following material from other projects. Each keeps its own li
 
 ## Visual Studio Code languages
 
-- **What:** the ids, names, file extensions, file names, file name patterns, first line expressions and mime types of the languages in `src/core/include/anvil/core/language_table.hpp`, which is generated from the `contributes.languages` of the built-in extensions of Visual Studio Code and from its plain text language, and the cases in `tests/core/data/language_cases.json` that record what its language service decides for them.
+- **What:** the ids, names, file extensions, file names, file name patterns, first line expressions and mime types of the languages in `src/core/include/anvil/core/language_table.hpp`, which is generated from the `contributes.languages` of the built-in extensions of Visual Studio Code and from its plain text language, and the cases in `tests/core/data/language_cases.json` that record what its language service decides for them. The comment tokens of the languages in `src/core/include/anvil/core/language_comments_table.hpp` are generated from the `comments` of the language configuration files that those contributions name.
 - **From:** Visual Studio Code (https://github.com/microsoft/vscode), at the release pinned in `scripts/fetch-vscode.sh`.
 - **Copyright:** Copyright (c) Microsoft Corporation.
 - **License:** MIT. The text is in `resources/themes/LICENSE-vscode.txt`.

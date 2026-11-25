@@ -46,6 +46,7 @@ node scripts/generate-key-chord-cases.mjs
 node scripts/generate-keybinding-cases.mjs
 node scripts/generate-languages.mjs          # the languages, then the cases that use them
 node scripts/generate-language-cases.mjs
+node scripts/generate-language-comments.mjs   # the comment tokens of the languages
 ```
 
 The key table (`src/core/include/anvil/core/key_table.hpp`) lists VS Code's `KeyCode` values with the names key bindings use for them, so a new key in the release is a new row. CI checks the three key scripts with `--check`.
