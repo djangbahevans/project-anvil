@@ -4,6 +4,7 @@
 #include "anvil/core/go_to_line.hpp"
 #include "anvil/core/zoom.hpp"
 #include "anvil/exthost/contributions.hpp"
+#include "anvil/exthost/workspace_file_edit.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/platform/file_system.hpp"
@@ -459,16 +460,35 @@ void MainWindow::register_explorer() {
     explorer.icon = codicon_icon("files", Qt::white, 24);
     explorer.order = 0;
     explorer.create = [this]() -> QWidget* {
-        auto* view = new ExplorerView(colors_, nullptr, platform_directory_lister(),
-                                      options_.explorer_watch.value_or(platform_directory_watch()));
+        auto* view =
+            new ExplorerView(colors_, nullptr, platform_directory_lister(),
+                             options_.explorer_watch.value_or(platform_directory_watch()), nullptr,
+                             options_.explorer_actions.value_or(default_explorer_actions()));
         connect(view, &ExplorerView::file_activated, this,
                 [this](const QString& path) { open_file(path); });
+        connect(view, &ExplorerView::created, this, [this](const QString& path, bool directory) {
+            if (!directory) {
+                open_file(path);
+            }
+        });
+        connect(view, &ExplorerView::renamed, this, [this](const QString& from, const QString& to) {
+            explorer_renamed(from.toStdString(), to.toStdString());
+        });
+        connect(
+            view, &ExplorerView::deleted, this,
+            [this](const std::vector<std::filesystem::path>& paths) { explorer_deleted(paths); });
+        connect(view, &ExplorerView::operation_failed, this,
+                [this](const QString& message) { status_bar_->show_message(message, 15000); });
+        connect(view, &ExplorerView::context_menu_requested, this,
+                [this](const QPoint& position) { build_explorer_menu()->exec(position); });
         connect(view, &ExplorerView::open_folder_requested, this,
                 [this] { commands_.execute("workbench.action.files.openFolder"); });
         connect(view, &ExplorerView::watch_problem, this,
                 [this](const QString& message) { status_bar_->show_message(message, 15000); });
         view->set_zoom(&zoom_);
         view->set_excludes(file_excludes_);
+        view->set_confirm_delete(settings_->editor().explorer_confirm_delete);
+        view->set_trash_enabled(settings_->editor().enable_trash);
         view->set_workspace(
             options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
             options_.workspace ? QString::fromStdString(options_.workspace->name) : QString());
@@ -476,6 +496,143 @@ void MainWindow::register_explorer() {
         return view;
     };
     view_containers_.add(std::move(explorer));
+}
+
+void MainWindow::apply_explorer_settings() {
+    if (explorer_) {
+        explorer_->set_confirm_delete(settings_->editor().explorer_confirm_delete);
+        explorer_->set_trash_enabled(settings_->editor().enable_trash);
+    }
+}
+
+ExplorerView* MainWindow::show_explorer() {
+    sidebar_->activate("workbench.view.explorer");
+    return explorer_;
+}
+
+namespace {
+
+QString reveal_title() {
+#if defined(Q_OS_WIN)
+    return MainWindow::tr("Reveal in File Explorer");
+#elif defined(Q_OS_MACOS)
+    return MainWindow::tr("Reveal in Finder");
+#else
+    return MainWindow::tr("Open Containing Folder");
+#endif
+}
+
+} // namespace
+
+std::unique_ptr<QMenu> MainWindow::explorer_context_menu() {
+    return build_explorer_menu();
+}
+
+std::unique_ptr<QMenu> MainWindow::build_explorer_menu() {
+    auto menu = std::make_unique<QMenu>(this);
+    style_menu(menu.get());
+    const auto add = [&](const QString& title, const std::string& command,
+                         std::function<void()> action = {}) {
+        const QString shortcut = keys_->shortcut_label(command);
+        QAction* item =
+            menu->addAction(shortcut.isEmpty() ? title : title + QLatin1Char('\t') + shortcut);
+        item->setData(QString::fromStdString(command));
+        if (!action) {
+            action = [this, command] { commands_.execute(command); };
+        }
+        connect(item, &QAction::triggered, this, std::move(action));
+    };
+    const std::vector<std::filesystem::path> selected =
+        explorer_ ? explorer_->selected_paths() : std::vector<std::filesystem::path>();
+    if (!explorer_ || explorer_->selection_is_directory()) {
+        add(tr("New File..."), "explorer.newFile");
+        add(tr("New Folder..."), "explorer.newFolder");
+        menu->addSeparator();
+    }
+    // The menu takes the focus, so the command could not tell what to reveal.
+    const std::optional<std::filesystem::path> target =
+        !selected.empty()    ? std::optional(selected.front())
+        : options_.workspace ? std::optional(options_.workspace->folder)
+                             : std::nullopt;
+    add(reveal_title(), "revealFileInOS", [this, target] {
+        if (target) {
+            reveal_path(*target);
+        }
+    });
+    if (!selected.empty()) {
+        menu->addSeparator();
+        add(tr("Rename..."), "renameFile");
+        add(tr("Delete"), "moveFileToTrash");
+    }
+    return menu;
+}
+
+void MainWindow::reveal_in_file_manager() {
+    std::optional<std::filesystem::path> path;
+    QWidget* focus = QApplication::focusWidget();
+    if (explorer_ && focus && explorer_->isAncestorOf(focus)) {
+        const std::vector<std::filesystem::path> selected = explorer_->selected_paths();
+        if (!selected.empty()) {
+            path = selected.front();
+        } else if (options_.workspace) {
+            path = options_.workspace->folder;
+        }
+    }
+    if (!path) {
+        if (const core::Uri* uri = current_uri_ptr()) {
+            path = uri->file_path();
+        }
+    }
+    if (path) {
+        reveal_path(*path);
+    }
+}
+
+void MainWindow::reveal_path(const std::filesystem::path& path) {
+    const QUrl url = QUrl::fromLocalFile(QString::fromStdString(path.parent_path().string()));
+    const bool opened = options_.open_url ? options_.open_url(url) : QDesktopServices::openUrl(url);
+    if (!opened) {
+        status_bar_->show_message(tr("The folder %1 cannot be opened").arg(url.toLocalFile()),
+                                  8000);
+    }
+}
+
+void MainWindow::explorer_renamed(const std::filesystem::path& from,
+                                  const std::filesystem::path& to) {
+    // The extension host knows the documents it has, which are the open ones and the ones that
+    // extensions opened; its callbacks move the open ones.
+    bridge_.files_renamed(from, to);
+    // What it did not know of, and a window without an extension host.
+    std::vector<std::pair<core::Uri, core::Uri>> moves;
+    for (const auto& [uri, document] : documents_) {
+        if (const auto path = uri.file_path(); path && exthost::is_path_within(*path, from)) {
+            moves.emplace_back(uri, core::Uri::file(exthost::path_moved(*path, from, to)));
+        }
+    }
+    for (const auto& [uri, new_uri] : moves) {
+        if (documents_.contains(uri) && !documents_.contains(new_uri)) {
+            rekey_document(uri, new_uri, false);
+            update_document(new_uri);
+        }
+    }
+    area_->refresh_highlighters();
+}
+
+void MainWindow::explorer_deleted(const std::vector<std::filesystem::path>& paths) {
+    for (const std::filesystem::path& path : paths) {
+        bridge_.files_deleted(path);
+        std::vector<core::Uri> gone;
+        for (const auto& [uri, document] : documents_) {
+            if (const auto file = uri.file_path();
+                file && exthost::is_path_within(*file, path) && !document->is_dirty()) {
+                gone.push_back(uri);
+            }
+        }
+        for (const core::Uri& uri : gone) {
+            bridge_.remove_document(uri);
+            document_deleted(uri);
+        }
+    }
 }
 
 void MainWindow::workspace_changed() {
@@ -611,6 +768,7 @@ void MainWindow::apply_settings() {
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     apply_file_associations();
     apply_file_excludes();
+    apply_explorer_settings();
     apply_extension_host_options();
 }
 
@@ -1076,6 +1234,32 @@ void MainWindow::register_commands() {
         [this] { QTimer::singleShot(0, this, [this] { open_folder_dialog(); }); });
     add("workbench.action.closeFolder", tr("Close Folder"),
         [this] { QTimer::singleShot(0, this, [this] { close_folder(); }); });
+    add("explorer.newFile", tr("New File..."), [this] {
+        if (ExplorerView* explorer = show_explorer()) {
+            explorer->new_file();
+        }
+    });
+    add("explorer.newFolder", tr("New Folder..."), [this] {
+        if (ExplorerView* explorer = show_explorer()) {
+            explorer->new_folder();
+        }
+    });
+    add("renameFile", tr("Rename..."), [this] {
+        if (explorer_) {
+            explorer_->rename_selected();
+        }
+    });
+    add("moveFileToTrash", tr("Delete"), [this] {
+        if (explorer_) {
+            explorer_->trash_selected();
+        }
+    });
+    add("deleteFile", tr("Delete Permanently"), [this] {
+        if (explorer_) {
+            explorer_->delete_selected();
+        }
+    });
+    add("revealFileInOS", reveal_title(), [this] { reveal_in_file_manager(); });
     add("workbench.action.files.save", tr("Save"), [this] { save(); });
     add("saveAll", tr("Save All"), [this] { save_all(); });
     add("workbench.action.files.revert", tr("Revert File"), [this] { revert(); });
@@ -1528,6 +1712,16 @@ void MainWindow::fill_context(core::ContextKeys& keys) const {
     keys.set("editorFocus", editor_focus);
     keys.set("editorTextFocus", view != nullptr);
     keys.set("inputFocus", input);
+    const bool explorer_focus = explorer_ && focus && explorer_->isAncestorOf(focus);
+    keys.set("explorerViewletVisible", explorer_ && explorer_->isVisible());
+    keys.set("filesExplorerFocus", explorer_focus);
+    keys.set("explorerViewletFocus", explorer_focus);
+    if (explorer_focus) {
+        const bool selected = !explorer_->selected_paths().empty();
+        keys.set("explorerResourceIsRoot", !selected);
+        keys.set("explorerResourceIsFolder", explorer_->selection_is_directory());
+        keys.set("explorerResourceMoveableToTrash", selected && explorer_->trash_enabled());
+    }
     keys.set("textInputFocus", view != nullptr || input);
     if (view && view->document()) {
         const core::SelectionSet& selections = view->document()->selections();

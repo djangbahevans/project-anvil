@@ -75,6 +75,7 @@ protected:
         options.workspace = workspace_;
         options.choose_folder = choose_folder_;
         options.explorer_watch = explorer_watch_;
+        options.explorer_actions = explorer_actions_;
         options.logger = logger_;
         if (with_extension_host) {
             const std::filesystem::path vscode_dir = ANVIL_VSCODE_DIR;
@@ -312,6 +313,7 @@ protected:
     std::optional<core::Workspace> workspace_;
     std::function<std::optional<std::filesystem::path>()> choose_folder_;
     std::optional<ui::DirectoryWatchFactory> explorer_watch_;
+    std::optional<ui::ExplorerActions> explorer_actions_;
     std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
@@ -2905,6 +2907,12 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "workbench.action.files.newUntitledFile",
                                           "workbench.action.files.openFolder",
                                           "workbench.action.closeFolder",
+                                          "explorer.newFile",
+                                          "explorer.newFolder",
+                                          "renameFile",
+                                          "moveFileToTrash",
+                                          "deleteFile",
+                                          "revealFileInOS",
                                           "workbench.action.quit",
                                           "workbench.action.closeWindow",
                                           "workbench.action.toggleFullScreen",
@@ -9980,4 +9988,372 @@ TEST_F(ZoomWholeWindowTest, TheCommandPaletteAndAMenuHaveItemsOfTheScaledHeightA
     EXPECT_EQ(file->font().pixelSize(),
               window_->zoom().scaled(QFontInfo(QApplication::font("QMenu")).pixelSize()));
     file->close();
+
+// The file operations of the explorer, with the trash and the question replaced.
+class ExplorerOperationsWindowTest : public ExplorerWindowTest {
+protected:
+    void SetUp() override {
+        ExplorerWindowTest::SetUp();
+        ui::ExplorerActions actions;
+        actions.move_to_trash = [this](const std::filesystem::path& path) {
+            trashed_.push_back(path);
+            std::filesystem::remove_all(path);
+            return true;
+        };
+        actions.confirm = [this](QWidget*, const QString& message, const QString&, const QString&) {
+            questions_.push_back(message);
+            return true;
+        };
+        explorer_actions_ = actions;
+    }
+
+    // Opens the project and shows its explorer; null when the test has to skip.
+    ui::ExplorerView* start(bool with_host = false) {
+        open_project();
+        create_window(with_host);
+        if (!window_) {
+            return nullptr;
+        }
+        return show_explorer();
+    }
+
+    std::filesystem::path project() const {
+        return scratch_ / "project";
+    }
+
+    void select(ui::ExplorerView* explorer, const std::filesystem::path& path) {
+        const QModelIndex row = explorer->model()->index_of(path);
+        ASSERT_TRUE(row.isValid()) << path;
+        explorer->tree()->setCurrentIndex(row);
+        explorer->tree()->setFocus();
+        ASSERT_TRUE(explorer->tree()->hasFocus());
+    }
+
+    // Names the new or renamed item in the field that is open.
+    void name(ui::ExplorerView* explorer, const QString& text) {
+        ASSERT_TRUE(explorer->is_editing());
+        explorer->name_editor()->setText(text);
+        QTest::keyClick(explorer->name_editor(), Qt::Key_Return);
+        QApplication::processEvents();
+    }
+
+    std::vector<std::filesystem::path> trashed_;
+    std::vector<QString> questions_;
+};
+
+TEST_F(ExplorerOperationsWindowTest, TheFileCommandsHaveVsCodesIdsAndTitles) {
+    if (!start()) {
+        return;
+    }
+    const std::pair<const char*, const char*> commands[] = {
+        {"explorer.newFile", "New File..."},  {"explorer.newFolder", "New Folder..."},
+        {"renameFile", "Rename..."},          {"moveFileToTrash", "Delete"},
+        {"deleteFile", "Delete Permanently"},
+    };
+    for (const auto& [id, title] : commands) {
+        const auto* command = window_->commands().find(id);
+        ASSERT_NE(command, nullptr) << id;
+        EXPECT_EQ(command->title, title) << id;
+    }
+    EXPECT_NE(window_->commands().find("revealFileInOS"), nullptr);
+}
+
+TEST_F(ExplorerOperationsWindowTest, TheKeysRenameAndDeleteTheItemOfTheExplorerThatHasTheFocus) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    select(explorer, project() / "a.txt");
+    QTest::keyClick(explorer->tree(), Qt::Key_F2);
+    QApplication::processEvents();
+    EXPECT_TRUE(explorer->is_editing());
+    // In the field the keys are the field's: Delete edits the text and asks nothing.
+    QTest::keyClick(explorer->name_editor(), Qt::Key_Delete);
+    EXPECT_TRUE(questions_.empty());
+    QTest::keyClick(explorer->name_editor(), Qt::Key_Escape);
+    QApplication::processEvents();
+    EXPECT_FALSE(explorer->is_editing());
+    EXPECT_TRUE(explorer->tree()->hasFocus());
+
+    QTest::keyClick(explorer->tree(), Qt::Key_Delete);
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0], "Are you sure you want to delete 'a.txt'?");
+    EXPECT_EQ(trashed_, (std::vector<std::filesystem::path>{project() / "a.txt"}));
+
+    select(explorer, project() / "src");
+    QTest::keyClick(explorer->tree(), Qt::Key_Delete, Qt::ShiftModifier);
+    ASSERT_EQ(questions_.size(), 2u);
+    EXPECT_EQ(questions_[1], "Are you sure you want to permanently delete 'src' and its contents?");
+    EXPECT_FALSE(std::filesystem::exists(project() / "src"));
+    EXPECT_EQ(trashed_.size(), 1u);
+}
+
+TEST_F(ExplorerOperationsWindowTest, TheKeysOfTheExplorerDoNothingWhileTheEditorHasTheFocus) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    select(explorer, project() / "a.txt");
+    window_->view()->setFocus();
+    QTest::keyClick(window_->view(), Qt::Key_F2);
+    QTest::keyClick(window_->view(), Qt::Key_Delete);
+    QTest::keyClick(window_->view(), Qt::Key_Delete, Qt::ShiftModifier);
+    EXPECT_FALSE(explorer->is_editing());
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_TRUE(std::filesystem::exists(project() / "a.txt"));
+}
+
+TEST_F(ExplorerOperationsWindowTest, NewFileFromTheCommandShowsTheExplorerCreatesAndOpensTheFile) {
+    open_project();
+    create_window();
+    if (!window_) {
+        return;
+    }
+    window_->sidebar()->activate("workbench.view.explorer");
+    window_->commands().execute("workbench.action.toggleSidebarVisibility");
+    ASSERT_FALSE(window_->workbench()->is_visible(ui::Part::sidebar));
+
+    window_->commands().execute("explorer.newFile");
+    QApplication::processEvents();
+    auto* explorer = qobject_cast<ui::ExplorerView*>(
+        window_->sidebar()->container_widget("workbench.view.explorer"));
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
+    ASSERT_TRUE(explorer->is_editing());
+    name(explorer, "fresh.txt");
+    EXPECT_TRUE(std::filesystem::exists(project() / "fresh.txt"));
+    EXPECT_EQ(window_->windowTitle().left(9), "fresh.txt");
+    EXPECT_EQ(window_->current_document()->text().to_string(), "");
+}
+
+TEST_F(ExplorerOperationsWindowTest, NewFolderFromTheCommandCreatesTheFolderAndOpensNothing) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const int tabs = window_->tab_strip()->count();
+    select(explorer, project() / "src");
+    window_->commands().execute("explorer.newFolder");
+    ASSERT_TRUE(wait_until([&] { return explorer->is_editing(); }));
+    name(explorer, "inner");
+    EXPECT_TRUE(std::filesystem::is_directory(project() / "src" / "inner"));
+    EXPECT_EQ(window_->tab_strip()->count(), tabs);
+}
+
+TEST_F(ExplorerOperationsWindowTest, ARenamedFileKeepsItsTabItsChangesAndItsHistory) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+    ASSERT_TRUE(window_->tab_strip()->tab(1).dirty);
+
+    select(explorer, a);
+    window_->commands().execute("renameFile");
+    name(explorer, "b.txt");
+    EXPECT_FALSE(std::filesystem::exists(a));
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "b.txt");
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+    EXPECT_EQ(current_text(), "!alpha");
+    window_->commands().execute("undo");
+    EXPECT_EQ(current_text(), "alpha");
+    type("?");
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(project() / "b.txt"), "?alpha");
+}
+
+TEST_F(ExplorerOperationsWindowTest, ARenamedFolderRenamesTheTabsOfTheFilesBelowIt) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto main = project() / "src" / "main.cpp";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(main.string())));
+    select(explorer, project() / "src");
+    explorer->rename_selected();
+    name(explorer, "lib");
+    EXPECT_TRUE(std::filesystem::exists(project() / "lib" / "main.cpp"));
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_TRUE(window_->tab_strip()->tab(1).tooltip.contains("lib"));
+    EXPECT_EQ(current_text(), "int main;");
+}
+
+TEST_F(ExplorerOperationsWindowTest, ADeletedFileClosesItsCleanTabAndKeepsADirtyOne) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    const auto main = project() / "src" / "main.cpp";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(main.string())));
+    type("!");
+    ASSERT_EQ(window_->tab_strip()->count(), 3);
+
+    select(explorer, a);
+    window_->commands().execute("moveFileToTrash");
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+
+    explorer->tree()->expand(explorer->model()->index_of(project() / "src"));
+    ASSERT_TRUE(wait_until([&] { return explorer->model()->index_of(main).isValid(); }));
+    select(explorer, main);
+    window_->commands().execute("moveFileToTrash");
+    EXPECT_FALSE(std::filesystem::exists(main));
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_EQ(window_->tab_strip()->tab(1).title, "main.cpp");
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(main), "!int main;");
+}
+
+TEST_F(ExplorerOperationsWindowTest, ExtensionsSeeTheRenamesAndDeletesOfTheExplorer) {
+    auto* explorer = start(true);
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(extension_has_document(core::Uri::file(a)));
+
+    select(explorer, a);
+    explorer->rename_selected();
+    name(explorer, "b.txt");
+    const auto b = project() / "b.txt";
+    EXPECT_TRUE(wait_until([&] { return extension_has_document(core::Uri::file(b)); }));
+    EXPECT_FALSE(extension_has_document(core::Uri::file(a)));
+    EXPECT_EQ(run("anvil.docs.active")["uri"], core::Uri::file(b).to_string());
+
+    select(explorer, b);
+    window_->commands().execute("moveFileToTrash");
+    EXPECT_FALSE(extension_has_document(core::Uri::file(b)));
+}
+
+TEST_F(ExplorerOperationsWindowTest, TheContextMenuOffersTheCommandsThatFitTheRow) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto commands = [](QMenu& menu) {
+        std::vector<std::string> ids;
+        for (QAction* action : menu.actions()) {
+            if (!action->isSeparator()) {
+                ids.push_back(action->data().toString().toStdString());
+            }
+        }
+        return ids;
+    };
+    select(explorer, project() / "a.txt");
+    EXPECT_EQ(commands(*window_->explorer_context_menu()),
+              (std::vector<std::string>{"revealFileInOS", "renameFile", "moveFileToTrash"}));
+    select(explorer, project() / "src");
+    EXPECT_EQ(commands(*window_->explorer_context_menu()),
+              (std::vector<std::string>{"explorer.newFile", "explorer.newFolder", "revealFileInOS",
+                                        "renameFile", "moveFileToTrash"}));
+    explorer->tree()->clearSelection();
+    explorer->tree()->setCurrentIndex(QModelIndex());
+    EXPECT_EQ(
+        commands(*window_->explorer_context_menu()),
+        (std::vector<std::string>{"explorer.newFile", "explorer.newFolder", "revealFileInOS"}));
+}
+
+TEST_F(ExplorerOperationsWindowTest, TheContextMenuShowsTheKeysOfItsCommands) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    select(explorer, project() / "a.txt");
+    const auto menu = window_->explorer_context_menu();
+    QString rename;
+    for (QAction* action : menu->actions()) {
+        if (action->data().toString() == "renameFile") {
+            rename = action->text();
+        }
+    }
+    EXPECT_TRUE(rename.contains("F2")) << rename.toStdString();
+}
+
+TEST_F(ExplorerOperationsWindowTest, TheContextMenuRunsTheCommandsOfTheRowThatWasSelected) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    select(explorer, project() / "a.txt");
+    const auto menu = window_->explorer_context_menu();
+    for (QAction* action : menu->actions()) {
+        if (action->data().toString() == "moveFileToTrash") {
+            action->trigger();
+        }
+    }
+    EXPECT_FALSE(std::filesystem::exists(project() / "a.txt"));
+}
+
+TEST_F(ExplorerOperationsWindowTest, RevealOpensTheFolderOfTheSelectedRowOrOfTheActiveFile) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    select(explorer, project() / "a.txt");
+    window_->commands().execute("revealFileInOS");
+    ASSERT_EQ(opened_urls_.size(), 1u);
+    EXPECT_EQ(opened_urls_[0], QUrl::fromLocalFile(QString::fromStdString(project().string())));
+
+    const auto main = project() / "src" / "main.cpp";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(main.string())));
+    window_->view()->setFocus();
+    window_->commands().execute("revealFileInOS");
+    ASSERT_EQ(opened_urls_.size(), 2u);
+    EXPECT_EQ(opened_urls_[1],
+              QUrl::fromLocalFile(QString::fromStdString((project() / "src").string())));
+
+    select(explorer, project() / "a.txt");
+    const auto menu = window_->explorer_context_menu();
+    for (QAction* action : menu->actions()) {
+        if (action->data().toString() == "revealFileInOS") {
+            action->trigger();
+        }
+    }
+    EXPECT_EQ(opened_urls_.size(), 3u);
+}
+
+TEST_F(ExplorerOperationsWindowTest, AFolderThatCannotBeOpenedIsReportedInTheStatusBar) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    open_url_works_ = false;
+    select(explorer, project() / "a.txt");
+    window_->commands().execute("revealFileInOS");
+    EXPECT_FALSE(window_->status_bar().message().isEmpty());
+}
+
+TEST_F(ExplorerOperationsWindowTest, TheDeleteSettingsAreRead) {
+    settings_file_ = write("settings.json", R"j({"explorer.confirmDelete": false,
+                                                  "files.enableTrash": false})j");
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    select(explorer, project() / "a.txt");
+    window_->commands().execute("moveFileToTrash");
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_TRUE(trashed_.empty());
+    EXPECT_FALSE(std::filesystem::exists(project() / "a.txt"));
+}
+
+TEST_F(ExplorerOperationsWindowTest, AFailedOperationIsShownInTheStatusBar) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    explorer_actions_->move_to_trash = [](const std::filesystem::path&) { return false; };
+    window_.reset();
+    create_window();
+    explorer = show_explorer();
+    select(explorer, project() / "a.txt");
+    window_->commands().execute("moveFileToTrash");
+    EXPECT_TRUE(std::filesystem::exists(project() / "a.txt"));
+    EXPECT_TRUE(window_->status_bar().message().contains("a.txt"));
 }

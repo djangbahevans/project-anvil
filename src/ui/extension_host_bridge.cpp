@@ -137,6 +137,19 @@ void ExtensionHostBridge::remove_document(const core::Uri& uri) {
     }
 }
 
+void ExtensionHostBridge::files_renamed(const std::filesystem::path& from,
+                                        const std::filesystem::path& to) {
+    if (host_) {
+        host_->documents().files_renamed(from, to);
+    }
+}
+
+void ExtensionHostBridge::files_deleted(const std::filesystem::path& path) {
+    if (host_) {
+        host_->documents().files_deleted(path);
+    }
+}
+
 void ExtensionHostBridge::show(const core::Uri& uri) {
     if (!host_) {
         return;

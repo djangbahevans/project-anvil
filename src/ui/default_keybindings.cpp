@@ -17,6 +17,7 @@ struct Row {
 };
 
 constexpr const char* in_editor = "editorTextFocus";
+constexpr const char* in_explorer = "filesExplorerFocus && explorerViewletVisible && !inputFocus";
 
 // A row lists the primary key first and the secondary keys after it. A menu shows the last binding
 // of a command that applies, so the bindings are added in the opposite order, as VS Code orders
@@ -262,6 +263,27 @@ const Row rows[] = {
      {"cmd+w"}},
     {"workbench.action.splitEditor", "", {"ctrl+\\"}, {"ctrl+\\"}, {"cmd+\\"}},
     {"workbench.action.quit", "", {"ctrl+q"}, {}, {"cmd+q"}},
+
+    // The explorer. A key that has an editor command too, such as Delete, is the explorer's only
+    // while the tree has the focus.
+    {"renameFile",
+     "filesExplorerFocus && explorerViewletVisible && !inputFocus && !explorerResourceIsRoot",
+     {"f2"},
+     {"f2"},
+     {"enter"}},
+    {"moveFileToTrash",
+     "filesExplorerFocus && explorerViewletVisible && !inputFocus && "
+     "explorerResourceMoveableToTrash",
+     {"delete"},
+     {"delete"},
+     {"cmd+backspace"}},
+    {"deleteFile", in_explorer, {"shift+delete"}, {"shift+delete"}, {"cmd+alt+backspace"}},
+    {"deleteFile",
+     "filesExplorerFocus && explorerViewletVisible && !inputFocus && "
+     "!explorerResourceMoveableToTrash",
+     {"delete"},
+     {"delete"},
+     {"cmd+backspace"}},
 
     // The window.
     {"workbench.action.showCommands",

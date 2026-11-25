@@ -99,6 +99,18 @@ public:
     void language_changed(const core::Uri& uri, std::string language_id);
     std::shared_ptr<core::Document> find(const core::Uri& uri) const;
 
+    // --- files that the editor itself changed ---
+
+    // Removes the documents of the files at and below `root` that have no unsaved changes, and
+    // tells the observer of each. A document with unsaved changes stays.
+    void files_deleted(const std::filesystem::path& root);
+    // Registers the documents of the files at and below `from` under their new URIs, after the
+    // files moved to `to`, and returns the pairs of old and new URI; the observer is told of each.
+    // Documents without unsaved changes that are registered at and below `to` are removed first, as
+    // the move replaced their files.
+    std::vector<std::pair<core::Uri, core::Uri>> files_renamed(const std::filesystem::path& from,
+                                                               const std::filesystem::path& to);
+
     // Shows a registered document in an editor, whose selections are the document's selections.
     // Returns the editor id.
     std::expected<std::string, Error> add_editor(const core::Uri& uri);
@@ -154,14 +166,6 @@ private:
     // The keys of `entries_` whose files are `root` or below it.
     std::vector<std::string> keys_within(const std::filesystem::path& root) const;
     bool has_dirty_document_within(const std::filesystem::path& root) const;
-    // Removes the documents of the files at and below `root` that have no unsaved changes.
-    void files_deleted(const std::filesystem::path& root);
-    // Registers the documents of the files at and below `from` under their new URIs, after the
-    // files moved to `to`, and returns the pairs of old and new URI. Documents without unsaved
-    // changes that are registered at and below `to` are removed first, as the move replaced their
-    // files.
-    std::vector<std::pair<core::Uri, core::Uri>> files_renamed(const std::filesystem::path& from,
-                                                               const std::filesystem::path& to);
     // Moves a document, and its editor, to another URI. False when `to` is taken.
     bool rekey(const core::Uri& from, const core::Uri& to);
     // Reverts the latest change of the document, for a workspace edit that has to be undone.

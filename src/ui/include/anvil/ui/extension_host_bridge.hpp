@@ -87,6 +87,11 @@ public:
     void add_document(const core::Uri& uri, std::shared_ptr<core::Document> document,
                       std::optional<std::string> language = std::nullopt);
     void remove_document(const core::Uri& uri);
+    // The editor renamed or deleted files itself: the documents of the files that were at and below
+    // the path follow, as for an extension's workspace edit, and `callbacks.renamed` and
+    // `callbacks.deleted` are called for each. Nothing happens without an extension host.
+    void files_renamed(const std::filesystem::path& from, const std::filesystem::path& to);
+    void files_deleted(const std::filesystem::path& path);
 
     // Chooses the language id of the documents that are registered without one, in this host and in
     // the ones that follow a restart.

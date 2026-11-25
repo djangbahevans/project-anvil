@@ -399,3 +399,22 @@ TEST(FileAssociationsSetting, ASettingThatIsNotAnObjectIsAProblem) {
     EXPECT_TRUE(read.associations.empty());
     EXPECT_EQ(read.problems.size(), 1U);
 }
+
+TEST(EditorSettings, TheExplorerAsksBeforeDeletingAndUsesTheTrashUnlessTheSettingsSayOtherwise) {
+    const auto defaults = read("{}");
+    ASSERT_TRUE(defaults.has_value());
+    EXPECT_TRUE(defaults->explorer_confirm_delete);
+    EXPECT_TRUE(defaults->enable_trash);
+    EXPECT_FALSE(read(R"j({"explorer.confirmDelete": false})j")->explorer_confirm_delete);
+    EXPECT_FALSE(read(R"j({"explorer": {"confirmDelete": false}})j")->explorer_confirm_delete);
+    EXPECT_FALSE(read(R"j({"files.enableTrash": false})j")->enable_trash);
+    EXPECT_TRUE(read(R"j({"files.enableTrash": false})j")->explorer_confirm_delete);
+}
+
+TEST(EditorSettings, AnExplorerSettingOfTheWrongKindIsReportedByName) {
+    for (const char* key : {"explorer.confirmDelete", "files.enableTrash"}) {
+        const auto result = read(std::string(R"j({")j") + key + R"j(": "no"})j");
+        ASSERT_FALSE(result.has_value()) << key;
+        EXPECT_NE(result.error().message.find(key), std::string::npos) << key;
+    }
+}

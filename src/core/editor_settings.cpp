@@ -105,7 +105,9 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
           std::pair{"zenMode.fullScreen", &EditorSettings::zen_full_screen},
           std::pair{"zenMode.centerLayout", &EditorSettings::zen_center_layout},
           std::pair{"zenMode.hideStatusBar", &EditorSettings::zen_hide_status_bar},
-          std::pair{"zenMode.hideActivityBar", &EditorSettings::zen_hide_activity_bar}}) {
+          std::pair{"zenMode.hideActivityBar", &EditorSettings::zen_hide_activity_bar},
+          std::pair{"explorer.confirmDelete", &EditorSettings::explorer_confirm_delete},
+          std::pair{"files.enableTrash", &EditorSettings::enable_trash}}) {
         if (settings.contains(key)) {
             if (const auto value = settings.get<bool>(key)) {
                 result.*field = *value;
