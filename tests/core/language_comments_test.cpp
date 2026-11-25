@@ -160,8 +160,9 @@ TEST(ReadLanguageComments, TextThatIsNotAnObjectOrNotJsonGivesNoTokensAndAProble
         EXPECT_TRUE(read.comments.empty()) << text;
         EXPECT_EQ(read.problems.size(), 1U) << text;
     }
-    EXPECT_NE(read_language_comments("{\n  \"comments\": ,\n}").problems[0].find("line 2"),
-              std::string::npos);
+    const ReadComments positioned = read_language_comments("{\n  \"comments\": ,\n}");
+    ASSERT_EQ(positioned.problems.size(), 1U);
+    EXPECT_NE(positioned.problems[0].find("line 2"), std::string::npos);
 }
 
 TEST(LanguageCommentsOverlay, ReplacesTheKindsTheOverlaySetsAndKeepsTheRest) {
