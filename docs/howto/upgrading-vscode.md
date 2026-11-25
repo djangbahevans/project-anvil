@@ -36,10 +36,11 @@ Delete the old recording and update the file name in `tests/exthost/replay_test.
 
 ## 5. Record the results of the ported matchers again
 
-The core's fuzzy matcher and its token theme matcher are tested against results recorded from VS Code's own code (the scorer in the checkout, and `vscode-textmate` with `vscode-oniguruma` in its `node_modules`). Record them from the new checkout and run the core tests; a difference is a change in VS Code's behavior to port.
+The core's fuzzy matcher, its file name comparer and its token theme matcher are tested against results recorded from VS Code's own code (the scorer in the checkout, and `vscode-textmate` with `vscode-oniguruma` in its `node_modules`). Record them from the new checkout and run the core tests; a difference is a change in VS Code's behavior to port.
 
 ```sh
 node scripts/generate-fuzzy-cases.mjs
+node scripts/generate-file-name-order-cases.mjs   # needs a Node.js with full ICU data
 node scripts/generate-token-theme-cases.mjs
 node scripts/generate-key-table.mjs          # the keys, then the cases that use them
 node scripts/generate-key-chord-cases.mjs

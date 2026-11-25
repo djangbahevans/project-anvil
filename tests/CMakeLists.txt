@@ -9,6 +9,8 @@ add_executable(anvil_core_tests
   core/document_test.cpp
   core/editing_test.cpp
   core/editor_settings_test.cpp
+  core/file_name_order_test.cpp
+  core/file_tree_test.cpp
   core/fuzzy_test.cpp
   core/brackets_test.cpp
   core/glob_test.cpp
