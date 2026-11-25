@@ -7,6 +7,7 @@
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/codicons.hpp"
 #include "anvil/ui/default_keybindings.hpp"
+#include "anvil/ui/keybindings_reference.hpp"
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/project_links.hpp"
 #include "anvil/ui/resources.hpp"
@@ -1067,6 +1068,8 @@ void MainWindow::register_commands() {
             close_tab_at(group->id, *group->active);
         }
     });
+    add("workbench.action.keybindingsReference", tr("Keyboard Shortcuts Reference"),
+        [this] { show_keybindings_reference(); });
     add("workbench.action.files.newUntitledFile", tr("New Untitled Text File"),
         [this] { add_untitled_document(); });
     add("workbench.action.quit", tr("Quit"), [this] { close(); });
@@ -1543,9 +1546,10 @@ TabStrip::Tab MainWindow::tab_info(const core::Uri& uri) const {
             .has_path = path.has_value()};
 }
 
-void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group) {
+void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group, core::Text text) {
     const core::Uri uri{"untitled", "", "Untitled-" + std::to_string(next_untitled_++), "", ""};
-    auto document = std::make_shared<core::Document>(core::Text{}, settings_->editor().line_ending);
+    auto document =
+        std::make_shared<core::Document>(std::move(text), settings_->editor().line_ending);
     bridge_.add_document(uri, document);
     if (!group) {
         show_document(uri, std::move(document));
@@ -1555,6 +1559,15 @@ void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group) 
     layout_.open(*group, uri);
     layout_.focus(*group);
     focus_current_editor();
+}
+
+void MainWindow::show_keybindings_reference() {
+    CommandTitles titles;
+    for (const CommandRegistry::Command& command : commands_.commands()) {
+        titles.emplace(command.id, command.title);
+    }
+    const std::string reference = keybindings_reference(titles, keys_->table(), keys_->platform());
+    add_untitled_document(std::nullopt, core::Text::from_utf8(reference).value_or(core::Text{}));
 }
 
 void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Document> document) {
