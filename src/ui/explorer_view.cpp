@@ -13,6 +13,7 @@
 #include <QStyledItemDelegate>
 #include <QTreeView>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <functional>
 
 namespace anvil::ui {
@@ -86,6 +87,17 @@ public:
                 [this](const QModelIndex& index) { activate_(index); });
     }
 
+    void setModel(QAbstractItemModel* model) override {
+        QTreeView::setModel(model);
+        connect(model, &QAbstractItemModel::rowsAboutToBeRemoved, this,
+                [this](const QModelIndex& parent, int first, int last) {
+                    remember_selection_in(parent, first, last);
+                });
+        connect(
+            model, &QAbstractItemModel::rowsRemoved, this,
+            [this](const QModelIndex& parent, int first, int) { move_selection(parent, first); });
+    }
+
 protected:
     void keyPressEvent(QKeyEvent* event) override {
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
@@ -148,9 +160,35 @@ protected:
     }
 
 private:
+    // The selection of a row that is about to go, or of a row below one, goes to the row that takes
+    // its place, which is what a view of a folder shows when a file is deleted under the cursor.
+    void remember_selection_in(const QModelIndex& parent, int first, int last) {
+        selection_moves_ = false;
+        for (QModelIndex index = currentIndex(); index.isValid(); index = index.parent()) {
+            if (index.parent() == parent && index.row() >= first && index.row() <= last) {
+                selection_moves_ = true;
+                break;
+            }
+        }
+    }
+
+    void move_selection(const QModelIndex& parent, int first) {
+        if (!selection_moves_) {
+            return;
+        }
+        selection_moves_ = false;
+        const int count = model()->rowCount(parent);
+        const QModelIndex target =
+            count > 0 ? model()->index(std::min(first, count - 1), 0, parent) : parent;
+        if (target.isValid()) {
+            setCurrentIndex(target);
+        }
+    }
+
     const WorkbenchColors& colors_;
     std::function<void(const QModelIndex&)> activate_;
     QPersistentModelIndex hovered_;
+    bool selection_moves_ = false;
 };
 
 // The name of the folder above the tree, in capitals.
@@ -189,8 +227,9 @@ private:
 };
 
 ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
-                           core::DirectoryLister lister)
-    : QWidget(parent), colors_(colors), model_(new ExplorerModel(std::move(lister), this)) {
+                           core::DirectoryLister lister, DirectoryWatchFactory watch)
+    : QWidget(parent), colors_(colors),
+      model_(new ExplorerModel(std::move(lister), std::move(watch), this)) {
     setAutoFillBackground(true);
 
     auto* folder_page = new QWidget(this);
@@ -231,6 +270,7 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
     pages_->setCurrentWidget(empty_page);
 
     connect(open_folder_, &QPushButton::clicked, this, &ExplorerView::open_folder_requested);
+    connect(model_, &ExplorerModel::watch_problem, this, &ExplorerView::watch_problem);
     connect(&colors_, &WorkbenchColors::changed, this, [this] { apply_colors(); });
     apply_colors();
 }

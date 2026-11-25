@@ -444,11 +444,14 @@ void MainWindow::register_explorer() {
     explorer.icon = codicon_icon("files", Qt::white, 24);
     explorer.order = 0;
     explorer.create = [this]() -> QWidget* {
-        auto* view = new ExplorerView(colors_);
+        auto* view = new ExplorerView(colors_, nullptr, platform_directory_lister(),
+                                      options_.explorer_watch.value_or(platform_directory_watch()));
         connect(view, &ExplorerView::file_activated, this,
                 [this](const QString& path) { open_file(path); });
         connect(view, &ExplorerView::open_folder_requested, this,
                 [this] { commands_.execute("workbench.action.files.openFolder"); });
+        connect(view, &ExplorerView::watch_problem, this,
+                [this](const QString& message) { status_bar_->show_message(message, 15000); });
         view->set_excludes(file_excludes_);
         view->set_workspace(
             options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,

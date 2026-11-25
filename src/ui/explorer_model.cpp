@@ -1,9 +1,14 @@
 #include "anvil/ui/explorer_model.hpp"
 
 #include "anvil/platform/file_system.hpp"
+#include "anvil/platform/file_watcher.hpp"
 
 #include <QString>
 #include <algorithm>
+#include <chrono>
+#include <iterator>
+#include <set>
+#include <string_view>
 #include <unordered_map>
 
 namespace anvil::ui {
@@ -38,14 +43,66 @@ core::DirectoryLister platform_directory_lister() {
 
 namespace {
 
+class PlatformDirectoryWatch : public DirectoryWatch {
+public:
+    explicit PlatformDirectoryWatch(std::unique_ptr<platform::FileWatcher> watcher)
+        : watcher_(std::move(watcher)) {}
+
+    std::expected<void, Error> add(const std::filesystem::path& directory) override {
+        return watcher_->add_directory(directory);
+    }
+
+    void remove(const std::filesystem::path& directory) override {
+        watcher_->remove_directory(directory);
+    }
+
+    std::expected<std::vector<std::filesystem::path>, Error> poll() override {
+        auto events = watcher_->poll(std::chrono::milliseconds(0));
+        if (!events) {
+            return std::unexpected(events.error());
+        }
+        std::vector<std::filesystem::path> paths;
+        paths.reserve(events->size());
+        for (platform::FileEvent& event : *events) {
+            paths.push_back(std::move(event.path));
+        }
+        return paths;
+    }
+
+private:
+    std::unique_ptr<platform::FileWatcher> watcher_;
+};
+
+} // namespace
+
+DirectoryWatchFactory platform_directory_watch() {
+    return [](const std::filesystem::path& folder)
+               -> std::expected<std::unique_ptr<DirectoryWatch>, Error> {
+        auto started = platform::FileWatcher::start(folder, {.recursive = false});
+        if (!started) {
+            return std::unexpected(started.error());
+        }
+        return std::make_unique<PlatformDirectoryWatch>(std::move(*started));
+    };
+}
+
+constexpr int poll_interval_ms = 100;
+
+namespace {
+
 QString text_of(const std::filesystem::path& path) {
     return QString::fromStdString(path.string());
 }
 
 } // namespace
 
-ExplorerModel::ExplorerModel(core::DirectoryLister lister, QObject* parent)
-    : QAbstractItemModel(parent), lister_(std::move(lister)), root_(std::make_unique<Node>()) {}
+ExplorerModel::ExplorerModel(core::DirectoryLister lister, DirectoryWatchFactory watch,
+                             QObject* parent)
+    : QAbstractItemModel(parent), lister_(std::move(lister)), watch_factory_(std::move(watch)),
+      poll_timer_(new QTimer(this)), root_(std::make_unique<Node>()) {
+    poll_timer_->setInterval(poll_interval_ms);
+    connect(poll_timer_, &QTimer::timeout, this, [this] { process_file_events(); });
+}
 
 ExplorerModel::~ExplorerModel() = default;
 
@@ -61,6 +118,8 @@ QModelIndex ExplorerModel::index_of_node(const Node* node) const {
 }
 
 void ExplorerModel::fill(Node& directory) {
+    // The watch starts before the listing so that a change in between is not missed.
+    watch_directory(directory.path);
     const std::vector<core::FileTreeEntry>& entries = tree_->children(directory.path);
     directory.read = true;
     if (entries.empty()) {
@@ -87,13 +146,72 @@ void ExplorerModel::set_folder(std::optional<std::filesystem::path> folder) {
     folder_ = std::move(folder);
     root_ = std::make_unique<Node>();
     tree_.reset();
+    watch_.reset();
+    watched_.clear();
+    poll_timer_->stop();
+    reported_problem_.clear();
     endResetModel();
     if (folder_) {
         tree_ = std::make_unique<core::FileTree>(*folder_, lister_, excludes_);
         root_->entry = {.name = folder_->filename().string(), .is_directory = true};
         root_->path = tree_->root();
+        start_watch();
         fill(*root_);
     }
+}
+
+void ExplorerModel::start_watch() {
+    if (!watch_factory_) {
+        return;
+    }
+    auto started = watch_factory_(*folder_);
+    if (started) {
+        watch_ = std::move(*started);
+        poll_timer_->start();
+    } else if (started.error().code != ErrorCode::unsupported) {
+        report_once(tr("The Explorer cannot follow changes on disk: %1")
+                        .arg(QString::fromStdString(started.error().message)));
+    }
+}
+
+void ExplorerModel::watch_directory(const std::filesystem::path& path) {
+    if (!watch_) {
+        return;
+    }
+    const std::string key = path.generic_string();
+    if (watched_.contains(key)) {
+        return;
+    }
+    if (auto added = watch_->add(path)) {
+        watched_.insert(key);
+    } else {
+        report_once(
+            tr("The Explorer cannot follow changes in %1: %2")
+                .arg(QString::fromStdString(key), QString::fromStdString(added.error().message)));
+    }
+}
+
+void ExplorerModel::unwatch_below(const std::filesystem::path& path) {
+    if (!watch_) {
+        return;
+    }
+    const std::string key = path.generic_string();
+    const std::string prefix = key + "/";
+    std::erase_if(watched_, [&](const std::string& watched) {
+        if (watched != key && !watched.starts_with(prefix)) {
+            return false;
+        }
+        watch_->remove(watched);
+        return true;
+    });
+}
+
+void ExplorerModel::report_once(const QString& message) {
+    if (message == reported_problem_) {
+        return;
+    }
+    reported_problem_ = message;
+    emit watch_problem(message);
 }
 
 void ExplorerModel::set_excludes(core::FileExcludes excludes) {
@@ -105,12 +223,70 @@ void ExplorerModel::set_excludes(core::FileExcludes excludes) {
     refresh_open_directories(*root_);
 }
 
-void ExplorerModel::refresh_open_directories(Node& directory) {
+void ExplorerModel::refresh(Node& directory) {
     tree_->refresh(directory.path);
     synchronize(directory);
+}
+
+void ExplorerModel::refresh_open_directories(Node& directory) {
+    refresh(directory);
     for (const std::unique_ptr<Node>& child : directory.children) {
         if (child->read) {
             refresh_open_directories(*child);
+        }
+    }
+}
+
+ExplorerModel::Node* ExplorerModel::open_directory(const std::filesystem::path& path) const {
+    if (!folder_) {
+        return nullptr;
+    }
+    const std::filesystem::path relative = path.lexically_normal().lexically_relative(*folder_);
+    if (relative.empty()) {
+        return nullptr;
+    }
+    Node* node = root_.get();
+    for (const std::filesystem::path& part : relative) {
+        if (part.empty() || part == ".") {
+            continue;
+        }
+        if (part == ".." || !node->read) {
+            return nullptr;
+        }
+        const std::string name = part.string();
+        const auto found = std::ranges::find_if(
+            node->children, [&](const auto& child) { return child->entry.name == name; });
+        if (found == node->children.end()) {
+            return nullptr;
+        }
+        node = found->get();
+    }
+    return node->read && node->entry.is_directory ? node : nullptr;
+}
+
+void ExplorerModel::process_file_events() {
+    if (!watch_) {
+        return;
+    }
+    const auto events = watch_->poll();
+    if (!events) {
+        report_once(tr("The Explorer lost some file events and read the open folders again: %1")
+                        .arg(QString::fromStdString(events.error().message)));
+        refresh_open_directories(*root_);
+        return;
+    }
+    if (events->empty()) {
+        return;
+    }
+    // Parents sort before their children, so a directory that an event removes is gone before
+    // its own events are looked at.
+    std::set<std::filesystem::path> directories;
+    for (const std::filesystem::path& path : *events) {
+        directories.insert(path.parent_path());
+    }
+    for (const std::filesystem::path& directory : directories) {
+        if (Node* node = open_directory(directory)) {
+            refresh(*node);
         }
     }
 }
@@ -123,36 +299,68 @@ void ExplorerModel::synchronize(Node& directory) {
         by_name.emplace(entry.name, &entry);
     }
     const QModelIndex parent = index_of_node(&directory);
+    const auto renumber = [&directory](std::size_t from) {
+        for (std::size_t row = from; row < directory.children.size(); ++row) {
+            directory.children[row]->row = static_cast<int>(row);
+        }
+    };
 
-    for (int row = static_cast<int>(directory.children.size()) - 1; row >= 0; --row) {
-        const Node& node = *directory.children[static_cast<std::size_t>(row)];
+    // Rows that are gone or changed go in runs, from the end, so that a burst is a few signals.
+    const auto kept = [&](const Node& node) {
         const auto same = by_name.find(node.entry.name);
-        if (same != by_name.end() && *same->second == node.entry) {
+        return same != by_name.end() && *same->second == node.entry;
+    };
+    for (std::size_t end = directory.children.size(); end > 0;) {
+        if (kept(*directory.children[end - 1])) {
+            --end;
             continue;
         }
-        beginRemoveRows(parent, row, row);
-        directory.children.erase(directory.children.begin() + row);
-        for (std::size_t later = static_cast<std::size_t>(row); later < directory.children.size();
-             ++later) {
-            directory.children[later]->row = static_cast<int>(later);
+        std::size_t begin = end - 1;
+        while (begin > 0 && !kept(*directory.children[begin - 1])) {
+            --begin;
         }
+        for (std::size_t row = begin; row < end; ++row) {
+            unwatch_below(directory.children[row]->path);
+        }
+        beginRemoveRows(parent, static_cast<int>(begin), static_cast<int>(end) - 1);
+        directory.children.erase(directory.children.begin() + static_cast<std::ptrdiff_t>(begin),
+                                 directory.children.begin() + static_cast<std::ptrdiff_t>(end));
+        renumber(begin);
         endRemoveRows();
+        end = begin;
     }
-    for (std::size_t i = 0; i < fresh.size(); ++i) {
-        if (i < directory.children.size() && directory.children[i]->entry.name == fresh[i].name) {
+
+    // What is left is in the order of `fresh`, so the new entries are the gaps.
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < fresh.size();) {
+        if (at < directory.children.size() && directory.children[at]->entry.name == fresh[i].name) {
+            ++at;
+            ++i;
             continue;
         }
-        auto node = std::make_unique<Node>();
-        node->parent = &directory;
-        node->entry = fresh[i];
-        node->path = directory.path / fresh[i].name;
-        const int row = static_cast<int>(i);
-        beginInsertRows(parent, row, row);
-        directory.children.insert(directory.children.begin() + row, std::move(node));
-        for (std::size_t later = i; later < directory.children.size(); ++later) {
-            directory.children[later]->row = static_cast<int>(later);
+        std::size_t run = 0;
+        while (i + run < fresh.size() &&
+               !(at < directory.children.size() &&
+                 directory.children[at]->entry.name == fresh[i + run].name)) {
+            ++run;
         }
+        std::vector<std::unique_ptr<Node>> added;
+        added.reserve(run);
+        for (std::size_t k = 0; k < run; ++k) {
+            auto node = std::make_unique<Node>();
+            node->parent = &directory;
+            node->entry = fresh[i + k];
+            node->path = directory.path / fresh[i + k].name;
+            added.push_back(std::move(node));
+        }
+        beginInsertRows(parent, static_cast<int>(at), static_cast<int>(at + run) - 1);
+        directory.children.insert(directory.children.begin() + static_cast<std::ptrdiff_t>(at),
+                                  std::make_move_iterator(added.begin()),
+                                  std::make_move_iterator(added.end()));
+        renumber(at);
         endInsertRows();
+        at += run;
+        i += run;
     }
 }
 

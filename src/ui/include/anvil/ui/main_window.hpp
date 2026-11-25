@@ -64,6 +64,9 @@ struct MainWindowOptions {
     // Asks which folder Open Folder opens; none means the question was cancelled. The window shows
     // a folder dialog when unset.
     std::function<std::optional<std::filesystem::path>()> choose_folder;
+    // Starts the watch of the Explorer's folder; the platform's watcher when unset. Tests replace
+    // it to see how the window reports a watch that fails.
+    std::optional<DirectoryWatchFactory> explorer_watch;
     // Receives the extension host's messages; discarded when unset.
     std::shared_ptr<core::Logger> logger;
     // The user settings file, read at startup and whenever it changes. A missing file means the
