@@ -8,6 +8,7 @@
 #include <functional>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -68,6 +69,47 @@ struct FileTreeChange {
     bool operator==(const FileTreeChange&) const = default;
 };
 
+// What reading a directory gives: its entries in the order of the explorer, or why they could not
+// be listed.
+struct FileTreeListing {
+    std::vector<FileTreeEntry> entries;
+    std::optional<Error> error;
+};
+
+// Reads a directory of a folder as `FileTree` holds it: listed, without the excluded entries,
+// directories first and then by `compare_file_names`. The reader has a copy of everything that it
+// needs (the lister and the patterns as they were when it was made), so it can run on another
+// thread while the tree changes, as long as the lister itself can be called from that thread.
+class DirectoryReader {
+public:
+    DirectoryReader(std::filesystem::path root, DirectoryLister list, FileExcludes excludes);
+
+    const std::filesystem::path& root() const {
+        return root_;
+    }
+
+    // The same reader with other patterns.
+    DirectoryReader with_excludes(FileExcludes excludes) const;
+
+    // The path of `directory` relative to the root with forward slashes, empty for the root
+    // itself, or nothing when it lies outside the root or is excluded or below an excluded
+    // directory.
+    std::optional<std::string> key_of(const std::filesystem::path& directory) const;
+
+    // The listing of `directory`; empty for a directory that `key_of` has no key for. Nothing when
+    // `stop` was requested, which is looked at after the listing and before the sort: the listing
+    // itself is one call of the lister and is not interrupted.
+    std::optional<FileTreeListing> read(const std::filesystem::path& directory,
+                                        std::stop_token stop = {}) const;
+
+private:
+    bool is_excluded(const std::string& relative_path) const;
+
+    std::filesystem::path root_;
+    DirectoryLister list_;
+    FileExcludes excludes_;
+};
+
 // The directories of a folder that have been read so far, as the explorer shows them.
 //
 // A directory is listed when `children` first asks for it and never again until `refresh`, so a
@@ -81,7 +123,12 @@ public:
              FileExcludes excludes = FileExcludes::defaults());
 
     const std::filesystem::path& root() const {
-        return root_;
+        return reader_.root();
+    }
+
+    // A reader for the other threads, with the patterns that the tree has now.
+    DirectoryReader reader() const {
+        return reader_;
     }
 
     // The entries of `directory`, which is the root or a path below it, in order. Lists the
@@ -96,8 +143,16 @@ public:
     // Replaces the patterns without listing anything. What was listed under the old ones stays as
     // it is until `refresh` reads it again.
     void set_excludes(FileExcludes excludes) {
-        excludes_ = std::move(excludes);
+        reader_ = reader_.with_excludes(std::move(excludes));
     }
+
+    // Takes a listing that a `DirectoryReader` made, as if `children` had listed `directory`:
+    // nothing is listed for it afterwards until `refresh`. False, and nothing taken, for a
+    // directory that is outside the tree or excluded.
+    bool adopt(const std::filesystem::path& directory, FileTreeListing listing);
+
+    // Drops what is known of `directory` and below it, so that the next `children` lists it again.
+    void forget(const std::filesystem::path& directory);
 
     // Whether `children` has listed `directory` and the listing has not been dropped.
     bool is_loaded(const std::filesystem::path& directory) const;
@@ -109,23 +164,12 @@ public:
     std::vector<FileTreeChange> refresh(const std::filesystem::path& directory);
 
 private:
-    struct Directory {
-        std::vector<FileTreeEntry> entries;
-        std::optional<Error> error;
-    };
-
-    // The key of `directory` in `loaded_`: its path relative to the root with forward slashes, or
-    // none when it lies outside the root or is excluded or below an excluded directory.
     std::optional<std::string> key_of(const std::filesystem::path& directory) const;
     std::filesystem::path directory_of(const std::string& key) const;
-    Directory read(const std::filesystem::path& directory, const std::string& key) const;
     void forget_below(const std::string& key);
-    bool is_excluded(const std::string& relative_path) const;
 
-    std::filesystem::path root_;
-    DirectoryLister list_;
-    FileExcludes excludes_;
-    std::unordered_map<std::string, Directory> loaded_;
+    DirectoryReader reader_;
+    std::unordered_map<std::string, FileTreeListing> loaded_;
     static const std::vector<FileTreeEntry> no_entries_;
 };
 

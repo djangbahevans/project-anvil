@@ -4,12 +4,15 @@
 
 #include <QAbstractItemModel>
 #include <QTimer>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <set>
+#include <stop_token>
+#include <unordered_map>
 #include <vector>
 
 namespace anvil::ui {
@@ -38,10 +41,36 @@ using DirectoryWatchFactory = std::function<std::expected<std::unique_ptr<Direct
 // watch for each directory that the tree has read.
 DirectoryWatchFactory platform_directory_watch();
 
+// Runs the listing of a directory away from the UI thread.
+class ListingRunner {
+public:
+    using Task = std::function<std::optional<core::FileTreeListing>(std::stop_token)>;
+    using Done = std::function<void(std::optional<core::FileTreeListing>)>;
+
+    virtual ~ListingRunner() = default;
+    // Runs `task`, which looks at `stop` between its steps, and then calls `done` with its result
+    // on the thread that called `run`, from that thread's event loop. A runner may call `done`
+    // before `run` returns; the model then waits for its own event loop before it uses the result.
+    virtual void run(std::stop_token stop, Task task, Done done) = 0;
+};
+
+// A thread for each listing, which gives the result back through the event loop of `context`; what
+// has not been given back is dropped with the context.
+std::unique_ptr<ListingRunner> thread_listing_runner(QObject* context);
+
+// Lists on the calling thread and calls `done` before `run` returns.
+std::unique_ptr<ListingRunner> immediate_listing_runner();
+
 // The entries of a folder as a tree for a view: the model that a `QTreeView` shows in the
 // explorer. It adapts `core::FileTree` and does not use `QFileSystemModel`, so that a file system
 // that is not the local one can plug in later. A directory is read when the view first expands it
 // (`canFetchMore`/`fetchMore`), never before, and the folder itself is read when it is set.
+//
+// A directory is read on a worker thread (`ListingRunner`): until the entries arrive it has one
+// row, "Loading…", and then the entries are inserted `batch_size` at a time, each batch in an
+// event of its own so that the window stays responsive for a directory of tens of thousands of
+// entries. Collapsing the directory (`cancel_loading`), closing the folder or removing the row
+// stops the listing, and what arrives later is dropped.
 //
 // The directories that were read are watched, and a timer reads again the ones that events touch,
 // each once per round, so that the rows follow the disk. A directory that was never read is not
@@ -57,10 +86,16 @@ public:
         PathRole,
         // Why a directory could not be read; a null string for any other entry.
         ErrorRole,
+        // Whether the row is the "Loading…" row of a directory that is being read, as a bool.
+        PlaceholderRole,
     };
+
+    // The entries that are inserted in one step.
+    static constexpr int batch_size = 500;
 
     explicit ExplorerModel(core::DirectoryLister lister = platform_directory_lister(),
                            DirectoryWatchFactory watch = platform_directory_watch(),
+                           std::unique_ptr<ListingRunner> runner = nullptr,
                            QObject* parent = nullptr);
     ~ExplorerModel() override;
 
@@ -79,6 +114,16 @@ public:
     // Takes the events of the watch and reads again each directory that has rows and that an event
     // names, once. The timer calls it; tests call it to run a round at a time.
     void process_file_events();
+    // Whether a directory is being read or its entries are being inserted.
+    bool loading() const {
+        return !loads_.empty();
+    }
+    // Whether `directory` is being read or its entries are being inserted.
+    bool is_loading(const QModelIndex& directory) const;
+    // Stops reading `directory` and removes the rows that it has, so that expanding it reads it
+    // again. Does nothing for a directory that is read, or that was never expanded.
+    void cancel_loading(const QModelIndex& directory);
+
     // Whether the folder is watched. False without a folder, when the watch could not start, and on
     // platforms that cannot watch.
     bool watching() const {
@@ -107,20 +152,38 @@ signals:
 
 private:
     struct Node;
+    // How far a directory is: `unread` has no rows, `loading` has the "Loading…" row, `filling` has
+    // some of its entries and `read` all of them.
+    enum class State { unread, loading, filling, read };
+    struct Load {
+        Node* node = nullptr;
+        std::stop_source stop;
+    };
 
     Node* node_of(const QModelIndex& index) const;
     QModelIndex index_of_node(const Node* node) const;
-    // Makes the children of `directory` the entries of the file tree, with the rows inserted, and
-    // marks it read.
-    void fill(Node& directory);
+    // Starts reading `directory`: the watch, the "Loading…" row and the worker.
+    void begin_load(Node& directory);
+    // The listing of a read has arrived: the "Loading…" row goes and the first batch comes.
+    void finish_load(std::uint64_t id, std::optional<core::FileTreeListing> listing);
+    // Inserts the next batch of the entries of the directory that load `id` reads, and posts the
+    // one after it, or ends the load.
+    void insert_batch(std::uint64_t id);
+    // Returns a directory that is loading to unread, without rows.
+    void cancel_node(Node& directory);
+    // Ends the load of `node` and the loads of the directories below it, whose rows are about to
+    // go.
+    void drop_loads_below(Node& node);
+    void cancel_all();
     // Makes the children of an open `directory` the entries of the file tree again: rows of
     // entries that are gone or changed are removed and rows of new ones inserted.
     void synchronize(Node& directory);
-    // Reads `directory` and its open subdirectories again.
+    // Reads `directory` and its open subdirectories again; one that is loading is read again when
+    // it has loaded.
     void refresh_open_directories(Node& directory);
     void refresh(Node& directory);
-    // The node of a directory that has rows, or null.
-    Node* open_directory(const std::filesystem::path& path) const;
+    // The node of a directory that has rows (or is loading them), or null.
+    Node* find_directory(const std::filesystem::path& path) const;
     void start_watch();
     void watch_directory(const std::filesystem::path& path);
     void unwatch_below(const std::filesystem::path& path);
@@ -137,6 +200,13 @@ private:
     core::FileExcludes excludes_ = core::FileExcludes::defaults();
     std::optional<std::filesystem::path> folder_;
     std::unique_ptr<core::FileTree> tree_;
+    std::unique_ptr<ListingRunner> runner_;
+    // The directories that are loading, by the number of the load; a number that is not here was
+    // cancelled, and what arrives for it is dropped.
+    std::unordered_map<std::uint64_t, Load> loads_;
+    std::uint64_t next_load_ = 1;
+    // While `begin_load` is in the call of the runner.
+    bool starting_ = false;
     std::unique_ptr<Node> root_;
 };
 

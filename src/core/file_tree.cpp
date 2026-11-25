@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
+#include <string_view>
+#include <unordered_set>
 
 namespace anvil::core {
 
@@ -102,20 +104,25 @@ FileExcludes FileExcludes::from_settings(const Settings& settings) {
     return result;
 }
 
-FileTree::FileTree(std::filesystem::path root, DirectoryLister list, FileExcludes excludes)
+DirectoryReader::DirectoryReader(std::filesystem::path root, DirectoryLister list,
+                                 FileExcludes excludes)
     : root_(root.lexically_normal()), list_(std::move(list)), excludes_(std::move(excludes)) {
     if (!root_.has_filename() && root_ != root_.root_path()) {
         root_ = root_.parent_path();
     }
 }
 
-bool FileTree::is_excluded(const std::string& relative_path) const {
+DirectoryReader DirectoryReader::with_excludes(FileExcludes excludes) const {
+    return DirectoryReader(root_, list_, std::move(excludes));
+}
+
+bool DirectoryReader::is_excluded(const std::string& relative_path) const {
     return std::ranges::any_of(excludes_.patterns, [&](const std::string& pattern) {
         return glob_match(pattern, relative_path);
     });
 }
 
-std::optional<std::string> FileTree::key_of(const std::filesystem::path& directory) const {
+std::optional<std::string> DirectoryReader::key_of(const std::filesystem::path& directory) const {
     const std::filesystem::path relative = directory.lexically_normal().lexically_relative(root_);
     if (relative.empty()) {
         return std::nullopt;
@@ -137,26 +144,55 @@ std::optional<std::string> FileTree::key_of(const std::filesystem::path& directo
     return key;
 }
 
-std::filesystem::path FileTree::directory_of(const std::string& key) const {
-    return key.empty() ? root_ : root_ / key;
-}
-
-FileTree::Directory FileTree::read(const std::filesystem::path& directory,
-                                   const std::string& key) const {
-    Directory result;
-    auto listed = list_(directory);
+std::optional<FileTreeListing> DirectoryReader::read(const std::filesystem::path& directory,
+                                                     std::stop_token stop) const {
+    const std::optional<std::string> key = key_of(directory);
+    if (!key) {
+        return FileTreeListing{};
+    }
+    FileTreeListing result;
+    auto listed = list_(key->empty() ? root_ : root_ / *key);
+    if (stop.stop_requested()) {
+        return std::nullopt;
+    }
     if (!listed) {
         result.error = std::move(listed.error());
         return result;
     }
     for (FileTreeEntry& entry : *listed) {
-        if (!is_excluded(join(key, entry.name))) {
+        if (!is_excluded(join(*key, entry.name))) {
             result.entries.push_back(std::move(entry));
         }
     }
     sort_in_order(result.entries,
                   [](const FileTreeEntry& entry) -> const FileTreeEntry& { return entry; });
     return result;
+}
+
+FileTree::FileTree(std::filesystem::path root, DirectoryLister list, FileExcludes excludes)
+    : reader_(std::move(root), std::move(list), std::move(excludes)) {}
+
+std::optional<std::string> FileTree::key_of(const std::filesystem::path& directory) const {
+    return reader_.key_of(directory);
+}
+
+std::filesystem::path FileTree::directory_of(const std::string& key) const {
+    return key.empty() ? reader_.root() : reader_.root() / key;
+}
+
+bool FileTree::adopt(const std::filesystem::path& directory, FileTreeListing listing) {
+    const std::optional<std::string> key = key_of(directory);
+    if (!key) {
+        return false;
+    }
+    loaded_.insert_or_assign(*key, std::move(listing));
+    return true;
+}
+
+void FileTree::forget(const std::filesystem::path& directory) {
+    if (const std::optional<std::string> key = key_of(directory)) {
+        forget_below(*key);
+    }
 }
 
 const std::vector<FileTreeEntry>& FileTree::children(const std::filesystem::path& directory) {
@@ -166,7 +202,7 @@ const std::vector<FileTreeEntry>& FileTree::children(const std::filesystem::path
     }
     auto found = loaded_.find(*key);
     if (found == loaded_.end()) {
-        found = loaded_.emplace(*key, read(directory_of(*key), *key)).first;
+        found = loaded_.emplace(*key, *reader_.read(directory_of(*key))).first;
     }
     return found->second.entries;
 }
@@ -201,23 +237,32 @@ std::vector<FileTreeChange> FileTree::refresh(const std::filesystem::path& direc
     if (found == loaded_.end()) {
         return {};
     }
-    Directory fresh = read(directory_of(*key), *key);
+    FileTreeListing fresh = *reader_.read(directory_of(*key));
     const std::vector<FileTreeEntry> before = std::move(found->second.entries);
+
+    // By name, so that a directory of tens of thousands of entries is compared in one pass.
+    std::unordered_map<std::string_view, const FileTreeEntry*> fresh_by_name;
+    fresh_by_name.reserve(fresh.entries.size());
+    for (const FileTreeEntry& entry : fresh.entries) {
+        fresh_by_name.emplace(entry.name, &entry);
+    }
+    std::unordered_set<std::string_view> before_names;
+    before_names.reserve(before.size());
 
     std::vector<FileTreeChange> changes;
     for (const FileTreeEntry& old_entry : before) {
-        const auto same_name =
-            std::ranges::find(fresh.entries, old_entry.name, &FileTreeEntry::name);
-        if (same_name == fresh.entries.end()) {
+        before_names.insert(old_entry.name);
+        const auto same_name = fresh_by_name.find(old_entry.name);
+        if (same_name == fresh_by_name.end()) {
             changes.push_back({FileTreeChange::Kind::removed, old_entry});
             forget_below(join(*key, old_entry.name));
-        } else if (*same_name != old_entry) {
-            changes.push_back({FileTreeChange::Kind::changed, *same_name});
+        } else if (*same_name->second != old_entry) {
+            changes.push_back({FileTreeChange::Kind::changed, *same_name->second});
             forget_below(join(*key, old_entry.name));
         }
     }
     for (const FileTreeEntry& new_entry : fresh.entries) {
-        if (std::ranges::find(before, new_entry.name, &FileTreeEntry::name) == before.end()) {
+        if (!before_names.contains(new_entry.name)) {
             changes.push_back({FileTreeChange::Kind::added, new_entry});
         }
     }

@@ -22,6 +22,8 @@ namespace anvil::ui {
 // Open Folder button instead.
 //
 // The tree is a `QTreeView` over an `ExplorerModel`, drawn with the colors of the theme (`list.*`).
+// A directory is read on a worker thread: while it is, it shows a "Loading…" row, and collapsing it
+// stops the reading (see `ExplorerModel`).
 // It follows the disk: files and folders that other programs create, delete and rename in the
 // directories that are open appear and disappear, and the rest of the tree and the selection stay.
 // A selected row that disappears moves the selection to the row that took its place.
@@ -31,7 +33,8 @@ class ExplorerView : public QWidget {
 public:
     ExplorerView(const WorkbenchColors& colors, QWidget* parent = nullptr,
                  core::DirectoryLister lister = platform_directory_lister(),
-                 DirectoryWatchFactory watch = platform_directory_watch());
+                 DirectoryWatchFactory watch = platform_directory_watch(),
+                 std::unique_ptr<ListingRunner> runner = nullptr);
     ~ExplorerView() override;
 
     // Shows the folder with `name` above it, or the Open Folder offer for none.

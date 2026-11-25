@@ -15,6 +15,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <unistd.h>
 
@@ -111,6 +112,11 @@ private:
 
 class ExplorerViewTest : public ::testing::Test {
 protected:
+    // Lists at once, so that a test sees the entries after the event loop has run once.
+    virtual std::unique_ptr<ListingRunner> make_runner() {
+        return immediate_listing_runner();
+    }
+
     DirectoryWatchFactory watch_factory() {
         return [this](const std::filesystem::path& folder)
                    -> std::expected<std::unique_ptr<DirectoryWatch>, Error> {
@@ -132,7 +138,8 @@ protected:
         files_.set("/w/docs", {});
         files_.set("/w/build", {file("out.o")});
         colors_ = std::make_unique<WorkbenchColors>(QApplication::palette());
-        view_ = std::make_unique<ExplorerView>(*colors_, nullptr, files_.lister(), watch_factory());
+        view_ = std::make_unique<ExplorerView>(*colors_, nullptr, files_.lister(), watch_factory(),
+                                               make_runner());
         view_->resize(300, 400);
         view_->show();
         QApplication::processEvents();
@@ -145,6 +152,11 @@ protected:
 
     QTreeView* tree() const {
         return view_->tree();
+    }
+    // Expands a directory and lets the listing, which is delivered through the event loop, arrive.
+    void expand(const QModelIndex& index) {
+        tree()->expand(index);
+        QApplication::processEvents();
     }
     QModelIndex index_of(const char* path) const {
         return view_->model()->index_of(path);
@@ -214,12 +226,12 @@ TEST_F(ExplorerViewTest, ExpandingADirectoryListsItOnceAndShowsItsEntriesInOrder
     EXPECT_EQ(files_.listings("/w/src"), 0);
     EXPECT_EQ(view_->model()->rowCount(src), 0);
 
-    tree()->expand(src);
+    expand(src);
     EXPECT_EQ(files_.listings("/w/src"), 1);
     EXPECT_EQ(names_under(src), (Names{"util", "app.cpp", "main.cpp"}));
 
     tree()->collapse(src);
-    tree()->expand(src);
+    expand(src);
     key(Qt::Key_Down);
     EXPECT_EQ(files_.listings("/w/src"), 1);
     EXPECT_EQ(files_.listings("/w/src/util"), 0);
@@ -299,6 +311,7 @@ TEST_F(ExplorerViewTest, TheKeysMoveAsATreeDoes) {
     key(Qt::Key_Right);
     EXPECT_TRUE(tree()->isExpanded(index_of("/w/src")));
     EXPECT_EQ(current_name(), "src");
+    QApplication::processEvents();
     key(Qt::Key_Right);
     EXPECT_EQ(current_name(), "util");
     key(Qt::Key_Left);
@@ -307,7 +320,7 @@ TEST_F(ExplorerViewTest, TheKeysMoveAsATreeDoes) {
     EXPECT_FALSE(tree()->isExpanded(index_of("/w/src")));
     EXPECT_EQ(current_name(), "src");
 
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     tree()->setCurrentIndex(index_of("/w/src/app.cpp"));
     key(Qt::Key_Left);
     EXPECT_EQ(current_name(), "src");
@@ -316,8 +329,8 @@ TEST_F(ExplorerViewTest, TheKeysMoveAsATreeDoes) {
 TEST_F(ExplorerViewTest, AnExcludedFolderIsHiddenAndShowsAgainWithoutClosingWhatIsOpen) {
     open_workspace();
     const QModelIndex src = index_of("/w/src");
-    tree()->expand(src);
-    tree()->expand(index_of("/w/src/util"));
+    expand(src);
+    expand(index_of("/w/src/util"));
     tree()->setCurrentIndex(index_of("/w/src/util/strings.cpp"));
     EXPECT_EQ(names_under({}), (Names{"build", "docs", "src", "a9.txt", "a10.txt", "zeta.txt"}));
 
@@ -347,7 +360,7 @@ TEST_F(ExplorerViewTest, TheSelectionStaysWhenOtherRowsAppearAndDisappear) {
 
 TEST_F(ExplorerViewTest, ClosingTheFolderClearsTheTreeAndOpeningOneShowsItAgain) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     view_->set_workspace(std::nullopt, QString());
     EXPECT_FALSE(view_->shows_folder());
     EXPECT_EQ(view_->model()->rowCount(), 0);
@@ -355,6 +368,7 @@ TEST_F(ExplorerViewTest, ClosingTheFolderClearsTheTreeAndOpeningOneShowsItAgain)
 
     files_.set("/other", {file("only.txt")});
     view_->set_workspace(std::filesystem::path("/other"), "other");
+    QApplication::processEvents();
     EXPECT_TRUE(view_->shows_folder());
     EXPECT_EQ(view_->folder_name(), "other");
     EXPECT_EQ(names_under({}), (Names{"only.txt"}));
@@ -365,7 +379,7 @@ TEST_F(ExplorerViewTest, ADirectoryThatCannotBeReadHasNoEntriesAndTellsWhy) {
     files_.fail("/w/src", "permission denied");
     open_workspace();
     const QModelIndex src = index_of("/w/src");
-    tree()->expand(src);
+    expand(src);
     EXPECT_EQ(view_->model()->rowCount(src), 0);
     EXPECT_EQ(src.data(ExplorerModel::ErrorRole).toString(), "permission denied");
     EXPECT_EQ(src.data(Qt::ToolTipRole).toString(), "permission denied");
@@ -375,7 +389,7 @@ TEST_F(ExplorerViewTest, ADirectoryThatCannotBeReadHasNoEntriesAndTellsWhy) {
 
 TEST_F(ExplorerViewTest, TheTreeIsDrawnWithTheColorsOfTheTheme) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     tree()->setCurrentIndex(index_of("/w/src/app.cpp"));
     tree()->setFocus();
     QApplication::processEvents();
@@ -412,16 +426,16 @@ TEST_F(ExplorerFollowTest, TheFolderIsWatchedAndSoIsEachDirectoryThatIsRead) {
     EXPECT_EQ(watches_[0]->directories, (std::set<std::string>{"/w"}));
     EXPECT_TRUE(view_->model()->watching());
 
-    tree()->expand(index_of("/w/src"));
-    tree()->expand(index_of("/w/src/util"));
+    expand(index_of("/w/src"));
+    expand(index_of("/w/src/util"));
     EXPECT_EQ(watches_[0]->directories, (std::set<std::string>{"/w", "/w/src", "/w/src/util"}));
     EXPECT_EQ(watches_[0]->directories.count("/w/docs"), 0U) << "a directory that was not read";
 }
 
 TEST_F(ExplorerFollowTest, FilesThatAppearAndDisappearShowWithoutMovingTheRest) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
-    tree()->expand(index_of("/w/src/util"));
+    expand(index_of("/w/src"));
+    expand(index_of("/w/src/util"));
     tree()->setCurrentIndex(index_of("/w/src/util/strings.cpp"));
     ASSERT_EQ(files_.listings("/w/src"), 1);
 
@@ -443,7 +457,7 @@ TEST_F(ExplorerFollowTest, FilesThatAppearAndDisappearShowWithoutMovingTheRest) 
 
 TEST_F(ExplorerFollowTest, EachDirectoryIsReadOnceNoMatterHowManyEventsNameIt) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     files_.set("/w/src", {file("a.cpp"), file("b.cpp"), file("c.cpp")});
     events({"/w/src/a.cpp", "/w/src/b.cpp", "/w/src/c.cpp", "/w/src/a.cpp"});
     EXPECT_EQ(files_.listings("/w/src"), 2);
@@ -478,8 +492,8 @@ TEST_F(ExplorerFollowTest, AnEntryThatChangesBetweenFileAndFolderChangesItsRow) 
 
 TEST_F(ExplorerFollowTest, AFolderThatIsDeletedWhileExpandedDisappearsWithItsWatches) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
-    tree()->expand(index_of("/w/src/util"));
+    expand(index_of("/w/src"));
+    expand(index_of("/w/src/util"));
     ASSERT_EQ(watches_[0]->directories.size(), 3U);
 
     files_.set("/w", {file("zeta.txt"), dir("docs"), dir(".git"), dir("build"), file("a10.txt"),
@@ -494,7 +508,7 @@ TEST_F(ExplorerFollowTest, AFolderThatIsDeletedWhileExpandedDisappearsWithItsWat
 
 TEST_F(ExplorerFollowTest, AFolderRenamedFromOutsideIsShownUnderItsNewNameCollapsed) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     files_.set("/w", {file("zeta.txt"), dir("source"), file("a10.txt"), file("a9.txt"), dir("docs"),
                       dir(".git"), dir("build")});
     files_.set("/w/source", {file("main.cpp")});
@@ -510,7 +524,7 @@ TEST_F(ExplorerFollowTest, AFolderRenamedFromOutsideIsShownUnderItsNewNameCollap
 
 TEST_F(ExplorerFollowTest, TheSelectionMovesToTheNeighborOfARowThatDisappears) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     files_.set("/w/src", {dir("util"), file("app.cpp"), file("main.cpp"), file("zzz.cpp")});
 
     tree()->setCurrentIndex(index_of("/w/src/app.cpp"));
@@ -532,8 +546,8 @@ TEST_F(ExplorerFollowTest, TheSelectionMovesToTheNeighborOfARowThatDisappears) {
 
 TEST_F(ExplorerFollowTest, ASelectionInsideAFolderThatDisappearsMovesToTheNeighborOfTheFolder) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
-    tree()->expand(index_of("/w/src/util"));
+    expand(index_of("/w/src"));
+    expand(index_of("/w/src/util"));
     tree()->setCurrentIndex(index_of("/w/src/util/strings.cpp"));
     ASSERT_EQ(current_name(), "strings.cpp");
 
@@ -555,8 +569,8 @@ TEST_F(ExplorerFollowTest, TheSelectionDoesNotMoveWhenAnotherRowDisappears) {
 
 TEST_F(ExplorerFollowTest, LostEventsAreReportedOnceAndEveryOpenDirectoryIsReadAgain) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
-    tree()->expand(index_of("/w/build"));
+    expand(index_of("/w/src"));
+    expand(index_of("/w/build"));
     QSignalSpy problems(view_.get(), &ExplorerView::watch_problem);
 
     files_.set("/w/src", {file("moved.cpp")});
@@ -588,7 +602,7 @@ TEST_F(ExplorerFollowTest, AWatchThatCannotStartIsReportedOnceAndTheTreeStillSho
     EXPECT_TRUE(problems.at(0).at(0).toString().contains("the system limit of watches"));
     EXPECT_EQ(names_under({}), (Names{"build", "docs", "src", "a9.txt", "a10.txt", "zeta.txt"}));
 
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     view_->model()->process_file_events();
     EXPECT_EQ(problems.count(), 1);
 }
@@ -605,8 +619,8 @@ TEST_F(ExplorerFollowTest, ADirectoryThatCannotBeAddedIsReportedOnceAndTheOthers
     open_workspace();
     QSignalSpy problems(view_.get(), &ExplorerView::watch_problem);
     watches_[0]->add_failure = Error{ErrorCode::limit_exceeded, "too many watches"};
-    tree()->expand(index_of("/w/src"));
-    tree()->expand(index_of("/w/docs"));
+    expand(index_of("/w/src"));
+    expand(index_of("/w/docs"));
     EXPECT_EQ(problems.count(), 2) << "one for each directory, which differ";
     EXPECT_EQ(names_under(index_of("/w/src")), (Names{"util", "app.cpp", "main.cpp"}));
     EXPECT_EQ(watches_[0]->directories, (std::set<std::string>{"/w"}));
@@ -623,6 +637,7 @@ TEST_F(ExplorerFollowTest, TheWatchEndsWhenTheFolderChangesOrClosesAndStartsAgai
 
     files_.set("/other", {file("only.txt")});
     view_->set_workspace(std::filesystem::path("/other"), "other");
+    QApplication::processEvents();
     ASSERT_EQ(watches_.size(), 2U);
     EXPECT_EQ(watches_[1]->folder, std::filesystem::path("/other"));
     EXPECT_TRUE(watches_[1]->alive);
@@ -630,6 +645,7 @@ TEST_F(ExplorerFollowTest, TheWatchEndsWhenTheFolderChangesOrClosesAndStartsAgai
     EXPECT_FALSE(watches_[0]->alive);
 
     view_->set_workspace(std::filesystem::path("/w"), "w");
+    QApplication::processEvents();
     ASSERT_EQ(watches_.size(), 3U);
     EXPECT_FALSE(watches_[1]->alive);
 }
@@ -646,7 +662,7 @@ TEST_F(ExplorerFollowTest, ABurstOfTenThousandEventsReadsEachAffectedDirectoryOn
     files_.set("/w", top);
     open_workspace();
     for (int d = 0; d < directories; ++d) {
-        tree()->expand(index_of(("/w/d" + std::to_string(d)).c_str()));
+        expand(index_of(("/w/d" + std::to_string(d)).c_str()));
     }
 
     for (int d = 0; d < directories; ++d) {
@@ -678,7 +694,7 @@ TEST_F(ExplorerFollowTest, ABurstOfTenThousandEventsReadsEachAffectedDirectoryOn
 
 TEST_F(ExplorerFollowTest, RowsThatAppearTogetherAreInsertedAsRuns) {
     open_workspace();
-    tree()->expand(index_of("/w/src"));
+    expand(index_of("/w/src"));
     QSignalSpy inserted(view_->model(), &QAbstractItemModel::rowsInserted);
     QSignalSpy removed(view_->model(), &QAbstractItemModel::rowsRemoved);
     std::vector<FileTreeEntry> entries = {dir("util"), file("app.cpp"), file("main.cpp")};
@@ -694,6 +710,285 @@ TEST_F(ExplorerFollowTest, RowsThatAppearTogetherAreInsertedAsRuns) {
     events({"/w/src/z1000.txt"});
     EXPECT_EQ(removed.count(), 2) << "app.cpp, and the run of the new files";
     EXPECT_EQ(names_under(index_of("/w/src")), (Names{"util", "main.cpp"}));
+}
+
+// --- reading a directory on a worker ---
+
+// A runner that keeps what it is asked to run, so that a test decides when a listing arrives.
+struct RunnerState {
+    struct Pending {
+        std::stop_token stop;
+        ListingRunner::Task task;
+        ListingRunner::Done done;
+    };
+    std::vector<Pending> pending;
+};
+
+class ManualRunner : public ListingRunner {
+public:
+    explicit ManualRunner(std::shared_ptr<RunnerState> state) : state_(std::move(state)) {}
+    void run(std::stop_token stop, Task task, Done done) override {
+        state_->pending.push_back({stop, std::move(task), std::move(done)});
+    }
+
+private:
+    std::shared_ptr<RunnerState> state_;
+};
+
+class ExplorerLoadTest : public ExplorerViewTest {
+protected:
+    std::unique_ptr<ListingRunner> make_runner() override {
+        runner_ = std::make_shared<RunnerState>();
+        return std::make_unique<ManualRunner>(runner_);
+    }
+
+    // Runs the oldest listing that waits, on this thread, and hands the result to the model.
+    void arrive() {
+        ASSERT_FALSE(runner_->pending.empty());
+        RunnerState::Pending next = std::move(runner_->pending.front());
+        runner_->pending.erase(runner_->pending.begin());
+        next.done(next.task(next.stop));
+    }
+
+    // Opens the folder and lets its entries arrive and the view lay them out, so that an expansion
+    // is seen by the view.
+    void open_loaded_workspace() {
+        open_workspace();
+        arrive();
+        QApplication::processEvents();
+    }
+
+    static std::vector<FileTreeEntry> many(int count) {
+        std::vector<FileTreeEntry> entries;
+        for (int i = 0; i < count; ++i) {
+            entries.push_back(file("f" + std::to_string(100000 + i) + ".txt"));
+        }
+        return entries;
+    }
+
+    std::shared_ptr<RunnerState> runner_;
+};
+
+TEST_F(ExplorerLoadTest, TheFolderShowsLoadingUntilItsEntriesArrive) {
+    open_workspace();
+    ASSERT_EQ(runner_->pending.size(), 1U);
+    EXPECT_EQ(files_.listings("/w"), 0) << "nothing was listed on the calling thread";
+    ASSERT_EQ(view_->model()->rowCount(), 1);
+    EXPECT_TRUE(view_->model()->loading());
+    const QModelIndex loading = view_->model()->index(0, 0);
+    EXPECT_EQ(loading.data().toString(), "Loading…");
+    EXPECT_TRUE(loading.data(ExplorerModel::PlaceholderRole).toBool());
+    EXPECT_FALSE(view_->model()->is_directory(loading));
+    EXPECT_EQ(view_->model()->flags(loading), Qt::NoItemFlags) << "it cannot be selected";
+
+    arrive();
+    EXPECT_FALSE(view_->model()->loading());
+    EXPECT_EQ(files_.listings("/w"), 1);
+    EXPECT_EQ(names_under({}), (Names{"build", "docs", "src", "a9.txt", "a10.txt", "zeta.txt"}));
+    EXPECT_FALSE(index_of("/w/Loading…").isValid());
+}
+
+TEST_F(ExplorerLoadTest, ADirectoryThatIsExpandedShowsLoadingAndThenItsEntries) {
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    ASSERT_EQ(runner_->pending.size(), 1U);
+    EXPECT_EQ(files_.listings("/w/src"), 0);
+    EXPECT_EQ(names_under(src), (Names{"Loading…"}));
+    EXPECT_TRUE(view_->model()->is_loading(src));
+    EXPECT_EQ(watches_[0]->directories.count("/w/src"), 1U) << "watched from the start of the read";
+
+    arrive();
+    EXPECT_EQ(names_under(src), (Names{"util", "app.cpp", "main.cpp"}));
+    EXPECT_FALSE(view_->model()->is_loading(src));
+    EXPECT_FALSE(view_->model()->loading());
+    EXPECT_EQ(files_.listings("/w/src"), 1);
+}
+
+TEST_F(ExplorerLoadTest, TheEntriesComeFiveHundredAtATimeEachInAnEventOfItsOwn) {
+    files_.set("/w/src", many(1300));
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    QSignalSpy inserted(view_->model(), &QAbstractItemModel::rowsInserted);
+    tree()->expand(src);
+    ASSERT_EQ(inserted.count(), 1) << "the Loading… row";
+    arrive();
+
+    EXPECT_EQ(view_->model()->rowCount(src), 500) << "the first batch comes with the listing";
+    EXPECT_TRUE(view_->model()->loading());
+    EXPECT_EQ(view_->model()->index(0, 0, src).data().toString(), "f100000.txt");
+    EXPECT_EQ(view_->model()->index(499, 0, src).data().toString(), "f100499.txt");
+
+    for (int guard = 0; view_->model()->loading() && guard < 10; ++guard) {
+        QApplication::processEvents();
+    }
+    EXPECT_EQ(view_->model()->rowCount(src), 1300);
+    EXPECT_FALSE(view_->model()->loading());
+
+    std::vector<int> sizes;
+    for (int i = 1; i < inserted.count(); ++i) {
+        sizes.push_back(inserted.at(i).at(2).toInt() - inserted.at(i).at(1).toInt() + 1);
+    }
+    EXPECT_EQ(sizes, (std::vector<int>{500, 500, 300}));
+    EXPECT_EQ(view_->model()->index(1299, 0, src).data().toString(), "f101299.txt");
+}
+
+TEST_F(ExplorerLoadTest, CollapsingADirectoryThatIsLoadingStopsItAndDropsWhatArrivesLater) {
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    ASSERT_EQ(runner_->pending.size(), 1U);
+    const std::stop_token token = runner_->pending[0].stop;
+    EXPECT_FALSE(token.stop_requested());
+
+    tree()->collapse(src);
+    EXPECT_TRUE(token.stop_requested());
+    EXPECT_EQ(view_->model()->rowCount(src), 0) << "not even the Loading… row is left";
+    EXPECT_FALSE(view_->model()->loading());
+    EXPECT_EQ(watches_[0]->directories.count("/w/src"), 0U);
+
+    arrive();
+    EXPECT_EQ(view_->model()->rowCount(src), 0) << "the listing that arrives later is dropped";
+    EXPECT_FALSE(view_->model()->loading());
+
+    tree()->expand(src);
+    ASSERT_EQ(runner_->pending.size(), 1U) << "expanding again reads it again";
+    arrive();
+    EXPECT_EQ(names_under(src), (Names{"util", "app.cpp", "main.cpp"}));
+}
+
+TEST_F(ExplorerLoadTest, CollapsingADirectoryThatIsFillingLeavesNoRowsBehind) {
+    files_.set("/w/src", many(1300));
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    arrive();
+    ASSERT_EQ(view_->model()->rowCount(src), 500);
+
+    tree()->collapse(src);
+    EXPECT_EQ(view_->model()->rowCount(src), 0);
+    EXPECT_FALSE(view_->model()->loading());
+    for (int i = 0; i < 5; ++i) {
+        QApplication::processEvents();
+    }
+    EXPECT_EQ(view_->model()->rowCount(src), 0) << "the batches that were posted insert nothing";
+
+    tree()->expand(src);
+    ASSERT_EQ(runner_->pending.size(), 1U) << "the next expansion lists again";
+    arrive();
+    EXPECT_EQ(view_->model()->rowCount(src), 500);
+    EXPECT_EQ(files_.listings("/w/src"), 2);
+}
+
+TEST_F(ExplorerLoadTest, ClosingTheFolderStopsEveryListingAndDropsWhatArrivesLater) {
+    open_loaded_workspace();
+    tree()->expand(index_of("/w/src"));
+    tree()->expand(index_of("/w/docs"));
+    ASSERT_EQ(runner_->pending.size(), 2U);
+    const std::stop_token first = runner_->pending[0].stop;
+    const std::stop_token second = runner_->pending[1].stop;
+
+    view_->set_workspace(std::nullopt, QString());
+    EXPECT_TRUE(first.stop_requested());
+    EXPECT_TRUE(second.stop_requested());
+    EXPECT_FALSE(view_->model()->loading());
+    arrive();
+    arrive();
+    EXPECT_EQ(view_->model()->rowCount(), 0);
+    EXPECT_FALSE(view_->shows_folder());
+}
+
+TEST_F(ExplorerLoadTest, AFolderThatIsOpenedWhileTheLastOneLoadsIsNotMixedWithIt) {
+    files_.set("/other", {file("only.txt")});
+    open_workspace();
+    ASSERT_EQ(runner_->pending.size(), 1U);
+    view_->set_workspace(std::filesystem::path("/other"), "other");
+    ASSERT_EQ(runner_->pending.size(), 2U);
+
+    arrive();
+    EXPECT_EQ(view_->model()->rowCount(), 1);
+    EXPECT_TRUE(view_->model()->index(0, 0).data(ExplorerModel::PlaceholderRole).toBool())
+        << "the listing of the folder that was closed is dropped";
+    arrive();
+    EXPECT_EQ(names_under({}), (Names{"only.txt"}));
+}
+
+TEST_F(ExplorerLoadTest, TheLoadingRowIsNotActivated) {
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    const QModelIndex loading = view_->model()->index(0, 0, src);
+    ASSERT_TRUE(loading.data(ExplorerModel::PlaceholderRole).toBool());
+
+    QSignalSpy activated(view_.get(), &ExplorerView::file_activated);
+    QTest::mouseDClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                       tree()->visualRect(loading).center());
+    tree()->setCurrentIndex(loading);
+    key(Qt::Key_Return);
+    EXPECT_EQ(activated.count(), 0);
+    EXPECT_FALSE(tree()->selectionModel()->isSelected(loading));
+}
+
+TEST_F(ExplorerLoadTest, ADirectoryThatCannotBeListedEndsLoadingWithItsError) {
+    files_.fail("/w/src", "permission denied");
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    arrive();
+    EXPECT_EQ(view_->model()->rowCount(src), 0);
+    EXPECT_EQ(src.data(ExplorerModel::ErrorRole).toString(), "permission denied");
+    EXPECT_FALSE(view_->model()->loading());
+}
+
+TEST_F(ExplorerLoadTest, ChangesThatEventsReportWhileADirectoryLoadsAreReadAfterwards) {
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    files_.set("/w/src", {file("main.cpp"), dir("util"), file("app.cpp"), file("new.cpp")});
+    watches_[0]->events.emplace_back("/w/src/new.cpp");
+    view_->model()->process_file_events();
+    EXPECT_EQ(files_.listings("/w/src"), 0) << "a directory that is loading is not read again yet";
+
+    arrive();
+    EXPECT_EQ(names_under(src), (Names{"util", "app.cpp", "main.cpp", "new.cpp"}));
+    EXPECT_FALSE(view_->model()->loading());
+}
+
+TEST_F(ExplorerLoadTest, NewExcludesApplyToADirectoryThatLoadsWithTheOldOnes) {
+    open_loaded_workspace();
+    const QModelIndex src = index_of("/w/src");
+    tree()->expand(src);
+    view_->set_excludes(core::FileExcludes{.patterns = {"**/util"}, .problems = {}});
+    arrive();
+    EXPECT_EQ(names_under(src), (Names{"app.cpp", "main.cpp"}));
+}
+
+TEST_F(ExplorerLoadTest, ADirectoryThatDisappearsWhileItLoadsIsNotTouchedWhenItsListingArrives) {
+    open_loaded_workspace();
+    tree()->expand(index_of("/w/src"));
+    ASSERT_EQ(runner_->pending.size(), 1U);
+    const std::stop_token token = runner_->pending[0].stop;
+
+    files_.set("/w", {file("zeta.txt"), dir("docs")});
+    watches_[0]->events.emplace_back("/w/src");
+    view_->model()->process_file_events();
+    EXPECT_FALSE(index_of("/w/src").isValid());
+    EXPECT_TRUE(token.stop_requested());
+    EXPECT_FALSE(view_->model()->loading());
+
+    arrive();
+    EXPECT_EQ(names_under({}), (Names{"docs", "zeta.txt"}));
+}
+
+TEST_F(ExplorerLoadTest, TheLoadingRowIsDrawnInTheColorOfDescriptions) {
+    open_loaded_workspace();
+    tree()->expand(index_of("/w/src"));
+    QApplication::processEvents();
+    const QImage image = view_->grab().toImage();
+    ASSERT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/explorer_loading.png");
+    }
 }
 
 // --- following the disk, with the real watcher and file system ---
@@ -713,7 +1008,10 @@ protected:
         view_ = std::make_unique<ExplorerView>(
             *colors_, nullptr,
             [this, real](const std::filesystem::path& directory) {
-                ++listings_[directory.generic_string()];
+                {
+                    const std::lock_guard lock(listings_mutex_);
+                    ++listings_[directory.generic_string()];
+                }
                 return real(directory);
             },
             platform_directory_watch());
@@ -721,6 +1019,7 @@ protected:
         view_->show();
         view_->set_workspace(root_, "project");
         QApplication::processEvents();
+        ASSERT_TRUE(settle());
     }
     void TearDown() override {
         view_.reset();
@@ -742,6 +1041,18 @@ protected:
         return done();
     }
 
+    // Until no directory is being read.
+    bool settle() {
+        return wait_until([&] { return !view_->model()->loading(); });
+    }
+
+    // How often the directory was listed, which the worker threads count.
+    int listed(const std::filesystem::path& directory) {
+        const std::lock_guard lock(listings_mutex_);
+        const auto found = listings_.find(directory.generic_string());
+        return found == listings_.end() ? 0 : found->second;
+    }
+
     std::vector<std::string> names_under(const QModelIndex& parent) const {
         std::vector<std::string> names;
         for (int row = 0; row < view_->model()->rowCount(parent); ++row) {
@@ -754,6 +1065,7 @@ protected:
     }
 
     std::filesystem::path root_;
+    std::mutex listings_mutex_;
     std::map<std::string, int> listings_;
     std::unique_ptr<WorkbenchColors> colors_;
     std::unique_ptr<ExplorerView> view_;
@@ -788,9 +1100,9 @@ TEST_F(ExplorerDiskTest, ADirectoryThatIsNotOpenIsNotListedWhenSomethingChangesI
     touch(root_ / "other" / "unseen.txt");
     touch(root_ / "marker.txt");
     ASSERT_TRUE(wait_until([&] { return index_of(root_ / "marker.txt").isValid(); }));
-    EXPECT_EQ(listings_[(root_ / "other").generic_string()], 0);
-    EXPECT_EQ(listings_[(root_ / "sub").generic_string()], 0);
-    EXPECT_EQ(listings_[root_.generic_string()], 2) << "the folder, and once for the marker";
+    EXPECT_EQ(listed(root_ / "other"), 0);
+    EXPECT_EQ(listed(root_ / "sub"), 0);
+    EXPECT_EQ(listed(root_), 2) << "the folder, and once for the marker";
 }
 
 TEST_F(ExplorerDiskTest, AFolderThatIsDeletedWhileOpenDisappearsAndItsSelectionMoves) {
@@ -811,8 +1123,8 @@ TEST_F(ExplorerDiskTest, AFolderThatIsDeletedWhileOpenDisappearsAndItsSelectionM
 
 TEST_F(ExplorerDiskTest, ABurstOfTenThousandNewFilesIsOneRoundAndDoesNotStallTheWindow) {
     view_->tree()->expand(index_of(root_ / "sub"));
-    const std::string key = (root_ / "sub").generic_string();
-    const int listed_before = listings_[key];
+    ASSERT_TRUE(settle());
+    const int listed_before = listed(root_ / "sub");
 
     constexpr int count = 10000;
     for (int i = 0; i < count; ++i) {
@@ -841,7 +1153,7 @@ TEST_F(ExplorerDiskTest, ABurstOfTenThousandNewFilesIsOneRoundAndDoesNotStallThe
 
     ASSERT_TRUE(arrived);
     ASSERT_GE(listed_before, 1) << "the directory was open before the files came";
-    EXPECT_LE(listings_[key] - listed_before, 3)
+    EXPECT_LE(listed(root_ / "sub") - listed_before, 3)
         << "the directory is read a few times at most, not once for each event";
     if (timing_is_meaningful) {
         EXPECT_LT(longest_block, 1000)
@@ -851,6 +1163,7 @@ TEST_F(ExplorerDiskTest, ABurstOfTenThousandNewFilesIsOneRoundAndDoesNotStallThe
 
 TEST_F(ExplorerDiskTest, OneRoundOfABurstOfTenThousandNewFilesIsFast) {
     view_->tree()->expand(index_of(root_ / "sub"));
+    ASSERT_TRUE(settle());
     for (int i = 0; i < 10000; ++i) {
         touch(root_ / "sub" / ("file" + std::to_string(i) + ".txt"));
     }
@@ -863,4 +1176,82 @@ TEST_F(ExplorerDiskTest, OneRoundOfABurstOfTenThousandNewFilesIsFast) {
     std::cout << "one round of the burst: " << took
               << " ms, rows=" << view_->model()->rowCount(index_of(root_ / "sub")) << "\n";
     EXPECT_EQ(view_->model()->rowCount(index_of(root_ / "sub")), 10000);
+}
+
+TEST_F(ExplorerDiskTest, ExpandingADirectoryOfFiftyThousandFilesKeepsTheEventLoopResponsive) {
+    constexpr int count = 50000;
+    for (int i = 0; i < count; ++i) {
+        touch(root_ / "sub" / ("file" + std::to_string(i) + ".txt"));
+    }
+    const QModelIndex sub = index_of(root_ / "sub");
+
+    // The longest time between two runs of a timer that is due every millisecond is the longest
+    // time that the event loop was blocked.
+    QElapsedTimer since_last;
+    qint64 longest_block = 0;
+    QTimer ticker;
+    ticker.setInterval(1);
+    QObject::connect(&ticker, &QTimer::timeout, [&] {
+        if (since_last.isValid()) {
+            longest_block = std::max(longest_block, since_last.elapsed());
+        }
+        since_last.restart();
+    });
+    ticker.start();
+    since_last.start();
+
+    QSignalSpy inserted(view_->model(), &QAbstractItemModel::rowsInserted);
+    view_->tree()->expand(sub);
+    EXPECT_EQ(names_under(sub), (std::vector<std::string>{"Loading…"}))
+        << "the row that stands for the entries until they arrive";
+    EXPECT_TRUE(view_->model()->is_loading(sub));
+    const bool arrived = settle();
+    // The block that brought the last batch ends with the next tick.
+    QTest::qWait(30);
+    ticker.stop();
+
+    ASSERT_TRUE(arrived);
+    EXPECT_EQ(view_->model()->rowCount(sub), count);
+
+    // The entries came in steps of at most `batch_size`, each in an event of its own. A step of
+    // 50,000 rows takes less than 100 ms on a fast disk and machine, so the time alone does not
+    // tell it from 100 steps of 500.
+    int largest_step = 0;
+    int steps = 0;
+    for (int i = 1; i < inserted.count(); ++i) {
+        largest_step =
+            std::max(largest_step, inserted.at(i).at(2).toInt() - inserted.at(i).at(1).toInt() + 1);
+        ++steps;
+    }
+    EXPECT_EQ(largest_step, ExplorerModel::batch_size);
+    EXPECT_EQ(steps, count / ExplorerModel::batch_size);
+
+    EXPECT_EQ(view_->model()->index(0, 0, sub).data().toString(), "file0.txt");
+    EXPECT_EQ(view_->model()->index(count - 1, 0, sub).data().toString(), "file49999.txt");
+    if (timing_is_meaningful) {
+        EXPECT_LT(longest_block, 100)
+            << "the event loop was blocked for " << longest_block << " ms";
+    }
+    std::cout << "longest block of the event loop while 50,000 entries were read and added: "
+              << longest_block << " ms\n";
+}
+
+TEST_F(ExplorerDiskTest, CollapsingADirectoryThatIsBeingReadLeavesNoRowsBehind) {
+    for (int i = 0; i < 5000; ++i) {
+        touch(root_ / "sub" / ("file" + std::to_string(i) + ".txt"));
+    }
+    const QModelIndex sub = index_of(root_ / "sub");
+
+    view_->tree()->expand(sub);
+    view_->tree()->collapse(sub);
+    EXPECT_EQ(view_->model()->rowCount(sub), 0);
+    EXPECT_FALSE(view_->model()->loading());
+
+    // What the worker finds is dropped when it arrives.
+    QTest::qWait(500);
+    EXPECT_EQ(view_->model()->rowCount(sub), 0);
+
+    view_->tree()->expand(sub);
+    ASSERT_TRUE(settle());
+    EXPECT_EQ(view_->model()->rowCount(sub), 5000) << "and expanding it again shows the entries";
 }
