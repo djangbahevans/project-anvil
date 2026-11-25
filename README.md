@@ -74,6 +74,10 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `workbench.statusBar.visible` | Shows the status bar | `true` |
 | `workbench.sideBar.location` | The edge of the window the primary side bar and the activity bar are at: `"left"` or `"right"` | `"left"` |
 | `workbench.activityBar.location` | `"default"` shows the activity bar beside the side bar and `"hidden"` hides it; `"top"` and `"bottom"` are accepted and show it as `"default"` | `"default"` |
+| `zenMode.fullScreen` | Zen Mode also puts the window into full screen (and leaves it when Zen Mode ends, unless the window was full screen before) | `true` |
+| `zenMode.centerLayout` | Zen Mode also centers the editor area | `true` |
+| `zenMode.hideStatusBar` | Zen Mode also hides the status bar | `true` |
+| `zenMode.hideActivityBar` | Zen Mode also hides the activity bar | `true` |
 | `files.autoSave` | When a document with a file and unsaved changes is saved by itself: `"off"`, `"afterDelay"` (`files.autoSaveDelay` after its last change), `"onFocusChange"` (when its editor loses the focus, another tab replaces it, or the window loses the focus) or `"onWindowChange"` (when the window loses the focus). Untitled documents are never saved. File > Auto Save switches between `"off"` and `"afterDelay"` | `"off"` |
 | `files.autoSaveDelay` | Milliseconds between the last change and the save, with `"afterDelay"` (0 to 86400000) | `1000` |
 | `files.associations` | An object from a glob to a language id that decides the language of the files it matches before any language's own rules, as in `{"*.cfg": "ini", "**/.config/*": "json"}`. A pattern with a `/` is matched against the whole path and any other against the file name, ignoring case. The language shows in the status bar. An entry whose value is not a language id is skipped and logged | `{}` |

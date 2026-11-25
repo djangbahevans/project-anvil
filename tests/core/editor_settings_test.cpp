@@ -149,6 +149,33 @@ TEST(EditorSettings, ThePartsOfTheWindowAreShownAtTheirDefaultPlacesUnlessTheSet
               ActivityBarLocation::standard);
 }
 
+TEST(EditorSettings, ZenModeHidesAndEntersFullScreenAndCentersUnlessToldNotTo) {
+    const auto defaults = read("{}");
+    EXPECT_TRUE(defaults->zen_full_screen);
+    EXPECT_TRUE(defaults->zen_center_layout);
+    EXPECT_TRUE(defaults->zen_hide_status_bar);
+    EXPECT_TRUE(defaults->zen_hide_activity_bar);
+
+    EXPECT_FALSE(read(R"j({"zenMode.fullScreen": false})j")->zen_full_screen);
+    EXPECT_FALSE(read(R"j({"zenMode": {"centerLayout": false}})j")->zen_center_layout);
+    EXPECT_FALSE(read(R"j({"zenMode.hideStatusBar": false})j")->zen_hide_status_bar);
+    EXPECT_FALSE(read(R"j({"zenMode.hideActivityBar": false})j")->zen_hide_activity_bar);
+
+    const auto only_one = read(R"j({"zenMode.hideStatusBar": false})j");
+    EXPECT_TRUE(only_one->zen_full_screen);
+    EXPECT_TRUE(only_one->zen_center_layout);
+    EXPECT_TRUE(only_one->zen_hide_activity_bar);
+}
+
+TEST(EditorSettings, AZenModeSettingOfTheWrongKindIsReportedByName) {
+    for (const char* key : {"zenMode.fullScreen", "zenMode.centerLayout", "zenMode.hideStatusBar",
+                            "zenMode.hideActivityBar"}) {
+        const auto result = read(std::string(R"j({")j") + key + R"j(": "no"})j");
+        ASSERT_FALSE(result.has_value()) << key;
+        EXPECT_NE(result.error().message.find(key), std::string::npos) << key;
+    }
+}
+
 TEST(EditorSettings, APartSettingOfTheWrongKindIsReportedByName) {
     for (const char* json : {R"j({"workbench.statusBar.visible": "no"})j",
                              R"j({"workbench.sideBar.location": "top"})j",

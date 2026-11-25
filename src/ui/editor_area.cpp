@@ -352,6 +352,41 @@ void EditorArea::sync_document(EditorGroupWidget& widget) {
 
 void EditorArea::structure_changed() {
     rebuild();
+    update_margins();
+}
+
+void EditorArea::set_centered(bool centered) {
+    if (centered == centered_) {
+        return;
+    }
+    centered_ = centered;
+    update_margins();
+}
+
+int EditorArea::margin() const {
+    return box_->contentsMargins().left();
+}
+
+void EditorArea::update_margins() {
+    const bool margins = centered_ && layout_.group_ids().size() == 1;
+    const int side = margins ? static_cast<int>(width() * centered_margin_ratio) : 0;
+    if (side != margin()) {
+        box_->setContentsMargins(side, 0, side, 0);
+        box_->activate();
+        update();
+    }
+}
+
+void EditorArea::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    update_margins();
+}
+
+void EditorArea::paintEvent(QPaintEvent*) {
+    if (margin() > 0) {
+        QPainter painter(this);
+        painter.fillRect(rect(), colors_.color("editor.background"));
+    }
 }
 
 void EditorArea::ratios_changed() {

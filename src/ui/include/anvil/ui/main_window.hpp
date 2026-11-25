@@ -138,6 +138,10 @@ public:
         return area_->focused_group()->find_bar();
     }
     // All the groups, and the model they show: a window shows more than one group after a split.
+    // Whether Zen Mode is on.
+    bool zen_mode_active() const {
+        return zen_.active;
+    }
     EditorArea* editor_area() {
         return area_;
     }
@@ -435,6 +439,9 @@ private:
     void use_native_frame();
     void set_up_title_bar();
     void update_chrome();
+    void toggle_zen_mode();
+    // Shows the status bar and the activity bar as the settings say, and as Zen Mode lets them.
+    void apply_part_visibility();
     void update_title_bar_tooltips();
     QString title_text() const;
 
@@ -492,6 +499,15 @@ private:
     std::optional<core::Uri> shown_uri_;
     workbench::NavigationHistory history_;
     workbench::ClosedEditors closed_editors_;
+    // What Zen Mode changed, to be given back when it ends.
+    struct ZenMode {
+        bool active = false;
+        bool sidebar_was_visible = false;
+        bool panel_was_visible = false;
+        bool entered_full_screen = false;
+        bool entered_centered_layout = false;
+    };
+    ZenMode zen_;
     // How many operations that close editors are running, so that the closes of a nested one are
     // one batch with the outer one.
     int closing_depth_ = 0;

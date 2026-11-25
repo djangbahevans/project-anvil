@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace anvil::core {
@@ -86,6 +87,19 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             result.status_bar_visible = *shown;
         } else {
             problems.emplace_back("workbench.statusBar.visible must be true or false");
+        }
+    }
+    for (const auto& [key, field] :
+         {std::pair{"zenMode.fullScreen", &EditorSettings::zen_full_screen},
+          std::pair{"zenMode.centerLayout", &EditorSettings::zen_center_layout},
+          std::pair{"zenMode.hideStatusBar", &EditorSettings::zen_hide_status_bar},
+          std::pair{"zenMode.hideActivityBar", &EditorSettings::zen_hide_activity_bar}}) {
+        if (settings.contains(key)) {
+            if (const auto value = settings.get<bool>(key)) {
+                result.*field = *value;
+            } else {
+                problems.emplace_back(std::string(key) + " must be true or false");
+            }
         }
     }
     if (settings.contains("workbench.sideBar.location")) {
