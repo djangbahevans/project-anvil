@@ -8887,3 +8887,66 @@ TEST_F(CommentCommandsTest, SelectionsThatEndAtTheStartOfALineLeaveItOut) {
     const core::Selection selection = window_->current_document()->selections().primary();
     EXPECT_EQ(selection, (core::Selection{2, 8}));
 }
+
+class HelpMenuTest : public MainWindowTest {
+protected:
+    // The ids of the items of the Help menu as the user finds them, "-" for a separator.
+    std::vector<std::string> help_items() {
+        for (QAction* top : window_->menu_bar()->actions()) {
+            QMenu* menu = top->menu();
+            if (!menu || !top->text().remove(QLatin1Char('&')).startsWith("Help")) {
+                continue;
+            }
+            emit menu->aboutToShow();
+            std::vector<std::string> ids;
+            for (QAction* action : menu->actions()) {
+                ids.push_back(action->isSeparator() ? "-"
+                                                    : action->data().toString().toStdString());
+            }
+            return ids;
+        }
+        return {};
+    }
+};
+
+TEST_F(HelpMenuTest, ListsOnlyWhatAnvilProvides) {
+    create_window();
+    EXPECT_EQ(help_items(), (std::vector<std::string>{
+                                "workbench.action.showCommands",
+                                "workbench.action.openDocumentationUrl",
+                                "-",
+                                "workbench.action.keybindingsReference",
+                                "-",
+                                "workbench.action.openIssueReporter",
+                                "-",
+                                "workbench.action.openLicenseUrl",
+                                "-",
+                                "workbench.action.showAboutDialog",
+                            }));
+}
+
+TEST_F(HelpMenuTest, ShowAllCommandsWorksAndTheMenuHasNoItemThatIsLeftOut) {
+    create_window();
+    QAction* all = menu_action("workbench.action.showCommands");
+    ASSERT_NE(all, nullptr);
+    EXPECT_TRUE(all->isEnabled());
+    for (const std::string_view id : workbench::unprovided_menu_items()) {
+        EXPECT_EQ(menu_action(std::string(id)), nullptr) << id;
+    }
+}
+
+TEST_F(HelpMenuTest, AnItemThatIsLeftOutStaysOutWhenAnExtensionGivesItsCommand) {
+    create_window();
+    window_->commands().add("workbench.action.openWalkthrough", "Welcome",
+                            [](const nlohmann::json&) {});
+    EXPECT_EQ(menu_action("workbench.action.openWalkthrough"), nullptr);
+    const std::vector<std::string> items = help_items();
+    EXPECT_EQ(std::ranges::count(items, "workbench.action.openWalkthrough"), 0);
+}
+
+TEST_F(HelpMenuTest, TheOtherMenusAreAsTheyWere) {
+    create_window();
+    EXPECT_NE(menu_action("workbench.action.files.save"), nullptr);
+    EXPECT_NE(menu_action("workbench.action.togglePanel"), nullptr);
+    EXPECT_NE(menu_action("editor.action.selectAll"), nullptr);
+}
