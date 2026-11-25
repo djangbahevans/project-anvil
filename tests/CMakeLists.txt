@@ -13,7 +13,9 @@ add_executable(anvil_core_tests
   core/brackets_test.cpp
   core/glob_test.cpp
   core/go_to_line_test.cpp
+  core/highlight_worker_test.cpp
   core/language_registry_test.cpp
+  core/live_highlighter_test.cpp
   core/jsonc_edit_model_test.cpp
   core/jsonc_edit_test.cpp
   core/jsonc_test.cpp

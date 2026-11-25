@@ -11,6 +11,7 @@ add_library(anvil_core STATIC
   glob.cpp
   go_to_line.cpp
   language_registry.cpp
+  live_highlighter.cpp
   jsonc.cpp
   jsonc_edit.cpp
   key_chord.cpp
@@ -37,6 +38,7 @@ add_library(anvil_core STATIC
 add_library(anvil::core ALIAS anvil_core)
 
 find_package(nlohmann_json REQUIRED)
+find_package(Threads REQUIRED)
 target_include_directories(anvil_core PUBLIC include)
 # vcpkg ships a CMake package; Debian-style system packages only ship a pkg-config file.
 find_package(PCRE2 CONFIG QUIET COMPONENTS 8BIT)
@@ -48,7 +50,7 @@ else()
   set(ANVIL_PCRE2_TARGET PkgConfig::PCRE2)
 endif()
 target_link_libraries(anvil_core
-  PUBLIC nlohmann_json::nlohmann_json
+  PUBLIC nlohmann_json::nlohmann_json Threads::Threads
   PRIVATE anvil_compile_options ${ANVIL_PCRE2_TARGET}
 )
 
@@ -89,7 +91,7 @@ if(ANVIL_HAVE_TREE_SITTER)
     target_sources(anvil_core PRIVATE ${sources} "${generated}")
   endfunction()
 
-  target_sources(anvil_core PRIVATE ${ANVIL_TREE_SITTER_SOURCES} tree_sitter_highlighter.cpp)
+  target_sources(anvil_core PRIVATE ${ANVIL_TREE_SITTER_SOURCES} tree_sitter_highlighter.cpp highlight_worker.cpp)
   anvil_add_tree_sitter_grammar(json)
   target_include_directories(anvil_core PRIVATE "${ANVIL_TREE_SITTER_RUNTIME}/include")
   target_compile_definitions(anvil_core PUBLIC ANVIL_TREE_SITTER)

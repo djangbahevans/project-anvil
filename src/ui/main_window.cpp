@@ -170,6 +170,16 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             const auto found = documents_.find(uri);
             return found == documents_.end() ? std::shared_ptr<core::Document>() : found->second;
         });
+    highlighting_ = new Highlighting(this);
+    area_->set_highlighter_lookup([this](const core::Uri& uri) { return highlighter_of(uri); });
+    connect(highlighting_, &Highlighting::spans_arrived, this,
+            [this](const core::Highlighter* highlighter) {
+                for (EditorGroupWidget* group : area_->groups()) {
+                    if (group->view()->highlighter().get() == highlighter) {
+                        group->view()->refresh_highlighting();
+                    }
+                }
+            });
     watcher_ = std::make_unique<LayoutWatcher>(*this);
     layout_.add_observer(watcher_.get());
     workbench_ = new Workbench(colors_, this);
@@ -317,11 +327,12 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     });
     if (options_.extension_host) {
         ExtensionHostBridge::Callbacks callbacks;
-        callbacks.edited = [this](const core::Uri& uri, const core::DocumentChange&) {
+        callbacks.edited = [this](const core::Uri& uri, const core::DocumentChange& change) {
             const auto found = documents_.find(uri);
             if (found == documents_.end()) {
                 return;
             }
+            highlight_edit(uri, change);
             update_document(uri);
             for (EditorGroupWidget* group : area_->groups()) {
                 if (group->view()->document() == found->second) {
@@ -619,10 +630,27 @@ void MainWindow::refresh_document_languages() {
         bridge_.language_changed(uri, id);
         document_languages_.emplace(uri, describe_language(id));
     }
+    area_->refresh_highlighters();
     update_status();
 }
 
+std::shared_ptr<const core::Highlighter> MainWindow::highlighter_of(const core::Uri& uri) {
+    const auto found = documents_.find(uri);
+    if (found == documents_.end()) {
+        return nullptr;
+    }
+    return highlighting_->highlighter_for(uri, found->second, language_of_document(uri).id);
+}
+
+void MainWindow::highlight_edit(const core::Uri& uri, const core::DocumentChange& change) {
+    const auto found = documents_.find(uri);
+    if (found != documents_.end() && highlighting_->edited(uri, *found->second, change)) {
+        area_->refresh_highlighters();
+    }
+}
+
 void MainWindow::forget_document_language(const core::Uri& uri) {
+    highlighting_->forget(uri);
     document_languages_.erase(uri);
     chosen_languages_.erase(uri);
 }
@@ -751,6 +779,7 @@ void MainWindow::choose_language(const core::Uri& uri, const std::string& id) {
     chosen_languages_[uri] = id;
     document_languages_.insert_or_assign(uri, describe_language(id));
     bridge_.language_changed(uri, id);
+    area_->refresh_highlighters();
     update_status();
 }
 
@@ -763,6 +792,7 @@ void MainWindow::auto_detect_language(const core::Uri& uri) {
     const std::string id = resolve_language(uri, document->second->text().line(0));
     document_languages_.insert_or_assign(uri, describe_language(id));
     bridge_.language_changed(uri, id);
+    area_->refresh_highlighters();
     update_status();
 }
 
@@ -1461,6 +1491,7 @@ bool MainWindow::reopen(const workbench::ClosedEditor& closed) {
             const std::vector<core::Edit> insert = {{0, 0, closed.text->to_string()}};
             if (auto change = documents_.at(uri)->apply_edits(insert)) {
                 bridge_.text_changed(uri, *change);
+                highlight_edit(uri, *change);
             }
         }
     }
@@ -1897,6 +1928,7 @@ bool MainWindow::revert() {
             return fail(change.error().message);
         }
         bridge_.text_changed(uri, *change);
+        highlight_edit(uri, *change);
         for (EditorGroupWidget* group : area_->groups()) {
             if (group->view()->document() == document) {
                 group->view()->document_changed_elsewhere();
@@ -1945,12 +1977,14 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
         const std::shared_ptr<core::Document> document = node.mapped();
         node.key() = new_uri;
         documents_.insert(std::move(node));
+        highlighting_->rename(uri, new_uri);
         bridge_.remove_document(uri);
         bridge_.add_document(new_uri, document, chosen);
         history_.replace_uri(uri, new_uri);
         layout_.replace_document(uri, new_uri);
     }
     update_document(new_uri);
+    area_->refresh_highlighters();
     return true;
 }
 
@@ -2179,6 +2213,7 @@ void MainWindow::on_text_changed(workbench::GroupId group, const core::DocumentC
         return;
     }
     bridge_.text_changed(state->tabs[*state->active], change);
+    highlight_edit(state->tabs[*state->active], change);
     record_selection(group, workbench::SelectionReason::edit);
     if (auto_save_ == core::AutoSave::after_delay) {
         schedule_auto_save(state->tabs[*state->active]);

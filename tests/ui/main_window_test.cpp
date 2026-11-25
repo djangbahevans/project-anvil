@@ -1,3 +1,4 @@
+#include "anvil/core/live_highlighter.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/ui/main_window.hpp"
@@ -7697,6 +7698,269 @@ TEST_F(SmartSelectTest, ExpandingKeepsTheSelectionInView) {
               (core::Selection{0, text.size()}));
     EXPECT_GT(window_->view()->verticalScrollBar()->value(), 0);
 }
+
+class HighlightingWindowTest : public MainWindowTest {
+protected:
+    bool open(const std::filesystem::path& path) {
+        return window_->open_file(QString::fromStdString(path.string()));
+    }
+
+    std::shared_ptr<const core::Highlighter> shown_highlighter() {
+        return window_->view()->highlighter();
+    }
+
+    // The scopes of the spans of a line of the shown highlighter.
+    std::vector<std::string> scopes_of_line(std::size_t line) {
+        std::vector<std::string> scopes;
+        if (const auto highlighter = shown_highlighter()) {
+            for (const core::HighlightSpan& span : highlighter->spans(line)) {
+                scopes.emplace_back(span.scope);
+            }
+        }
+        return scopes;
+    }
+
+    // Waits for the worker's results to reach the window until the shown document has spans on
+    // `line`.
+    bool spans_arrive_on(std::size_t line) {
+        return wait_until([&] { return !scopes_of_line(line).empty(); });
+    }
+
+    void insert_into_shown_document(std::size_t offset, const std::string& text) {
+        window_->view()->replace_ranges({{offset, offset, text}});
+    }
+
+    static std::string json_lines(int lines) {
+        std::string out = "[\n";
+        for (int i = 0; i < lines; ++i) {
+            out += "  {\"key\": \"value\", \"n\": " + std::to_string(i) + "},\n";
+        }
+        return out + "  null\n]\n";
+    }
+};
+
+#ifdef ANVIL_TREE_SITTER
+
+TEST_F(HighlightingWindowTest, ADocumentInALanguageWithAGrammarIsHighlightedOffTheUiThread) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "{\"key\": 12}\n")));
+    ASSERT_NE(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 1u);
+    ASSERT_TRUE(spans_arrive_on(0));
+    EXPECT_EQ(scopes_of_line(0), (std::vector<std::string>{"support.type.property-name.json",
+                                                           "constant.numeric.json"}));
+}
+
+TEST_F(HighlightingWindowTest, ADocumentInALanguageWithoutAGrammarCostsNothing) {
+    create_window();
+    ASSERT_TRUE(open(write("a.txt", "{\"key\": 12}\n")));
+    EXPECT_EQ(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 0u);
+}
+
+TEST_F(HighlightingWindowTest, TypedTextIsHighlightedWhenTheWorkerHasParsedIt) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "[\n  1\n]\n")));
+    ASSERT_TRUE(spans_arrive_on(1));
+    insert_into_shown_document(4, "true, ");
+    ASSERT_TRUE(wait_until([&] {
+        return scopes_of_line(1) ==
+               std::vector<std::string>{"constant.language.json", "constant.numeric.json"};
+    }));
+    EXPECT_EQ(window_->current_document()->text().line(1), "  true, 1");
+}
+
+TEST_F(HighlightingWindowTest, LinesBelowANewLineKeepTheirColorsWhileTheWorkerParses) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "[\n  1,\n  null\n]\n")));
+    ASSERT_TRUE(spans_arrive_on(2));
+    ASSERT_EQ(scopes_of_line(2), (std::vector<std::string>{"constant.language.json"}));
+
+    insert_into_shown_document(4, "\n");
+    // Before any event is processed no result for the new version can have been delivered.
+    EXPECT_EQ(scopes_of_line(3), (std::vector<std::string>{"constant.language.json"}));
+}
+
+namespace {
+
+// A result with one span on the first line.
+class OneSpan final : public core::Highlighter {
+public:
+    std::vector<core::HighlightSpan> spans(std::size_t line) const override {
+        return line == 0 ? std::vector<core::HighlightSpan>{{0, 1, "invalid.test"}}
+                         : std::vector<core::HighlightSpan>{};
+    }
+    std::string_view root_scope() const override {
+        return "source.test";
+    }
+    std::uint64_t version() const override {
+        return 1;
+    }
+};
+
+class PaintsOnTheViewport : public QObject {
+public:
+    int paints = 0;
+
+protected:
+    bool eventFilter(QObject*, QEvent* event) override {
+        paints += event->type() == QEvent::Paint ? 1 : 0;
+        return false;
+    }
+};
+
+} // namespace
+
+TEST_F(HighlightingWindowTest, TheViewShowingADocumentRepaintsWhenSpansArriveForIt) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "[1]\n")));
+    ASSERT_TRUE(spans_arrive_on(0));
+    QTest::qWait(50);
+    PaintsOnTheViewport counter;
+    window_->view()->viewport()->installEventFilter(&counter);
+
+    const auto live = std::const_pointer_cast<core::LiveHighlighter>(
+        std::dynamic_pointer_cast<const core::LiveHighlighter>(shown_highlighter()));
+    ASSERT_NE(live, nullptr);
+    ASSERT_TRUE(live->deliver(live->parsed_version(), std::make_shared<OneSpan>()));
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
+    emit window_->highlighting().spans_arrived(live.get());
+    QApplication::processEvents();
+    EXPECT_GE(counter.paints, 1);
+
+    // An arrival for a highlighter that no view shows repaints nothing.
+    counter.paints = 0;
+    const core::LiveHighlighter other("source.test", 1);
+    emit window_->highlighting().spans_arrived(&other);
+    QApplication::processEvents();
+    EXPECT_EQ(counter.paints, 0);
+}
+
+TEST_F(HighlightingWindowTest, ALanguageChangeSwitchesTheHighlighter) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "[1]\n")));
+    const auto first = shown_highlighter();
+    ASSERT_NE(first, nullptr);
+
+    window_->change_setting("files.associations", json{{"*.json", "plaintext"}});
+    EXPECT_EQ(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 0u);
+
+    window_->change_setting("files.associations", json::object());
+    ASSERT_NE(shown_highlighter(), nullptr);
+    EXPECT_NE(shown_highlighter(), first);
+    EXPECT_EQ(window_->highlighting().worker_count(), 1u);
+    ASSERT_TRUE(spans_arrive_on(0));
+}
+
+TEST_F(HighlightingWindowTest, SavingAsAnotherNameChangesTheHighlighterToTheNewLanguages) {
+    create_window();
+    ASSERT_TRUE(open(write("a.txt", "[1]\n")));
+    ASSERT_EQ(shown_highlighter(), nullptr);
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.json").string())));
+    ASSERT_NE(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 1u);
+    ASSERT_TRUE(spans_arrive_on(0));
+
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "c.txt").string())));
+    EXPECT_EQ(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 0u);
+}
+
+TEST_F(HighlightingWindowTest, SavingAsAnotherNameOfTheSameLanguageKeepsTheHighlighter) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", "[1]\n")));
+    const auto first = shown_highlighter();
+    ASSERT_TRUE(window_->save_as(QString::fromStdString((scratch_ / "b.json").string())));
+    EXPECT_EQ(shown_highlighter(), first);
+    EXPECT_EQ(window_->highlighting().worker_count(), 1u);
+}
+
+TEST_F(HighlightingWindowTest, ClosingADocumentStopsItsWorker) {
+    create_window();
+    ASSERT_TRUE(open(write("a.json", json_lines(3000))));
+    ASSERT_TRUE(open(write("b.json", json_lines(3000))));
+    EXPECT_EQ(window_->highlighting().worker_count(), 2u);
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    EXPECT_EQ(window_->highlighting().worker_count(), 1u);
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    EXPECT_EQ(window_->highlighting().worker_count(), 0u);
+}
+
+TEST_F(HighlightingWindowTest, ADocumentOverTheSizeLimitIsNotHighlighted) {
+    create_window();
+    std::string big = "[";
+    big.append(core::max_highlighted_bytes + 1, ' ');
+    big += "]\n";
+    ASSERT_TRUE(open(write("big.json", big)));
+    EXPECT_EQ(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 0u);
+}
+
+TEST_F(HighlightingWindowTest, ADocumentThatGrowsOverTheSizeLimitLosesItsHighlighter) {
+    create_window();
+    std::string nearly = "[";
+    nearly.append(core::max_highlighted_bytes - 10, ' ');
+    nearly += "]\n";
+    ASSERT_TRUE(open(write("big.json", nearly)));
+    ASSERT_NE(shown_highlighter(), nullptr);
+    insert_into_shown_document(1, std::string(100, ' '));
+    EXPECT_EQ(shown_highlighter(), nullptr);
+    EXPECT_EQ(window_->highlighting().worker_count(), 0u);
+}
+
+TEST_F(HighlightingWindowTest, ALineOverTheLengthLimitIsNotHighlightedAndTheOthersAre) {
+    create_window();
+    std::string text = "[1";
+    for (std::size_t i = 0; i < core::max_highlighted_line_units; ++i) {
+        text += ",1";
+    }
+    text += "]\n[2]\n";
+    ASSERT_TRUE(open(write("long.json", text)));
+    ASSERT_TRUE(spans_arrive_on(1));
+    EXPECT_TRUE(scopes_of_line(0).empty());
+    EXPECT_EQ(scopes_of_line(1), std::vector<std::string>{"constant.numeric.json"});
+}
+
+TEST_F(HighlightingWindowTest, TypingInAHighlightedDocumentCostsAboutWhatItDoesInAPlainOne) {
+    create_window();
+    constexpr int keystrokes = 200;
+    const auto time_typing = [&] {
+        using clock = std::chrono::steady_clock;
+        auto best = clock::duration::max();
+        for (int round = 0; round < 5; ++round) {
+            const auto start = clock::now();
+            for (int i = 0; i < keystrokes; ++i) {
+                type("x");
+            }
+            best = std::min(best, clock::now() - start);
+        }
+        return best;
+    };
+    for (const int lines : {200, 20000}) {
+        const std::string text = json_lines(lines);
+        ASSERT_TRUE(open(write("plain" + std::to_string(lines) + ".txt", text)));
+        const auto plain = time_typing();
+        ASSERT_TRUE(open(write("typed" + std::to_string(lines) + ".json", text)));
+        ASSERT_NE(shown_highlighter(), nullptr);
+        ASSERT_TRUE(spans_arrive_on(1));
+        const auto highlighted = time_typing();
+        EXPECT_LT(highlighted, plain * 3 + std::chrono::milliseconds(20))
+            << lines << " lines: plain "
+            << std::chrono::duration_cast<std::chrono::microseconds>(plain).count()
+            << " us, highlighted "
+            << std::chrono::duration_cast<std::chrono::microseconds>(highlighted).count() << " us";
+    }
+}
+
+#else
+
+TEST_F(HighlightingWindowTest, NeedsTheTreeSitterSources) {
+    GTEST_SKIP() << "built without .deps/tree-sitter; run scripts/fetch-tree-sitter.sh";
+}
+
+#endif
 
 class ZenModeTest : public PartPositionsTest {
 protected:

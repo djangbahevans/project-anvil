@@ -8,6 +8,7 @@ add_library(anvil_ui STATIC
   editor_view.cpp
   extension_host_bridge.cpp
   find_bar.cpp
+  highlighting.cpp
   key_translation.cpp
   keybinding_service.cpp
   keybindings_store.cpp
@@ -19,6 +20,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/editor_area.hpp
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/find_bar.hpp
+  include/anvil/ui/highlighting.hpp
   include/anvil/ui/key_translation.hpp
   include/anvil/ui/keybinding_service.hpp
   include/anvil/ui/keybindings_store.hpp

@@ -12,6 +12,7 @@
 #include <expected>
 #include <memory>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,8 +34,13 @@ public:
     // Fails with ErrorCode::unsupported for a language without a grammar, and with
     // ErrorCode::environment_unavailable when the grammar and the runtime do not fit each other
     // or the query does not compile.
+    //
+    // A stop requested through `stop` while the text is parsed ends the parse, which then fails.
     static std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
-    create(std::string_view language_id, Text text);
+    create(std::string_view language_id, Text text, std::stop_token stop = {});
+
+    // The root scope of the grammar of `language_id`, empty when there is none.
+    static std::string_view root_scope_of(std::string_view language_id);
 
     ~TreeSitterHighlighter() override;
     TreeSitterHighlighter(const TreeSitterHighlighter&) = delete;
@@ -51,7 +57,15 @@ public:
     // leaves the highlighter as it was.
     std::expected<void, Error> apply(const TextChange& change, const Text& new_text);
     std::expected<void, Error> apply(const DocumentChange& change, const Text& new_text);
-    std::expected<void, Error> apply(std::span<const TextChange> changes, const Text& new_text);
+    // A stop requested through `stop` while the text is parsed ends the parse, which then fails and
+    // leaves the highlighter without a tree: it has no spans, and every later `apply` fails.
+    std::expected<void, Error> apply(std::span<const TextChange> changes, const Text& new_text,
+                                     std::stop_token stop = {});
+
+    // The highlighter's text and tree as they are now, as a highlighter of their own that later
+    // edits do not change. It can be read on another thread than the one that goes on editing this
+    // one, which is how the editor shows what a worker parsed.
+    std::shared_ptr<const Highlighter> snapshot() const;
 
     // Diagnostics for tests and benchmarks, counted since the highlighter was made: the bytes the
     // parser read from the text, and the times the query ran for a line.
