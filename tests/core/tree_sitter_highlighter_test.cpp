@@ -660,6 +660,65 @@ TEST(TreeSitterHighlighter, EditedMarkdownHighlightingEqualsAFreshParseOfTheNewT
                                              markdown_fragments);
 }
 
+TEST(TreeSitterHighlighter, SeveralEditsToAMarkdownDocumentAtOnceAreFollowed) {
+    std::mt19937 random(41);
+    Document document(text_of(read_file("highlight_markdown_sample.md")));
+    const auto highlighter = highlighter_for("markdown", document.text());
+    ASSERT_TRUE(highlighter);
+    for (int step = 0; step < 120; ++step) {
+        (void)render(*highlighter, document.text());
+        std::vector<Edit> edits;
+        std::size_t floor = 0;
+        for (int i = 0, count = 1 + static_cast<int>(random() % 4); i < count; ++i) {
+            const RandomEdit edit = random_edit(random, document.text(), markdown_fragments);
+            if (edit.start < floor) {
+                continue;
+            }
+            floor = edit.end;
+            edits.push_back(Edit{edit.start, edit.end, edit.text});
+        }
+        const auto change = document.apply_edits(edits);
+        ASSERT_TRUE(change.has_value());
+        ASSERT_TRUE(highlighter->apply(*change, document.text()).has_value());
+        ASSERT_EQ(highlighter->describe_tree(),
+                  highlighter_for("markdown", document.text())->describe_tree())
+            << "step " << step;
+        ASSERT_EQ(render(*highlighter, document.text()), fresh_render(document.text(), "markdown"))
+            << "step " << step;
+    }
+}
+
+namespace {
+
+std::string markdown_paragraphs(int count) {
+    std::string out;
+    for (int i = 0; i < count; ++i) {
+        out += "A *paragraph* number " + std::to_string(i) + " with `code`.\n\n";
+    }
+    return out;
+}
+
+} // namespace
+
+TEST(TreeSitterHighlighter, AnEditLooksAtTheInlineNodesNearItAndNotAtTheWholeDocument) {
+    TextBuffer buffer(text_of(markdown_paragraphs(3000)));
+    const auto highlighter = highlighter_for("markdown", buffer.snapshot());
+    ASSERT_TRUE(highlighter);
+    EXPECT_GE(highlighter->inline_nodes_visited(), 3000u);
+
+    for (const std::size_t at :
+         {std::size_t{40}, buffer.snapshot().size() / 2, buffer.snapshot().size() - 20}) {
+        const std::size_t before = highlighter->inline_nodes_visited();
+        const auto change = buffer.insert(at, "x");
+        ASSERT_TRUE(change.has_value());
+        ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+        EXPECT_LE(highlighter->inline_nodes_visited() - before, 6u) << at;
+        EXPECT_EQ(render(*highlighter, buffer.snapshot()),
+                  fresh_render(buffer.snapshot(), "markdown"))
+            << at;
+    }
+}
+
 TEST(TreeSitterHighlighter, ADocumentChangeOfSeveralEditsIsFollowed) {
     std::mt19937 random(7);
     Document document(text_of(json_document(random, 30)));

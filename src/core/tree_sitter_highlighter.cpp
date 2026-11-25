@@ -376,7 +376,8 @@ struct InlineTree {
     std::string text;
 };
 
-// Where a stretch of the text of an inline tree is in the document.
+// Where a stretch of the text of an inline tree is in the document, counted from the beginning of
+// the node, so that a node that moves keeps its pieces.
 struct InlinePiece {
     std::size_t text_offset = 0;
     std::size_t doc_offset = 0;
@@ -387,23 +388,25 @@ struct InlineNode {
     // The range of the node of the block tree, in the document.
     std::size_t begin = 0;
     std::size_t end = 0;
-    std::vector<InlinePiece> pieces;
+    std::shared_ptr<const std::vector<InlinePiece>> pieces;
     std::shared_ptr<const InlineTree> parsed;
 
     // The offset in the text of the tree of the first byte at or after `doc`, and of the end of
     // what is before `doc`.
     std::size_t text_begin(std::size_t doc) const {
-        for (const InlinePiece& piece : pieces) {
-            if (doc < piece.doc_offset + piece.length) {
-                return piece.text_offset + (doc > piece.doc_offset ? doc - piece.doc_offset : 0);
+        for (const InlinePiece& piece : *pieces) {
+            const std::size_t piece_begin = begin + piece.doc_offset;
+            if (doc < piece_begin + piece.length) {
+                return piece.text_offset + (doc > piece_begin ? doc - piece_begin : 0);
             }
         }
         return parsed->text.size();
     }
     std::size_t text_end(std::size_t doc) const {
-        for (auto piece = pieces.rbegin(); piece != pieces.rend(); ++piece) {
-            if (doc > piece->doc_offset) {
-                return piece->text_offset + std::min(piece->length, doc - piece->doc_offset);
+        for (auto piece = pieces->rbegin(); piece != pieces->rend(); ++piece) {
+            const std::size_t piece_begin = begin + piece->doc_offset;
+            if (doc > piece_begin) {
+                return piece->text_offset + std::min(piece->length, doc - piece_begin);
             }
         }
         return 0;
@@ -411,9 +414,10 @@ struct InlineNode {
     // The offset in the document of the byte at `text` of the tree, and of the end of the byte
     // before it.
     std::size_t doc_begin(std::size_t text) const {
-        for (auto piece = pieces.rbegin(); piece != pieces.rend(); ++piece) {
+        for (auto piece = pieces->rbegin(); piece != pieces->rend(); ++piece) {
             if (text >= piece->text_offset) {
-                return piece->doc_offset + std::min(text - piece->text_offset, piece->length);
+                return begin + piece->doc_offset +
+                       std::min(text - piece->text_offset, piece->length);
             }
         }
         return begin;
@@ -440,23 +444,32 @@ struct InlineBuild {
     std::vector<std::pair<std::size_t, std::size_t>> fresh;
 };
 
-// Finds the inline nodes of the block tree and parses those whose text `known` does not have.
-// Fails when the parser is cancelled.
+// A range of the document, `end` included: the nodes that touch it are the ones to look at.
+struct DocumentWindow {
+    std::size_t begin = 0;
+    std::size_t end = std::numeric_limits<std::size_t>::max();
+};
+
+// Finds the inline nodes of the block tree that touch `window` and parses those whose text `known`
+// does not have; `visited` counts the nodes it looked at. Fails when the parser is cancelled.
 std::expected<InlineBuild, Error> build_inline_layer(const Text& text, const TSTree& block_tree,
                                                      TSParser& parser, std::atomic<bool>& cancel,
-                                                     const InlineCache& known) {
+                                                     const InlineCache& known,
+                                                     DocumentWindow window, std::size_t& visited) {
     InlineBuild build;
     auto layer = std::make_shared<InlineLayer>();
 
     const auto add = [&](TSNode node) -> bool {
+        ++visited;
         InlineNode inline_node;
         inline_node.begin = ts_node_start_byte(node);
         inline_node.end = ts_node_end_byte(node);
         std::string content;
+        std::vector<InlinePiece> pieces;
         std::size_t position = inline_node.begin;
         const auto piece = [&](std::size_t from, std::size_t to) {
             if (from < to) {
-                inline_node.pieces.push_back({content.size(), from, to - from});
+                pieces.push_back({content.size(), from - inline_node.begin, to - from});
                 content += text.slice(from, to - from);
             }
         };
@@ -472,6 +485,7 @@ std::expected<InlineBuild, Error> build_inline_layer(const Text& text, const TST
         if (content.empty()) {
             return true;
         }
+        inline_node.pieces = std::make_shared<const std::vector<InlinePiece>>(std::move(pieces));
 
         if (const auto found = known.find(content); found != known.end()) {
             inline_node.parsed = found->second;
@@ -499,24 +513,47 @@ std::expected<InlineBuild, Error> build_inline_layer(const Text& text, const TST
         return true;
     };
 
+    // Walks the nodes that touch the window and does not go inside an inline node: the siblings
+    // before the window are passed over without being looked into, and the walk stops at the
+    // first one that begins after it.
     TSTreeCursor cursor = ts_tree_cursor_new(ts_tree_root_node(&block_tree));
-    bool done = false;
     bool failed = false;
-    while (!done && !failed) {
-        const TSNode node = ts_tree_cursor_current_node(&cursor);
-        const std::string_view type = ts_node_type(node);
-        const bool inline_content = type == "inline" || type == "pipe_table_cell";
-        if (inline_content) {
-            failed = !add(node);
-        }
-        if (!inline_content && ts_tree_cursor_goto_first_child(&cursor)) {
-            continue;
-        }
-        while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
-            if (!ts_tree_cursor_goto_parent(&cursor)) {
-                done = true;
-                break;
+    const auto advance = [&] {
+        for (;;) {
+            if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (ts_node_start_byte(ts_tree_cursor_current_node(&cursor)) > window.end) {
+                    if (!ts_tree_cursor_goto_parent(&cursor)) {
+                        return false;
+                    }
+                    continue;
+                }
+                return true;
             }
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                return false;
+            }
+        }
+    };
+    for (;;) {
+        const TSNode node = ts_tree_cursor_current_node(&cursor);
+        const bool touches =
+            ts_node_end_byte(node) >= window.begin && ts_node_start_byte(node) <= window.end;
+        if (touches) {
+            const std::string_view type = ts_node_type(node);
+            if (type == "inline" || type == "pipe_table_cell") {
+                failed = !add(node);
+                if (failed) {
+                    break;
+                }
+            } else if (ts_tree_cursor_goto_first_child(&cursor)) {
+                while (ts_node_end_byte(ts_tree_cursor_current_node(&cursor)) < window.begin &&
+                       ts_tree_cursor_goto_next_sibling(&cursor)) {
+                }
+                continue;
+            }
+        }
+        if (!advance()) {
+            break;
         }
     }
     ts_tree_cursor_delete(&cursor);
@@ -765,6 +802,7 @@ struct TreeSitterHighlighter::Impl {
     std::shared_ptr<const QueryData> inline_data;
     std::shared_ptr<const InlineLayer> inlines;
     InlineCache inline_cache;
+    std::size_t inline_nodes_visited = 0;
     // The parser polls it while it parses and stops when it is set; a `std::stop_callback` sets it
     // from the thread that asks for the stop.
     std::atomic<bool> cancel{false};
@@ -848,18 +886,62 @@ TreeSitterHighlighter::create_with_query(std::string_view language_id, std::stri
 }
 
 std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error>
-TreeSitterHighlighter::rebuild_inlines() {
+TreeSitterHighlighter::rebuild_inlines(std::optional<std::pair<std::size_t, std::size_t>> changed,
+                                       std::ptrdiff_t shift) {
     Impl& impl = *impl_;
     if (!impl.inline_parser) {
         return {};
     }
+    const bool partial = changed && impl.inlines;
+    DocumentWindow window;
+    if (partial) {
+        window = {changed->first, changed->second};
+    }
     auto build = build_inline_layer(impl.text, *impl.tree, *impl.inline_parser, impl.cancel,
-                                    impl.inline_cache);
+                                    impl.inline_cache, window, impl.inline_nodes_visited);
     if (!build) {
         return std::unexpected(build.error());
     }
-    impl.inlines = std::move(build->layer);
-    impl.inline_cache = std::move(build->cache);
+    if (!partial) {
+        impl.inlines = std::move(build->layer);
+        impl.inline_cache = std::move(build->cache);
+        return std::move(build->fresh);
+    }
+
+    // The nodes before the window and after it are the ones of the last parse, the later ones moved
+    // by what the edits added or removed: the changes are all inside the window, so nothing else
+    // about them differs.
+    const std::size_t old_end =
+        static_cast<std::size_t>(static_cast<std::ptrdiff_t>(window.end) - shift);
+    auto merged = std::make_shared<InlineLayer>();
+    merged->reserve(impl.inlines->size() + build->layer->size());
+    const auto old_nodes = impl.inlines->begin();
+    auto node = old_nodes;
+    for (; node != impl.inlines->end() && node->end < window.begin; ++node) {
+        merged->push_back(*node);
+    }
+    merged->insert(merged->end(), build->layer->begin(), build->layer->end());
+    for (node =
+             std::ranges::upper_bound(node, impl.inlines->end(), old_end, {}, &InlineNode::begin);
+         node != impl.inlines->end(); ++node) {
+        InlineNode moved = *node;
+        moved.begin = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(moved.begin) + shift);
+        moved.end = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(moved.end) + shift);
+        merged->push_back(std::move(moved));
+    }
+    impl.inlines = std::move(merged);
+
+    // Trees of text that is not in the document any more are dropped now and then, not on every
+    // edit.
+    for (auto& entry : build->cache) {
+        impl.inline_cache.insert(entry);
+    }
+    if (impl.inline_cache.size() > 2 * impl.inlines->size() + 64) {
+        impl.inline_cache.clear();
+        for (const InlineNode& kept : *impl.inlines) {
+            impl.inline_cache.emplace(kept.parsed->text, kept.parsed);
+        }
+    }
     return std::move(build->fresh);
 }
 
@@ -946,6 +1028,10 @@ std::size_t TreeSitterHighlighter::bytes_read() const {
     return impl_->bytes_read;
 }
 
+std::size_t TreeSitterHighlighter::inline_nodes_visited() const {
+    return impl_->inline_nodes_visited;
+}
+
 std::size_t TreeSitterHighlighter::line_queries() const {
     return impl_->line_queries;
 }
@@ -1007,6 +1093,27 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
             Error{ErrorCode::invalid_argument, "the changes do not lead to the new text"});
     }
 
+    // Where the edits are, as one range in the coordinates of the text after them: each edit moves
+    // what lies after it and adds its own range.
+    constexpr std::size_t nowhere = std::numeric_limits<std::size_t>::max();
+    std::pair<std::size_t, std::size_t> hull{nowhere, 0};
+    for (const Step& step : steps) {
+        const std::size_t start = step.edit.start_byte;
+        const std::size_t old_end = step.edit.old_end_byte;
+        const std::size_t new_end = step.edit.new_end_byte;
+        if (hull.first != nowhere) {
+            const auto moved = [&](std::size_t position) {
+                if (position >= old_end) {
+                    return position - old_end + new_end;
+                }
+                return position > start ? new_end : position;
+            };
+            hull = {std::min(moved(hull.first), start), std::max(moved(hull.second), new_end)};
+        } else {
+            hull = {start, new_end};
+        }
+    }
+
     for (const Step& step : steps) {
         ts_tree_edit(impl_->tree.get(), &step.edit);
         auto& cache = impl_->cache;
@@ -1021,6 +1128,7 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
                      step.new_rows, std::nullopt);
     }
 
+    const std::size_t old_size = impl_->text.size();
     impl_->text = new_text;
     const std::stop_callback cancel_on_stop(stop, [flag = &impl_->cancel] { flag->store(true); });
     ReadState state{&impl_->text, &impl_->bytes_read};
@@ -1046,10 +1154,22 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
             impl_->cache[row].reset();
         }
     }
-    std::free(ranges);
     if (impl_->inline_parser) {
-        auto fresh = rebuild_inlines();
+        // The part of the document that the edits and the changed ranges can have touched, as one
+        // range in the coordinates of the new text. The nodes outside it keep their trees.
+        std::pair<std::size_t, std::size_t> window = hull;
+        for (std::uint32_t i = 0; i < range_count; ++i) {
+            window.first = std::min<std::size_t>(window.first, ranges[i].start_byte);
+            window.second = std::max<std::size_t>(window.second, ranges[i].end_byte);
+        }
+        std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error> fresh =
+            std::vector<std::pair<std::size_t, std::size_t>>{};
+        if (window.first <= window.second) {
+            fresh = rebuild_inlines(window, static_cast<std::ptrdiff_t>(impl_->text.size()) -
+                                                static_cast<std::ptrdiff_t>(old_size));
+        }
         if (!fresh) {
+            std::free(ranges);
             impl_->tree.reset();
             impl_->cache.assign(impl_->text.line_count(), std::nullopt);
             ++impl_->version;
@@ -1063,6 +1183,7 @@ std::expected<void, Error> TreeSitterHighlighter::apply(std::span<const TextChan
             }
         }
     }
+    std::free(ranges);
     ++impl_->version;
     return {};
 }

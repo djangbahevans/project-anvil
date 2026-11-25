@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stop_token>
 #include <string>
@@ -86,6 +87,8 @@ public:
     // edited tree and a fresh one must agree on.
     std::string describe_tree() const;
     std::size_t line_queries() const;
+    // How many inline nodes were looked at, when finding them and when parsing again.
+    std::size_t inline_nodes_visited() const;
 
     std::vector<HighlightSpan> spans(std::size_t line) const override;
     std::string_view root_scope() const override;
@@ -95,9 +98,13 @@ private:
     struct Impl;
     explicit TreeSitterHighlighter(std::unique_ptr<Impl> impl);
 
-    // Parses the inline nodes of the tree again where their text is new, and returns the ranges
-    // of the document of those. Nothing for a language without inline content.
-    std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error> rebuild_inlines();
+    // Finds the inline nodes of the tree and parses those whose text is new, and returns the
+    // ranges of the document of those. Nothing for a language without inline content. With a
+    // `changed` range the nodes before it and after it are the ones that were there, moved by
+    // `shift` where they are after it, and only the nodes that touch the range are looked at.
+    std::expected<std::vector<std::pair<std::size_t, std::size_t>>, Error>
+    rebuild_inlines(std::optional<std::pair<std::size_t, std::size_t>> changed = std::nullopt,
+                    std::ptrdiff_t shift = 0);
 
     std::unique_ptr<Impl> impl_;
 };
