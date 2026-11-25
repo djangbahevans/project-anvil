@@ -11,7 +11,24 @@
         "extensions": [".fixture"],
         "filenames": ["fixturefile"],
         "filenamePatterns": ["fixture-*.cfg"],
-        "firstLine": "^#!fixture"
+        "firstLine": "^#!fixture",
+        "configuration": "./fixture-configuration.json"
+      },
+      { "id": "python", "configuration": "./python-configuration.json" },
+      {
+        "id": "fixturebad",
+        "extensions": [".fixturebad"],
+        "configuration": "./bad-configuration.json"
+      },
+      {
+        "id": "fixturemissing",
+        "extensions": [".fixturemissing"],
+        "configuration": "./missing-configuration.json"
+      },
+      {
+        "id": "fixtureempty",
+        "extensions": [".fixtureempty"],
+        "configuration": "./empty-configuration.json"
       }
     ]
   }

@@ -5959,6 +5959,70 @@ TEST_F(LanguageTest, DocumentsHaveTheLanguageOfTheirFileForTheWindowAndForExtens
     }
 }
 
+TEST_F(LanguageTest, TheBuiltInLanguagesHaveTheirCommentTokens) {
+    create_window();
+    const auto python = window_->language_comments("python");
+    ASSERT_TRUE(python.has_value());
+    EXPECT_EQ(python->line, "#");
+    EXPECT_EQ(python->block, (core::BlockComment{"\"\"\"", "\"\"\""}));
+    const auto html = window_->language_comments("html");
+    ASSERT_TRUE(html.has_value());
+    EXPECT_FALSE(html->line);
+    EXPECT_EQ(html->block, (core::BlockComment{"<!--", "-->"}));
+    const auto cpp = window_->language_comments("cpp");
+    ASSERT_TRUE(cpp.has_value());
+    EXPECT_EQ(cpp->line, "//");
+    EXPECT_FALSE(window_->language_comments("plaintext").has_value());
+    EXPECT_FALSE(window_->language_comments("no-such-language").has_value());
+    EXPECT_FALSE(window_->language_comments("").has_value());
+}
+
+TEST_F(LanguageTest, ALanguageConfigurationOfAnExtensionGivesItsLanguageTokensAndOverlaysTheirs) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto fixture = window_->language_comments("fixturelang");
+    ASSERT_TRUE(fixture.has_value());
+    EXPECT_EQ(fixture->line, "%%");
+    EXPECT_FALSE(fixture->line_no_indent);
+    EXPECT_EQ(fixture->block, (core::BlockComment{"<%", "%>"}));
+
+    // The extension sets only a block comment for Python, which replaces the built-in one and
+    // leaves the line token.
+    const auto python = window_->language_comments("python");
+    ASSERT_TRUE(python.has_value());
+    EXPECT_EQ(python->line, "#");
+    EXPECT_EQ(python->block, (core::BlockComment{"'''", "'''"}));
+
+    EXPECT_EQ(window_->language_comments("cpp")->block, (core::BlockComment{"/*", "*/"}));
+}
+
+TEST_F(LanguageTest, AConfigurationThatCannotBeReadOrHasNoCommentsGivesNoTokensAndIsLoggedOnce) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    for (const char* id : {"fixturebad", "fixturemissing", "fixtureempty"}) {
+        EXPECT_FALSE(window_->language_comments(id).has_value()) << id;
+    }
+    const auto logged = [&](std::string_view file) {
+        return std::ranges::count_if(logger_->entries(), [&](const auto& entry) {
+            return entry.message.find(file) != std::string::npos;
+        });
+    };
+    EXPECT_EQ(logged("bad-configuration.json"), 1);
+    EXPECT_EQ(logged("missing-configuration.json"), 1);
+    EXPECT_EQ(logged("empty-configuration.json"), 0);
+    // A restart of the extension host reads the same files again and does not log them again.
+    const auto folder = scratch_ / "folder";
+    std::filesystem::create_directories(folder);
+    ASSERT_TRUE(window_->open_folder(folder));
+    EXPECT_EQ(logged("bad-configuration.json"), 1);
+    EXPECT_EQ(logged("missing-configuration.json"), 1);
+    EXPECT_TRUE(window_->language_comments("fixturelang").has_value());
+}
+
 TEST_F(LanguageTest, TheFirstLineOfEachDocumentIsTheOneThatIsRead) {
     create_window(true);
     if (!window_) {

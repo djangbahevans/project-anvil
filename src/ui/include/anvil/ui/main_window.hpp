@@ -2,6 +2,7 @@
 
 #include "anvil/core/document.hpp"
 #include "anvil/core/error.hpp"
+#include "anvil/core/language_comments.hpp"
 #include "anvil/core/language_registry.hpp"
 #include "anvil/core/log.hpp"
 #include "anvil/core/uri.hpp"
@@ -120,6 +121,10 @@ public:
     const std::optional<core::Workspace>& workspace() const {
         return options_.workspace;
     }
+    // The comment tokens of a language: those of VS Code's built-in languages, with the tokens that
+    // the language configuration files of extensions set laid over them. None for a language that
+    // has no tokens.
+    std::optional<core::LanguageComments> language_comments(std::string_view language_id) const;
     // Makes the folder the workspace: the extension host restarts with it (ADR 0016), and the
     // tabs, groups and documents stay as they are. Fails, with a message in the status bar, when
     // the path is not a folder. Opening the folder that is the workspace already does nothing.
@@ -263,6 +268,9 @@ private:
     void rebuild_languages();
     // Reads `files.associations` and, when it changed, applies it to the registry.
     void apply_file_associations();
+    // Builds the comment tokens of the registered languages from the built-in table and from the
+    // language configuration files that extensions contribute.
+    void rebuild_language_comments();
     // The language id of a resource whose text starts with `first_line`.
     std::string resolve_language(const core::Uri& uri, std::string_view first_line) const;
     // Gives every document the language the registry decides, except those that an extension asked
@@ -482,6 +490,10 @@ private:
     core::LanguageRegistry languages_ = core::LanguageRegistry::with_builtin_languages();
     std::vector<core::FileAssociation> file_associations_;
     std::vector<std::string> file_association_problems_;
+    std::map<std::string, core::LanguageComments, std::less<>> language_comments_;
+    // The problems of language configuration files that were logged, so that a restart of the
+    // extension host that reads the same files again does not log them again.
+    std::set<std::string> reported_language_configurations_;
     // The language of each open document, filled when it is first asked for so that the status bar
     // does not ask the registry on every keystroke.
     std::map<core::Uri, DocumentLanguage> document_languages_;

@@ -1,0 +1,7 @@
+{
+  // The comment tokens of the fixture language.
+  "comments": {
+    "lineComment": "%%",
+    "blockComment": ["<%", "%>"],
+  },
+}
