@@ -1457,7 +1457,7 @@ TEST_F(ExplorerOperationsTest, ANameThatIsEmptyHasASeparatorOrIsTakenIsRefusedWi
     };
     for (const Case& test : cases) {
         enter(test.name);
-        EXPECT_TRUE(view_->is_editing()) << test.name.toStdString();
+        ASSERT_TRUE(view_->is_editing()) << test.name.toStdString();
         EXPECT_TRUE(view_->name_problem().contains(test.problem))
             << test.name.toStdString() << ": " << view_->name_problem().toStdString();
         EXPECT_EQ(names_under({}).size(), 5u) << "the pending row and the four entries";
