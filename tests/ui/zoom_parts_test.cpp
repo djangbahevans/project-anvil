@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QSplitter>
@@ -463,6 +464,10 @@ TEST_F(WorkbenchZoomTest, TheMinimumSizesTheSashesAndTheHeadersAreTheSizesAtLeve
             EXPECT_EQ(splitter->handleWidth(), zoom_.scaled(Splitter::sash_width));
         }
         EXPECT_EQ(sidebar_->title_height(), zoom_.scaled(35));
+        const QWidget* title = sidebar_->title_actions()->parentWidget();
+        EXPECT_EQ(title->height(), zoom_.scaled(35));
+        EXPECT_EQ(title->layout()->contentsMargins().left(), zoom_.scaled(20));
+        EXPECT_EQ(title->layout()->contentsMargins().right(), zoom_.scaled(8));
         EXPECT_EQ(panel_->header_size(), zoom_.scaled(Panel::header_height));
         for (const QToolButton* button : {panel_->maximize_button(), panel_->close_button()}) {
             EXPECT_EQ(button->size(), QSize(zoom_.scaled(28), zoom_.scaled(28)));
@@ -499,6 +504,39 @@ TEST_F(WorkbenchZoomTest, ALevelChangeKeepsTheSizeOfAPartAndMovesItOnlyToItsNewM
     QApplication::processEvents();
     EXPECT_EQ(workbench_->size(Part::panel), 400);
     EXPECT_GE(workbench_->size(Part::sidebar), zoom_.scaled(Workbench::sidebar_minimum_width));
+}
+
+TEST_F(WorkbenchZoomTest, ASidebarThatWasDraggedToAWidthKeepsItAcrossALevelChange) {
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    QSplitter* across = nullptr;
+    for (QSplitter* splitter : workbench_->findChildren<QSplitter*>()) {
+        if (splitter->orientation() == Qt::Horizontal &&
+            splitter->indexOf(workbench_->sidebar()) >= 0) {
+            across = splitter;
+        }
+    }
+    ASSERT_NE(across, nullptr);
+    QWidget* sash = across->handle(1);
+    const QPoint start = sash->rect().center();
+    QTest::mousePress(sash, Qt::LeftButton, {}, start);
+    QTest::mouseMove(sash, start + QPoint(300, 0));
+    QTest::mouseRelease(sash, Qt::LeftButton, {}, start + QPoint(300, 0));
+    QApplication::processEvents();
+    const int dragged = workbench_->sidebar()->width();
+    ASSERT_GT(dragged, 500);
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), dragged, 2);
+}
+
+TEST_F(WorkbenchZoomTest, APartThatWasNeverResizedFollowsTheScaledDefaultWhenTheLevelChanges) {
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    ASSERT_NEAR(workbench_->sidebar()->width(), Workbench::default_size, 2);
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), zoom_.scaled(Workbench::default_size), 2);
 }
 
 TEST_F(WorkbenchZoomTest, AHiddenPartKeepsItsSizeAcrossALevelChangeToo) {
@@ -563,6 +601,10 @@ TEST_F(FindBarZoomTest, TheFontTheMarginsAndTheSpacingAreScaled) {
         QApplication::processEvents();
         SCOPED_TRACE(level);
         EXPECT_EQ(bar_->font().pixelSize(), zoom_.scaled(base_));
+        for (const QWidget* child : bar_->findChildren<QWidget*>()) {
+            EXPECT_EQ(child->font().pixelSize(), zoom_.scaled(base_))
+                << child->metaObject()->className();
+        }
         const QMargins margins = bar_->layout()->contentsMargins();
         EXPECT_EQ(margins,
                   QMargins(zoom_.scaled(6), zoom_.scaled(4), zoom_.scaled(6), zoom_.scaled(4)));
@@ -617,6 +659,18 @@ TEST_F(QuickPickZoomTest, TheRowsTheWidthAndTheFontAreTheSizesAtLevelZeroScaled)
         EXPECT_EQ(pick_->width(),
                   std::min(zoom_.scaled(600), host_->width() - 2 * zoom_.scaled(8)));
         EXPECT_NEAR(pick_->font().pointSizeF(), base_points_ * zoom_.factor(), 0.01);
+        EXPECT_NEAR(pick_->filter_field()->font().pointSizeF(), base_points_ * zoom_.factor(),
+                    0.01);
+        EXPECT_EQ(pick_->list()->verticalScrollBar()->maximumWidth(),
+                  zoom_.scaled(pick_->style()->pixelMetric(QStyle::PM_ScrollBarExtent)));
+        const int blur = zoom_.scaled(20);
+        bool shadow = false;
+        for (const QWidget* sibling : host_->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+            shadow = shadow ||
+                     (sibling != pick_ &&
+                      sibling->geometry() == pick_->geometry().adjusted(-blur, -blur, blur, blur));
+        }
+        EXPECT_TRUE(shadow) << "the shadow is larger than the popup by the scaled blur";
         EXPECT_EQ(pick_->list()->height(), 3 * zoom_.scaled(QuickPick::row_height) +
                                                2 * zoom_.scaled(QuickPick::row_height));
     }
@@ -741,6 +795,8 @@ TEST_F(ExplorerZoomTest, TheRowsTheIndentationTheScrollBarAndTheFontAreScaled) {
         EXPECT_EQ(view_->tree()->indentation(), zoom_.scaled(8));
         EXPECT_EQ(view_->tree()->verticalScrollBar()->width(), zoom_.scaled(bar));
         EXPECT_EQ(view_->font().pixelSize(), zoom_.scaled(base_font));
+        EXPECT_EQ(view_->open_folder_button()->font().pixelSize(), zoom_.scaled(base_font));
+        EXPECT_EQ(view_->message()->font().pixelSize(), zoom_.scaled(base_font));
     }
 }
 

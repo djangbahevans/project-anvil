@@ -6,6 +6,7 @@
 #include "anvil/ui/main_window.hpp"
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/project_links.hpp"
+#include "anvil/ui/splitter.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -14,6 +15,7 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QListView>
 #include <QMenuBar>
@@ -9906,6 +9908,35 @@ TEST_F(ZoomWholeWindowTest, TheWindowAtTheEndsOfTheRangeLaysOutWithoutOverlapOrP
         save_screenshot(
             ("zoom-window-" + std::to_string(static_cast<int>(level)) + ".png").c_str());
     }
+}
+
+TEST_F(ZoomWholeWindowTest, TheExplorerAndThePicksOfTheWindowFollowTheLevel) {
+    start_shown_with(R"j({"window.zoomLevel": 3})j");
+    show_every_part();
+    auto* explorer = window_->findChild<ui::ExplorerView*>();
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_EQ(explorer->tree()->indentation(), window_->zoom().scaled(8));
+    EXPECT_EQ(window_->command_palette()->row_size(),
+              window_->zoom().scaled(ui::QuickPick::row_height));
+    EXPECT_EQ(window_->go_to_line_pick()->row_size(),
+              window_->zoom().scaled(ui::QuickPick::row_height));
+    window_->commands().execute("workbench.action.zoomReset");
+    EXPECT_EQ(explorer->tree()->indentation(), 8);
+    EXPECT_EQ(window_->go_to_line_pick()->row_size(), ui::QuickPick::row_height);
+}
+
+TEST_F(ZoomWholeWindowTest, TheFindBarTheSplitAreaAndTheNativeMenuBarFollowTheLevel) {
+    start_shown_with(R"j({"window.zoomLevel": 3})j");
+    window_->commands().execute("workbench.action.splitEditor");
+    QApplication::processEvents();
+    ASSERT_NE(window_->editor_area()->root_splitter(), nullptr);
+    EXPECT_EQ(window_->editor_area()->root_splitter()->handleWidth(),
+              window_->zoom().scaled(ui::Splitter::sash_width));
+    for (auto* group : window_->editor_area()->groups()) {
+        EXPECT_EQ(group->find_bar()->layout()->contentsMargins().left(), window_->zoom().scaled(6));
+    }
+    EXPECT_EQ(window_->menu_bar()->font().pixelSize(),
+              window_->zoom().scaled(QFontInfo(QApplication::font("QMenu")).pixelSize()));
 }
 
 TEST_F(ZoomWholeWindowTest, TheEditorsScrollBarsAndPaddingFollowTheLevel) {
