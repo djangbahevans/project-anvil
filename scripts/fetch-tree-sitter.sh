@@ -7,9 +7,11 @@
 # Adding a grammar: add a line to SOURCES and see docs/howto/adding-a-grammar.md.
 set -euo pipefail
 
-# name|archive url|SHA-256 of the archive
+# name|archive url|SHA-256 of the archive. The URL of a release is `archive/refs/tags/<tag>.tar.gz`,
+# and a commit's is `archive/<commit>.tar.gz`; the runtime is a commit of the 0.28 development line
+# (see docs/design.md for why).
 SOURCES=(
-    "runtime|https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.2.tar.gz|356528363bf7fbad12a2cfeb5a2678c0118ef886a4d69ad9a379db5fdef0735f"
+    "runtime|https://github.com/tree-sitter/tree-sitter/archive/d63dc4a67b7995a7069654cf3d05c8493be8d509.tar.gz|997681011c3c8297ffb4a2ac700c2ea7b98477ce6f04cbfc902fe233ef5b2527"
     "json|https://github.com/tree-sitter/tree-sitter-json/archive/refs/tags/v0.24.8.tar.gz|acf6e8362457e819ed8b613f2ad9a0e1b621a77556c296f3abea58f7880a9213"
     "c|https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.1.tar.gz|25dd4bb3dec770769a407e0fc803f424ce02c494a56ce95fedc525316dcf9b48"
     "cpp|https://github.com/tree-sitter/tree-sitter-cpp/archive/refs/tags/v0.23.4.tar.gz|7a2c55afe3028f4105f25762ea58cc16537d1f5a1dcd9cca90410b3cd5d46051"
@@ -82,7 +84,9 @@ for source in "${SOURCES[@]}"; do
     mv "$archive.part" "$archive"
     rm -rf "${dest:?}/$name"
     mkdir "$dest/$name"
-    tar -xzf "$archive" -C "$dest/$name" --strip-components=1
+    # -m gives the files the time of the unpacking: a pin that changes must look newer than the objects
+    # that were built from the files it replaces, or the build keeps them.
+    tar -xzmf "$archive" -C "$dest/$name" --strip-components=1
     echo "$expected" >"$dest/$name/.anvil-sha256"
 done
 exit "$status"

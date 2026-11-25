@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <ctime>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <random>
@@ -795,34 +796,49 @@ std::string nested_json(int groups) {
     return out + "}\n";
 }
 
-std::string big_json(std::size_t lines) {
+} // namespace
+
+namespace {
+
+// One object with many members, which is what a long list or a flat data file looks like.
+std::string flat_json(int members) {
     std::string out = "{\n";
-    for (std::size_t i = 0; i < lines; ++i) {
+    for (int i = 0; i < members; ++i) {
         out +=
             "  \"key" + std::to_string(i) + "\": [1, 2.5, \"value\", true, null, {\"a\": \"b\"}]";
-        out += i + 1 < lines ? ",\n" : "\n";
+        out += i + 1 < members ? ",\n" : "\n";
     }
     return out + "}\n";
 }
 
+double cpu_seconds() {
+    return static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
+}
+
 } // namespace
 
-TEST(TreeSitterHighlighter, AnEditAsksTheQueryForTheLinesItReachedOnly) {
-    TextBuffer buffer(text_of(big_json(2000)));
+// The runtime that fetch-tree-sitter.sh pins reuses the nodes of a long list in logarithmic time;
+// the release before it parsed each member again, so that an edit cost a tenth of the first parse
+// on a document of this size and grew with it. Processor time, with a margin of a hundred.
+TEST(TreeSitterHighlighter, AnEditToADocumentWithManyMembersCostsAFractionOfTheFirstParse) {
+    TextBuffer buffer(text_of(flat_json(15000)));
+    const double before_first = cpu_seconds();
     const auto highlighter = json_highlighter(buffer.snapshot());
     ASSERT_TRUE(highlighter);
-    (void)render(*highlighter, buffer.snapshot());
-    ASSERT_EQ(highlighter->line_queries(), buffer.snapshot().line_count());
+    const double first_parse = cpu_seconds() - before_first;
 
-    // A character inside a number on line 1000 changes that line and nothing else.
-    const std::size_t at = buffer.snapshot().line_start(1000) + 20;
-    const auto change = buffer.replace(at, at + 1, "7");
-    ASSERT_TRUE(change.has_value());
-    ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
-    const std::size_t before = highlighter->line_queries();
-    (void)render(*highlighter, buffer.snapshot());
-    EXPECT_LE(highlighter->line_queries() - before, 3u);
-    EXPECT_GE(highlighter->line_queries() - before, 1u);
+    constexpr int edits = 10;
+    const std::size_t at = buffer.snapshot().size() / 2;
+    const double before_edits = cpu_seconds();
+    for (int i = 0; i < edits; ++i) {
+        const auto change = i % 2 == 0 ? buffer.insert(at, " ") : buffer.erase(at, at + 1);
+        ASSERT_TRUE(change.has_value());
+        ASSERT_TRUE(highlighter->apply(*change, buffer.snapshot()).has_value());
+    }
+    const double per_edit = (cpu_seconds() - before_edits) / edits;
+    EXPECT_LT(per_edit * 100, first_parse)
+        << "first parse " << first_parse << " s, an edit " << per_edit << " s";
+    EXPECT_EQ(render(*highlighter, buffer.snapshot()), fresh_render(buffer.snapshot()));
 }
 
 TEST(TreeSitterHighlighter, AnEditReparsesAFractionOfTheBytesOfTheFirstParse) {
