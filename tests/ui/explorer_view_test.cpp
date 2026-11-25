@@ -2,8 +2,10 @@
 #include "anvil/ui/explorer_view.hpp"
 
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTest>
@@ -1254,4 +1256,397 @@ TEST_F(ExplorerDiskTest, CollapsingADirectoryThatIsBeingReadLeavesNoRowsBehind) 
     view_->tree()->expand(sub);
     ASSERT_TRUE(settle());
     EXPECT_EQ(view_->model()->rowCount(sub), 5000) << "and expanding it again shows the entries";
+}
+
+namespace {
+
+// The operations on a real folder, with the trash and the question before a delete replaced.
+class ExplorerOperationsTest : public ::testing::Test {
+protected:
+    struct Question {
+        QString message;
+        QString detail;
+        QString button;
+    };
+
+    void SetUp() override {
+        root_ = std::filesystem::weakly_canonical(std::filesystem::temp_directory_path()) /
+                ("anvil-explorer-ops-" + std::to_string(::getpid()));
+        std::filesystem::remove_all(root_);
+        std::filesystem::create_directories(root_ / "src");
+        std::filesystem::create_directories(root_ / "docs");
+        write(root_ / "a.txt");
+        write(root_ / "b.md");
+        write(root_ / "src" / "main.cpp");
+        colors_ = std::make_unique<WorkbenchColors>(QApplication::palette());
+        ExplorerActions actions;
+        actions.move_to_trash = [this](const std::filesystem::path& path) {
+            trashed_.push_back(path);
+            if (trash_fails_) {
+                return false;
+            }
+            std::filesystem::remove_all(path);
+            return true;
+        };
+        actions.confirm = [this](QWidget*, const QString& message, const QString& detail,
+                                 const QString& button) {
+            questions_.push_back({message, detail, button});
+            if (while_asking_) {
+                while_asking_();
+            }
+            return answer_;
+        };
+        view_ = std::make_unique<ExplorerView>(*colors_, nullptr, platform_directory_lister(),
+                                               DirectoryWatchFactory{}, immediate_listing_runner(),
+                                               std::move(actions));
+        view_->resize(300, 400);
+        view_->show();
+        view_->set_workspace(root_, "project");
+        settle();
+        created_ = std::make_unique<QSignalSpy>(view_.get(), &ExplorerView::created);
+        renamed_ = std::make_unique<QSignalSpy>(view_.get(), &ExplorerView::renamed);
+        deleted_ = std::make_unique<QSignalSpy>(view_.get(), &ExplorerView::deleted);
+        failed_ = std::make_unique<QSignalSpy>(view_.get(), &ExplorerView::operation_failed);
+    }
+    void TearDown() override {
+        view_.reset();
+        std::error_code ignored;
+        std::filesystem::remove_all(root_, ignored);
+    }
+
+    static void write(const std::filesystem::path& path) {
+        std::ofstream(path) << "x";
+    }
+    void settle() {
+        for (int i = 0; i < 50; ++i) {
+            QApplication::processEvents();
+        }
+    }
+    void select(const std::filesystem::path& path) {
+        const QModelIndex row = view_->model()->index_of(path);
+        ASSERT_TRUE(row.isValid()) << path;
+        view_->tree()->setCurrentIndex(row);
+        view_->tree()->setFocus();
+    }
+    std::vector<std::string> names_under(const QModelIndex& parent) const {
+        std::vector<std::string> names;
+        for (int row = 0; row < view_->model()->rowCount(parent); ++row) {
+            names.push_back(view_->model()->index(row, 0, parent).data().toString().toStdString());
+        }
+        return names;
+    }
+    bool pending_under(const QModelIndex& parent) const {
+        return view_->model()->rowCount(parent) > 0 &&
+               view_->model()->index(0, 0, parent).data(ExplorerModel::PendingRole).toBool();
+    }
+    // Types `name` in the field and presses Enter.
+    void enter(const QString& name) {
+        ASSERT_TRUE(view_->is_editing());
+        view_->name_editor()->setText(name);
+        QTest::keyClick(view_->name_editor(), Qt::Key_Return);
+        settle();
+    }
+    std::string current_name() const {
+        return view_->tree()->currentIndex().data().toString().toStdString();
+    }
+
+    std::filesystem::path root_;
+    std::unique_ptr<WorkbenchColors> colors_;
+    std::unique_ptr<ExplorerView> view_;
+    std::unique_ptr<QSignalSpy> created_, renamed_, deleted_, failed_;
+    std::vector<std::filesystem::path> trashed_;
+    std::vector<Question> questions_;
+    std::function<void()> while_asking_;
+    bool trash_fails_ = false;
+    bool answer_ = true;
+};
+
+} // namespace
+
+TEST_F(ExplorerOperationsTest, ANewFileInTheFolderOfTheWorkspaceIsNamedInARowAtTheTop) {
+    view_->tree()->clearSelection();
+    view_->tree()->setCurrentIndex(QModelIndex());
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    EXPECT_TRUE(pending_under({}));
+    EXPECT_TRUE(view_->name_editor()->hasFocus());
+    EXPECT_FALSE(view_->model()->index(0, 0).data(ExplorerModel::IsDirectoryRole).toBool());
+
+    enter("new.txt");
+    EXPECT_FALSE(view_->is_editing());
+    EXPECT_TRUE(std::filesystem::is_regular_file(root_ / "new.txt"));
+    EXPECT_EQ(names_under({}),
+              (std::vector<std::string>{"docs", "src", "a.txt", "b.md", "new.txt"}));
+    EXPECT_EQ(current_name(), "new.txt");
+    ASSERT_EQ(created_->count(), 1);
+    EXPECT_EQ(created_->at(0).at(0).toString().toStdString(), (root_ / "new.txt").string());
+    EXPECT_FALSE(created_->at(0).at(1).toBool());
+}
+
+TEST_F(ExplorerOperationsTest, ANewFolderGoesIntoTheSelectedFolderAndOpensIt) {
+    select(root_ / "src");
+    view_->new_folder();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    const QModelIndex src = view_->model()->index_of(root_ / "src");
+    EXPECT_TRUE(view_->tree()->isExpanded(src));
+    EXPECT_TRUE(pending_under(src));
+    EXPECT_TRUE(view_->model()->index(0, 0, src).data(ExplorerModel::IsDirectoryRole).toBool());
+
+    enter("inner");
+    EXPECT_TRUE(std::filesystem::is_directory(root_ / "src" / "inner"));
+    EXPECT_EQ(names_under(src), (std::vector<std::string>{"inner", "main.cpp"}));
+    EXPECT_EQ(current_name(), "inner");
+    ASSERT_EQ(created_->count(), 1);
+    EXPECT_TRUE(created_->at(0).at(1).toBool());
+}
+
+TEST_F(ExplorerOperationsTest, ANewFileGoesIntoTheFolderOfTheSelectedFile) {
+    view_->tree()->expand(view_->model()->index_of(root_ / "src"));
+    settle();
+    select(root_ / "src" / "main.cpp");
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    EXPECT_TRUE(pending_under(view_->model()->index_of(root_ / "src")));
+    enter("util.cpp");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "src" / "util.cpp"));
+}
+
+TEST_F(ExplorerOperationsTest, ANewFileGoesIntoAFolderThatWasNeverOpenedOnceItIsRead) {
+    select(root_ / "docs");
+    ASSERT_FALSE(view_->tree()->isExpanded(view_->model()->index_of(root_ / "docs")));
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    enter("readme.md");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "readme.md"));
+}
+
+TEST_F(ExplorerOperationsTest, EscapeDropsTheRowOfANewItemAndCreatesNothing) {
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    view_->name_editor()->setText("never.txt");
+    QTest::keyClick(view_->name_editor(), Qt::Key_Escape);
+    settle();
+    EXPECT_FALSE(view_->is_editing());
+    EXPECT_FALSE(pending_under({}));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "never.txt"));
+    EXPECT_EQ(created_->count(), 0);
+}
+
+TEST_F(ExplorerOperationsTest, ANameThatIsEmptyHasASeparatorOrIsTakenIsRefusedWithTheReason) {
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    struct Case {
+        QString name;
+        QString problem;
+    };
+    const Case cases[] = {
+        {"", "A file or folder name must be provided."},
+        {"   ", "A file or folder name must be provided."},
+        {"/abs", "A file or folder name cannot start with a slash."},
+        {"x/y", "is not valid as a file or folder name"},
+        {"x\\y", "is not valid as a file or folder name"},
+        {"..", "is not valid as a file or folder name"},
+        {"a.txt", "A file or folder \"a.txt\" already exists at this location."},
+        {"src", "A file or folder \"src\" already exists at this location."},
+    };
+    for (const Case& test : cases) {
+        enter(test.name);
+        EXPECT_TRUE(view_->is_editing()) << test.name.toStdString();
+        EXPECT_TRUE(view_->name_problem().contains(test.problem))
+            << test.name.toStdString() << ": " << view_->name_problem().toStdString();
+        EXPECT_EQ(names_under({}).size(), 5u) << "the pending row and the four entries";
+    }
+    EXPECT_EQ(created_->count(), 0);
+    EXPECT_EQ(failed_->count(), 0);
+
+    // The reason shows while typing, and goes with the name that is wrong.
+    view_->name_editor()->setText("fine.txt");
+    EXPECT_TRUE(view_->name_problem().isEmpty());
+    view_->name_editor()->setText("a.txt");
+    EXPECT_FALSE(view_->name_problem().isEmpty());
+}
+
+TEST_F(ExplorerOperationsTest, ARenameEditsTheNameWithoutItsExtensionSelected) {
+    select(root_ / "a.txt");
+    view_->rename_selected();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    EXPECT_EQ(view_->name_editor()->text(), "a.txt");
+    EXPECT_EQ(view_->name_editor()->selectedText(), "a");
+
+    enter("renamed.txt");
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "renamed.txt"));
+    EXPECT_EQ(current_name(), "renamed.txt");
+    ASSERT_EQ(renamed_->count(), 1);
+    EXPECT_EQ(renamed_->at(0).at(0).toString().toStdString(), (root_ / "a.txt").string());
+    EXPECT_EQ(renamed_->at(0).at(1).toString().toStdString(), (root_ / "renamed.txt").string());
+}
+
+TEST_F(ExplorerOperationsTest, ARenameOfAFolderSelectsItsWholeNameAndMovesItsContent) {
+    select(root_ / "src");
+    view_->rename_selected();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    EXPECT_EQ(view_->name_editor()->selectedText(), "src");
+    enter("lib");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "lib" / "main.cpp"));
+    EXPECT_EQ(renamed_->count(), 1);
+}
+
+TEST_F(ExplorerOperationsTest, ARenameToATakenNameIsRefusedAndTheSameNameChangesNothing) {
+    select(root_ / "a.txt");
+    view_->rename_selected();
+    settle();
+    enter("b.md");
+    EXPECT_TRUE(view_->is_editing());
+    EXPECT_TRUE(view_->name_problem().contains("already exists"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+
+    enter("a.txt");
+    EXPECT_FALSE(view_->is_editing());
+    EXPECT_EQ(renamed_->count(), 0);
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+}
+
+TEST_F(ExplorerOperationsTest, RenamingWithNothingSelectedDoesNothing) {
+    view_->tree()->clearSelection();
+    view_->tree()->setCurrentIndex(QModelIndex());
+    view_->rename_selected();
+    EXPECT_FALSE(view_->is_editing());
+}
+
+TEST_F(ExplorerOperationsTest, ADeleteAsksThenMovesTheItemToTheTrash) {
+    select(root_ / "a.txt");
+    view_->trash_selected();
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0].message, "Are you sure you want to delete 'a.txt'?");
+    EXPECT_EQ(questions_[0].detail, "You can restore this file from the Trash.");
+    EXPECT_EQ(questions_[0].button, "Move to Trash");
+    EXPECT_EQ(trashed_, (std::vector<std::filesystem::path>{root_ / "a.txt"}));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_EQ(names_under({}), (std::vector<std::string>{"docs", "src", "b.md"}));
+    ASSERT_EQ(deleted_->count(), 1);
+}
+
+TEST_F(ExplorerOperationsTest, ADeleteThatIsRefusedChangesNothing) {
+    answer_ = false;
+    select(root_ / "a.txt");
+    view_->trash_selected();
+    EXPECT_EQ(questions_.size(), 1u);
+    EXPECT_TRUE(trashed_.empty());
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_EQ(deleted_->count(), 0);
+}
+
+TEST_F(ExplorerOperationsTest, ADeleteAsksNothingWhenTheSettingIsOff) {
+    view_->set_confirm_delete(false);
+    select(root_ / "a.txt");
+    view_->trash_selected();
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+}
+
+TEST_F(ExplorerOperationsTest, ShiftDeleteRemovesForGoodAndAFolderIsRemovedWithItsContent) {
+    select(root_ / "src");
+    view_->delete_selected();
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0].message,
+              "Are you sure you want to permanently delete 'src' and its contents?");
+    EXPECT_EQ(questions_[0].detail, "This action is irreversible!");
+    EXPECT_EQ(questions_[0].button, "Delete");
+    EXPECT_TRUE(trashed_.empty());
+    EXPECT_FALSE(std::filesystem::exists(root_ / "src"));
+    EXPECT_EQ(deleted_->count(), 1);
+}
+
+TEST_F(ExplorerOperationsTest, WithoutATrashAMoveToTrashDeletesForGood) {
+    view_->set_trash_enabled(false);
+    select(root_ / "b.md");
+    view_->trash_selected();
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0].message, "Are you sure you want to permanently delete 'b.md'?");
+    EXPECT_TRUE(trashed_.empty());
+    EXPECT_FALSE(std::filesystem::exists(root_ / "b.md"));
+}
+
+TEST_F(ExplorerOperationsTest, ATrashThatFailsIsReportedAndTheItemStays) {
+    trash_fails_ = true;
+    select(root_ / "a.txt");
+    view_->trash_selected();
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_EQ(deleted_->count(), 0);
+    ASSERT_EQ(failed_->count(), 1);
+    EXPECT_TRUE(failed_->at(0).at(0).toString().contains("a.txt"));
+    EXPECT_EQ(names_under({}).size(), 4u);
+}
+
+TEST_F(ExplorerOperationsTest, ADeleteActsOnTheItemThatWasSelectedWhenItWasAsked) {
+    select(root_ / "a.txt");
+    while_asking_ = [this] { select(root_ / "b.md"); };
+    view_->trash_selected();
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "b.md"));
+    ASSERT_EQ(deleted_->count(), 1);
+    EXPECT_EQ(deleted_->at(0).at(0).value<std::vector<std::filesystem::path>>(),
+              (std::vector<std::filesystem::path>{root_ / "a.txt"}));
+}
+
+TEST_F(ExplorerOperationsTest, ADeleteWithNothingSelectedDoesNothing) {
+    view_->tree()->clearSelection();
+    view_->tree()->setCurrentIndex(QModelIndex());
+    view_->trash_selected();
+    view_->delete_selected();
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(ExplorerOperationsTest, AFailureOfTheSystemWhileCreatingIsReportedAndEndsTheEditing) {
+    select(root_ / "src");
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    std::filesystem::remove_all(root_ / "src");
+    enter("late.txt");
+    EXPECT_FALSE(view_->is_editing());
+    EXPECT_EQ(created_->count(), 0);
+    EXPECT_EQ(failed_->count(), 1);
+}
+
+TEST_F(ExplorerOperationsTest, TheContextMenuIsAskedForWithTheRowUnderTheMouseSelected) {
+    QSignalSpy asked(view_.get(), &ExplorerView::context_menu_requested);
+    const QModelIndex row = view_->model()->index_of(root_ / "b.md");
+    const QPoint position = view_->tree()->visualRect(row).center();
+    QContextMenuEvent event(QContextMenuEvent::Mouse, position,
+                            view_->tree()->viewport()->mapToGlobal(position));
+    QApplication::sendEvent(view_->tree()->viewport(), &event);
+    ASSERT_EQ(asked.count(), 1);
+    EXPECT_EQ(current_name(), "b.md");
+    EXPECT_FALSE(view_->selection_is_directory());
+
+    const QPoint below(10, view_->tree()->viewport()->height() - 5);
+    QContextMenuEvent empty(QContextMenuEvent::Mouse, below,
+                            view_->tree()->viewport()->mapToGlobal(below));
+    QApplication::sendEvent(view_->tree()->viewport(), &empty);
+    EXPECT_EQ(asked.count(), 2);
+    EXPECT_TRUE(view_->selected_paths().empty());
+    EXPECT_TRUE(view_->selection_is_directory());
+}
+
+TEST_F(ExplorerOperationsTest, ThePendingRowSurvivesTheDirectoryBeingReadAgain) {
+    view_->new_folder();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    write(root_ / "appeared.txt");
+    view_->model()->reload(root_);
+    settle();
+    EXPECT_TRUE(pending_under({}));
+    EXPECT_TRUE(view_->is_editing());
+    EXPECT_EQ(names_under({}).size(), 6u);
+    EXPECT_EQ(names_under({}).front(), "");
 }

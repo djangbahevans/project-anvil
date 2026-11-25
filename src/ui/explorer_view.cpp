@@ -1,12 +1,18 @@
 #include "anvil/ui/explorer_view.hpp"
 
+#include "anvil/platform/file.hpp"
+#include "anvil/platform/file_system.hpp"
 #include "anvil/ui/codicons.hpp"
 
 #include <QApplication>
 #include <QFontInfo>
+#include <QContextMenuEvent>
+#include <QFile>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
@@ -16,6 +22,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
+#include <set>
 
 namespace anvil::ui {
 namespace {
@@ -79,11 +86,34 @@ public:
                 scaled_by(zoom_, row_height)};
     }
 
+    // The field for a name is made by the explorer, which knows what the name is for.
+    using EditorFactory = std::function<QWidget*(QWidget*, const QModelIndex&)>;
+    void set_editor_factory(EditorFactory factory) {
+        make_editor_ = std::move(factory);
+    }
+
+    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem&,
+                          const QModelIndex& index) const override {
+        return make_editor_ ? make_editor_(parent, index) : nullptr;
+    }
+    // The field handles its own keys and focus: the delegate's filter would commit a name on Enter
+    // and on losing the focus, and close the field on Escape, before the explorer has looked at it.
+    bool eventFilter(QObject*, QEvent*) override {
+        return false;
+    }
+    void setEditorData(QWidget*, const QModelIndex&) const override {}
+    void setModelData(QWidget*, QAbstractItemModel*, const QModelIndex&) const override {}
+    void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
+                              const QModelIndex&) const override {
+        editor->setGeometry(option.rect.adjusted(label_padding - 4, 1, -2, -1));
+    }
+
 private:
     const WorkbenchColors& colors_;
     const QAbstractItemView& view_;
     const QPersistentModelIndex& hovered_;
     const Zoom* zoom_ = nullptr;
+    EditorFactory make_editor_;
 };
 
 class ExplorerTree : public QTreeView {
@@ -115,6 +145,16 @@ public:
         apply_zoom();
     }
 
+    void set_editor_factory(ExplorerLabelDelegate::EditorFactory factory) {
+        static_cast<ExplorerLabelDelegate*>(itemDelegate())->set_editor_factory(std::move(factory));
+    }
+    void set_context_menu_handler(std::function<void(const QPoint&, const QPoint&)> handler) {
+        context_menu_ = std::move(handler);
+    }
+    void close_name_editor(QWidget* editor) {
+        closeEditor(editor, QAbstractItemDelegate::NoHint);
+    }
+
     void setModel(QAbstractItemModel* model) override {
         QTreeView::setModel(model);
         connect(model, &QAbstractItemModel::rowsAboutToBeRemoved, this,
@@ -127,6 +167,12 @@ public:
     }
 
 protected:
+    void contextMenuEvent(QContextMenuEvent* event) override {
+        if (context_menu_) {
+            context_menu_(event->pos(), event->globalPos());
+        }
+    }
+
     void keyPressEvent(QKeyEvent* event) override {
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
             event->modifiers() == Qt::NoModifier && currentIndex().isValid()) {
@@ -227,6 +273,7 @@ private:
     const Zoom* zoom_ = nullptr;
     QPersistentModelIndex hovered_;
     bool selection_moves_ = false;
+    std::function<void(const QPoint&, const QPoint&)> context_menu_;
 };
 
 // The name of the folder above the tree, in capitals.
@@ -273,11 +320,128 @@ private:
     QString name_;
 };
 
+// The field for the name of a new item or of a renamed one, and under it the reason why the name is
+// refused. The reason is a child of the tree's viewport, like the field.
+class ExplorerView::NameEditor : public QLineEdit {
+public:
+    NameEditor(const WorkbenchColors& colors, QWidget* parent)
+        : QLineEdit(parent), problem_(new QLabel(parent)) {
+        setStyleSheet(
+            QStringLiteral("QLineEdit { background: %1; color: %2; border: 1px solid %3; "
+                           "padding: 0 3px; selection-background-color: %4; }")
+                .arg(colors.color("input.background").name(QColor::HexArgb),
+                     colors.color("input.foreground").name(QColor::HexArgb),
+                     colors.color("focusBorder").name(QColor::HexArgb),
+                     colors.color("list.activeSelectionBackground").name(QColor::HexArgb)));
+        problem_->setWordWrap(true);
+        problem_->setMargin(3);
+        problem_->setStyleSheet(
+            QStringLiteral("QLabel { background: %1; color: %2; border: 1px solid %3; }")
+                .arg(colors.color("inputValidation.errorBackground").name(QColor::HexArgb),
+                     colors.color("inputValidation.errorForeground").name(QColor::HexArgb),
+                     colors.color("inputValidation.errorBorder").name(QColor::HexArgb)));
+        problem_->hide();
+    }
+    ~NameEditor() override {
+        delete problem_;
+    }
+
+    std::function<void(const QString&)> on_accept;
+    std::function<void()> on_cancel;
+    std::function<void()> on_blur;
+
+    // Shows why the name is refused under the field, or nothing for an empty text.
+    void set_problem(const QString& text) {
+        problem_->setText(text);
+        problem_->setVisible(!text.isEmpty());
+        place_problem();
+    }
+    QString problem() const {
+        return problem_->text();
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+            event->modifiers() == Qt::NoModifier) {
+            event->accept();
+            if (on_accept) {
+                on_accept(text());
+            }
+            return;
+        }
+        if (event->key() == Qt::Key_Escape && event->modifiers() == Qt::NoModifier) {
+            event->accept();
+            if (on_cancel) {
+                on_cancel();
+            }
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+
+    void focusOutEvent(QFocusEvent* event) override {
+        QLineEdit::focusOutEvent(event);
+        if (event->reason() != Qt::ActiveWindowFocusReason &&
+            event->reason() != Qt::PopupFocusReason && on_blur) {
+            on_blur();
+        }
+    }
+
+    void moveEvent(QMoveEvent* event) override {
+        QLineEdit::moveEvent(event);
+        place_problem();
+    }
+    void resizeEvent(QResizeEvent* event) override {
+        QLineEdit::resizeEvent(event);
+        place_problem();
+    }
+
+private:
+    void place_problem() {
+        if (!problem_->isVisible()) {
+            return;
+        }
+        const int width = std::max(width_hint(), 120);
+        problem_->setFixedWidth(width);
+        problem_->setFixedHeight(problem_->heightForWidth(width));
+        problem_->move(x(), y() + height() + 1);
+        problem_->raise();
+    }
+    int width_hint() const {
+        return parentWidget() ? parentWidget()->width() - x() - 4 : width();
+    }
+
+    QLabel* problem_;
+};
+
+ExplorerActions default_explorer_actions() {
+    return {
+        .move_to_trash =
+            [](const std::filesystem::path& path) {
+                return QFile::moveToTrash(QString::fromStdString(path.string()));
+            },
+        .confirm =
+            [](QWidget* parent, const QString& message, const QString& detail,
+               const QString& button) {
+                QMessageBox box(QMessageBox::Warning, QString(), message, QMessageBox::NoButton,
+                                parent);
+                box.setInformativeText(detail);
+                QPushButton* accept = box.addButton(button, QMessageBox::AcceptRole);
+                box.addButton(QMessageBox::Cancel);
+                box.setDefaultButton(accept);
+                box.exec();
+                return box.clickedButton() == accept;
+            },
+    };
+}
+
 ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
                            core::DirectoryLister lister, DirectoryWatchFactory watch,
-                           std::unique_ptr<ListingRunner> runner)
+                           std::unique_ptr<ListingRunner> runner, ExplorerActions actions)
     : QWidget(parent), colors_(colors),
-      model_(new ExplorerModel(std::move(lister), std::move(watch), std::move(runner), this)) {
+      model_(new ExplorerModel(std::move(lister), std::move(watch), std::move(runner), this)),
+      actions_(std::move(actions)) {
     setAutoFillBackground(true);
 
     auto* folder_page = new QWidget(this);
@@ -299,8 +463,35 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
         },
         folder_page);
     tree_->setModel(model_);
-    connect(tree_, &QTreeView::collapsed, model_,
-            [this](const QModelIndex& index) { model_->cancel_loading(index); });
+    auto* tree = static_cast<ExplorerTree*>(tree_);
+    tree->set_editor_factory(
+        [this](QWidget* parent, const QModelIndex& row) { return make_name_editor(parent, row); });
+    tree->set_context_menu_handler([this](const QPoint& local, const QPoint& global) {
+        const QModelIndex under = tree_->indexAt(local);
+        if (under.isValid() && model_->flags(under) & Qt::ItemIsSelectable &&
+            !model_->data(under, ExplorerModel::PendingRole).toBool()) {
+            tree_->setCurrentIndex(under);
+        } else {
+            tree_->clearSelection();
+            tree_->setCurrentIndex(QModelIndex());
+        }
+        emit context_menu_requested(global);
+    });
+    connect(tree_, &QTreeView::collapsed, model_, [this](const QModelIndex& index) {
+        model_->cancel_loading(index);
+        if (new_request_ && !new_request_->root && new_request_->directory == index) {
+            new_request_.reset();
+        }
+        if (editing_) {
+            for (QModelIndex row = editing_->row; row.isValid(); row = row.parent()) {
+                if (row == index) {
+                    finish_editing();
+                    break;
+                }
+            }
+        }
+    });
+    connect(model_, &ExplorerModel::directory_read, this, [this] { continue_new(); });
     folder_layout->addWidget(header_);
     folder_layout->addWidget(tree_, 1);
 
@@ -354,7 +545,9 @@ void ExplorerView::apply_zoom() {
     apply_colors();
 }
 
-ExplorerView::~ExplorerView() = default;
+ExplorerView::~ExplorerView() {
+    destroying_ = true;
+}
 
 void ExplorerView::apply_colors() {
     QPalette palette = this->palette();
@@ -383,6 +576,8 @@ void ExplorerView::apply_colors() {
 
 void ExplorerView::set_workspace(std::optional<std::filesystem::path> folder, const QString& name) {
     const bool has_folder = folder.has_value();
+    finish_editing();
+    new_request_.reset();
     model_->set_folder(std::move(folder));
     header_->set_text(name);
     pages_->setCurrentIndex(has_folder ? 1 : 0);
@@ -390,6 +585,346 @@ void ExplorerView::set_workspace(std::optional<std::filesystem::path> folder, co
 
 void ExplorerView::set_excludes(core::FileExcludes excludes) {
     model_->set_excludes(std::move(excludes));
+}
+
+namespace {
+
+bool is_real_row(const ExplorerModel& model, const QModelIndex& index) {
+    return index.isValid() && !model.data(index, ExplorerModel::PlaceholderRole).toBool() &&
+           !model.data(index, ExplorerModel::PendingRole).toBool();
+}
+
+std::string file_name_of(const std::filesystem::path& path) {
+    return path.filename().string();
+}
+
+} // namespace
+
+std::vector<std::filesystem::path> ExplorerView::selected_paths() const {
+    std::vector<std::filesystem::path> paths;
+    for (const QModelIndex& row : tree_->selectionModel()->selectedRows()) {
+        if (is_real_row(*model_, row)) {
+            paths.push_back(model_->path_of(row));
+        }
+    }
+    return paths;
+}
+
+bool ExplorerView::selection_is_directory() const {
+    const QModelIndexList rows = tree_->selectionModel()->selectedRows();
+    return rows.isEmpty() || !is_real_row(*model_, rows.first()) ||
+           model_->is_directory(rows.first());
+}
+
+bool ExplorerView::is_editing() const {
+    return editing_.has_value() && editor_ != nullptr;
+}
+
+QLineEdit* ExplorerView::name_editor() const {
+    return editor_;
+}
+
+QString ExplorerView::name_problem() const {
+    return editor_ ? editor_->problem() : QString();
+}
+
+void ExplorerView::new_file() {
+    begin_new(false);
+}
+
+void ExplorerView::new_folder() {
+    begin_new(true);
+}
+
+void ExplorerView::begin_new(bool folder) {
+    if (!shows_folder()) {
+        return;
+    }
+    finish_editing();
+    QModelIndex directory;
+    const QModelIndexList rows = tree_->selectionModel()->selectedRows();
+    if (!rows.isEmpty() && is_real_row(*model_, rows.first())) {
+        directory = model_->is_directory(rows.first()) ? rows.first() : rows.first().parent();
+    }
+    new_request_ = NewRequest{folder, !directory.isValid(), QPersistentModelIndex(directory)};
+    if (directory.isValid()) {
+        tree_->expand(directory);
+    }
+    continue_new();
+}
+
+void ExplorerView::continue_new() {
+    if (!new_request_) {
+        return;
+    }
+    const QModelIndex directory = new_request_->directory;
+    if (!new_request_->root && !directory.isValid()) {
+        new_request_.reset();
+        return;
+    }
+    if (!model_->is_read(directory)) {
+        return;
+    }
+    const bool folder = new_request_->folder;
+    new_request_.reset();
+    const QModelIndex row = model_->add_pending_entry(directory, folder);
+    begin_editing(folder ? Edit::create_folder : Edit::create_file, row,
+                  directory.isValid() ? model_->path_of(directory) : *model_->folder(), {});
+}
+
+void ExplorerView::rename_selected() {
+    const QModelIndexList rows = tree_->selectionModel()->selectedRows();
+    if (rows.isEmpty() || !is_real_row(*model_, rows.first())) {
+        return;
+    }
+    finish_editing();
+    const QModelIndex row = rows.first();
+    const std::filesystem::path path = model_->path_of(row);
+    begin_editing(Edit::rename, row, path.parent_path(), path);
+}
+
+void ExplorerView::begin_editing(Edit kind, const QModelIndex& row, std::filesystem::path directory,
+                                 std::filesystem::path original) {
+    editing_ = Editing{kind, std::move(directory), std::move(original), QPersistentModelIndex(row)};
+    const std::uint64_t serial = ++edit_serial_;
+    tree_->setCurrentIndex(row);
+    tree_->scrollTo(row);
+    tree_->edit(row);
+    if (editor_ == nullptr) {
+        editing_.reset();
+        model_->remove_pending_entry();
+        return;
+    }
+    // The tree selects all of the text when it opens the field.
+    if (kind == Edit::rename) {
+        const QString name = editor_->text();
+        const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+        if (!model_->is_directory(row) && dot > 0) {
+            editor_->setSelection(0, static_cast<int>(dot));
+        } else {
+            editor_->selectAll();
+        }
+    }
+    // The tree deletes the field when its row goes, which ends the editing.
+    connect(editor_, &QObject::destroyed, this, [this, serial] {
+        if (serial == edit_serial_ && !destroying_) {
+            editing_.reset();
+            model_->remove_pending_entry();
+        }
+    });
+}
+
+QWidget* ExplorerView::make_name_editor(QWidget* parent, const QModelIndex&) {
+    auto* editor = new NameEditor(colors_, parent);
+    if (editing_ && editing_->kind == Edit::rename) {
+        editor->setText(QString::fromStdString(file_name_of(editing_->original)));
+    }
+    editor->on_accept = [this](const QString& name) { accept_name(name); };
+    editor->on_cancel = [this] { finish_editing(); };
+    editor->on_blur = [this] {
+        if (!editing_) {
+            return;
+        }
+        if (editor_ && !editor_->text().isEmpty() && problem_with(editor_->text()).isEmpty()) {
+            accept_name(editor_->text());
+        } else {
+            finish_editing();
+        }
+    };
+    connect(editor, &QLineEdit::textChanged, this, [this](const QString& text) {
+        if (editor_) {
+            editor_->set_problem(text.isEmpty() ? QString() : problem_with(text));
+        }
+    });
+    editor_ = editor;
+    return editor;
+}
+
+QString ExplorerView::problem_with(const QString& name) const {
+    if (!editing_) {
+        return {};
+    }
+    if (name.trimmed().isEmpty()) {
+        return tr("A file or folder name must be provided.");
+    }
+    if (name.startsWith(QLatin1Char('/')) || name.startsWith(QLatin1Char('\\'))) {
+        return tr("A file or folder name cannot start with a slash.");
+    }
+    const bool invalid = name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\')) ||
+                         name == QLatin1String(".") || name == QLatin1String("..") ||
+                         name.contains(QChar(0));
+    if (invalid) {
+        return tr("The name \"%1\" is not valid as a file or folder name. Please choose a "
+                  "different name.")
+            .arg(name);
+    }
+    const std::filesystem::path path = editing_->directory / name.toStdString();
+    if (editing_->kind == Edit::rename && path == editing_->original) {
+        return {};
+    }
+    if (platform::stat_path(path)) {
+        return tr("A file or folder \"%1\" already exists at this location. Please choose a "
+                  "different name.")
+            .arg(name);
+    }
+    return {};
+}
+
+void ExplorerView::accept_name(const QString& name) {
+    if (!editing_ || !editor_) {
+        return;
+    }
+    const Editing edit = *editing_;
+    if (edit.kind == Edit::rename && name.toStdString() == file_name_of(edit.original)) {
+        finish_editing();
+        return;
+    }
+    if (const QString problem = problem_with(name); !problem.isEmpty()) {
+        editor_->set_problem(problem);
+        return;
+    }
+    const std::filesystem::path target = edit.directory / name.toStdString();
+    std::expected<void, Error> done;
+    switch (edit.kind) {
+    case Edit::create_file:
+        done = platform::write_file(target, "");
+        break;
+    case Edit::create_folder:
+        done = platform::make_directory(target);
+        break;
+    case Edit::rename:
+        done = platform::rename_path(edit.original, target, false);
+        break;
+    }
+    finish_editing();
+    model_->reload(edit.directory);
+    if (!done) {
+        emit operation_failed(
+            tr("%1 failed: %2")
+                .arg(edit.kind == Edit::rename ? tr("Renaming") : tr("Creating %1").arg(name),
+                     QString::fromStdString(done.error().message)));
+        return;
+    }
+    select_path(target);
+    if (edit.kind == Edit::rename) {
+        emit renamed(QString::fromStdString(edit.original.string()),
+                     QString::fromStdString(target.string()));
+    } else {
+        emit created(QString::fromStdString(target.string()), edit.kind == Edit::create_folder);
+    }
+}
+
+void ExplorerView::finish_editing() {
+    editing_.reset();
+    ++edit_serial_;
+    if (editor_) {
+        static_cast<ExplorerTree*>(tree_)->close_name_editor(editor_);
+        editor_.clear();
+    }
+    model_->remove_pending_entry();
+}
+
+void ExplorerView::select_path(const std::filesystem::path& path) {
+    if (const QModelIndex row = model_->index_of(path); row.isValid()) {
+        tree_->setCurrentIndex(row);
+        tree_->scrollTo(row);
+    }
+}
+
+void ExplorerView::trash_selected() {
+    delete_items(false);
+}
+
+void ExplorerView::delete_selected() {
+    delete_items(true);
+}
+
+void ExplorerView::delete_items(bool permanently) {
+    // What to delete is fixed now: the question below runs a nested event loop, in which the
+    // selection can change.
+    const std::vector<std::filesystem::path> paths = selected_paths();
+    if (paths.empty()) {
+        return;
+    }
+    const bool trash = !permanently && trash_enabled_;
+    if (confirm_delete_ && actions_.confirm) {
+        const auto is_folder = [](const std::filesystem::path& path) {
+            const auto stat = platform::stat_path(path);
+            return stat && (stat->type & platform::file_type::directory) &&
+                   !(stat->type & platform::file_type::symbolic_link);
+        };
+        const QString name = QString::fromStdString(file_name_of(paths.front()));
+        QString message;
+        if (paths.size() > 1) {
+            message = (trash ? tr("Are you sure you want to delete the following %1 "
+                                  "files/directories and their contents?")
+                             : tr("Are you sure you want to permanently delete the following %1 "
+                                  "files/directories and their contents?"))
+                          .arg(paths.size());
+        } else if (is_folder(paths.front())) {
+            message = (trash ? tr("Are you sure you want to delete '%1' and its contents?")
+                             : tr("Are you sure you want to permanently delete '%1' and its "
+                                  "contents?"))
+                          .arg(name);
+        } else {
+            message = (trash ? tr("Are you sure you want to delete '%1'?")
+                             : tr("Are you sure you want to permanently delete '%1'?"))
+                          .arg(name);
+        }
+        QString detail;
+        if (trash) {
+#if defined(Q_OS_WIN)
+            detail = paths.size() > 1 ? tr("You can restore these files from the Recycle Bin.")
+                                      : tr("You can restore this file from the Recycle Bin.");
+#else
+            detail = paths.size() > 1 ? tr("You can restore these files from the Trash.")
+                                      : tr("You can restore this file from the Trash.");
+#endif
+        } else {
+            detail = tr("This action is irreversible!");
+        }
+        const QString button =
+#if defined(Q_OS_WIN)
+            trash ? tr("Move to Recycle Bin") : tr("Delete");
+#else
+            trash ? tr("Move to Trash") : tr("Delete");
+#endif
+        if (!actions_.confirm(this, message, detail, button)) {
+            return;
+        }
+    }
+
+    std::vector<std::filesystem::path> removed;
+    QString failure;
+    for (const std::filesystem::path& path : paths) {
+        QString reason;
+        if (trash && actions_.move_to_trash) {
+            if (!actions_.move_to_trash(path)) {
+                reason = tr("the item cannot be moved to the trash");
+            }
+        } else if (auto done = platform::remove_path(path, true); !done) {
+            reason = QString::fromStdString(done.error().message);
+        }
+        if (reason.isEmpty()) {
+            removed.push_back(path);
+        } else if (failure.isEmpty()) {
+            failure = tr("Deleting %1 failed: %2")
+                          .arg(QString::fromStdString(file_name_of(path)), reason);
+        }
+    }
+    std::set<std::filesystem::path> parents;
+    for (const std::filesystem::path& path : paths) {
+        parents.insert(path.parent_path());
+    }
+    for (const std::filesystem::path& parent : parents) {
+        model_->reload(parent);
+    }
+    if (!removed.empty()) {
+        emit deleted(removed);
+    }
+    if (!failure.isEmpty()) {
+        emit operation_failed(failure);
+    }
 }
 
 bool ExplorerView::shows_folder() const {
