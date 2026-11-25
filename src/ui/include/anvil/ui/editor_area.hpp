@@ -40,6 +40,9 @@ public:
     EditorView* view() {
         return view_;
     }
+    // How the strip of tabs shows the tabs, or that it is not shown at all: the group keeps its
+    // editor and find bar.
+    void set_tabs_mode(core::TabsMode mode);
     // Hides the editor and the find bar of a group that has no tab to show.
     void set_empty(bool empty);
     bool is_empty() const {
@@ -93,6 +96,8 @@ public:
 
     // Applies the settings to the editors of every group, and to the groups that come later.
     void apply_settings(const core::EditorSettings& settings);
+    // Sets how every group shows its tabs, and how the groups that come later do.
+    void set_tabs_mode(core::TabsMode mode);
     // Describes the tab again, which does nothing when it is unchanged.
     void refresh_tab(workbench::GroupId group, std::size_t index);
 
@@ -188,6 +193,7 @@ private:
     bool applying_sizes_ = false;
     bool rebuilding_ = false;
     bool centered_ = false;
+    core::TabsMode tabs_mode_ = core::TabsMode::multiple;
 };
 
 } // namespace anvil::ui

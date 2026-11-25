@@ -969,6 +969,22 @@ void MainWindow::register_commands() {
             toggle_zen_mode();
         }
     });
+    const auto add_tabs_mode = [this, &add](const char* id, const QString& title, const char* key,
+                                            const char* value) {
+        add(id, title, [this, key, value] { change_setting(key, value, tr("Tab Bar")); });
+    };
+    add_tabs_mode("workbench.action.showMultipleEditorTabs", tr("Show Multiple Editor Tabs"),
+                  "workbench.editor.showTabs", "multiple");
+    add_tabs_mode("workbench.action.showEditorTab", tr("Show Single Editor Tab"),
+                  "workbench.editor.showTabs", "single");
+    add_tabs_mode("workbench.action.hideEditorTabs", tr("Hide Editor Tabs"),
+                  "workbench.editor.showTabs", "none");
+    add_tabs_mode("workbench.action.zenShowMultipleEditorTabs",
+                  tr("Show Multiple Editor Tabs in Zen Mode"), "zenMode.showTabs", "multiple");
+    add_tabs_mode("workbench.action.zenShowEditorTab", tr("Show Single Editor Tab in Zen Mode"),
+                  "zenMode.showTabs", "single");
+    add_tabs_mode("workbench.action.zenHideEditorTabs", tr("Hide Editor Tabs in Zen Mode"),
+                  "zenMode.showTabs", "none");
     add("workbench.action.toggleCenteredLayout", tr("Toggle Centered Layout"), [this] {
         area_->set_centered(!area_->centered());
         view()->setFocus();
@@ -2515,6 +2531,7 @@ void MainWindow::apply_part_visibility() {
     sidebar_->set_activity_bar_allowed(editor.activity_bar_location !=
                                            core::ActivityBarLocation::hidden &&
                                        !(zen_.active && editor.zen_hide_activity_bar));
+    area_->set_tabs_mode(zen_.active ? editor.zen_show_tabs : editor.show_tabs);
 }
 
 void MainWindow::toggle_zen_mode() {

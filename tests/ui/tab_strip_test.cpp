@@ -1130,3 +1130,142 @@ TEST_F(TabStripTest, RendersAStripForReview) {
         image.save(QString::fromUtf8(directory) + "/tab_strip.png");
     }
 }
+
+TEST_F(TabStripTest, SingleModeShowsOnlyTheSelectedTabAcrossTheWholeStrip) {
+    add_many(4);
+    strip_->set_current_index(2);
+    strip_->set_single(true);
+    EXPECT_TRUE(strip_->single());
+    for (int i = 0; i < 4; ++i) {
+        if (i == 2) {
+            EXPECT_EQ(strip_->tab_rect(i), QRect(0, 0, 600, TabStrip::height_pixels));
+        } else {
+            EXPECT_TRUE(strip_->tab_rect(i).isEmpty()) << i;
+        }
+    }
+    EXPECT_EQ(strip_->count(), 4);
+    EXPECT_EQ(strip_->current_index(), 2);
+
+    const QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(300, 10)), QColor("#202020"));
+    EXPECT_EQ(pixel(image, QPoint(580, 10)), QColor("#202020"));
+}
+
+TEST_F(TabStripTest, SingleModeTakesTheWidthOfTheStripAsItResizes) {
+    add("a.txt");
+    strip_->set_single(true);
+    strip_->resize(900, TabStrip::height_pixels);
+    EXPECT_EQ(strip_->tab_rect(0).width(), 900);
+    strip_->resize(300, TabStrip::height_pixels);
+    EXPECT_EQ(strip_->tab_rect(0).width(), 300);
+}
+
+TEST_F(TabStripTest, ATitleLongerThanTheStripKeepsItsWidthInSingleModeAndDoesNotScroll) {
+    add(QString(120, QLatin1Char('x')));
+    strip_->set_single(true);
+    EXPECT_GT(strip_->tab_rect(0).width(), 600);
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+    QWheelEvent wheel(QPointF(10, 10), QPointF(10, 10), QPoint(), QPoint(-120, 0), Qt::NoButton, {},
+                      Qt::NoScrollPhase, false);
+    QApplication::sendEvent(strip_.get(), &wheel);
+    EXPECT_EQ(strip_->scroll_offset(), 0);
+}
+
+TEST_F(TabStripTest, SingleModeFollowsTheSelection) {
+    add_many(3);
+    strip_->set_single(true);
+    EXPECT_FALSE(strip_->tab_rect(0).isEmpty());
+    strip_->set_current_index(1);
+    EXPECT_TRUE(strip_->tab_rect(0).isEmpty());
+    EXPECT_FALSE(strip_->tab_rect(1).isEmpty());
+    strip_->remove_tab(1);
+    EXPECT_EQ(strip_->current_index(), 1);
+    EXPECT_FALSE(strip_->tab_rect(1).isEmpty());
+    EXPECT_TRUE(strip_->tab_rect(0).isEmpty());
+}
+
+TEST_F(TabStripTest, SingleModeCloseButtonAndMiddleClickCloseTheShownTab) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->set_single(true);
+    QSignalSpy closed(strip_.get(), &TabStrip::close_requested);
+    click(button(1));
+    ASSERT_EQ(closed.count(), 1);
+    EXPECT_EQ(closed.takeFirst().at(0).toInt(), 1);
+    click(body(1), Qt::MiddleButton);
+    ASSERT_EQ(closed.count(), 1);
+    EXPECT_EQ(closed.takeFirst().at(0).toInt(), 1);
+}
+
+TEST_F(TabStripTest, SingleModeHasNothingToSelectWithTheMouseAndNothingToReorder) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->set_single(true);
+    QSignalSpy selected(strip_.get(), &TabStrip::current_changed);
+    QSignalSpy moved(strip_.get(), &TabStrip::tab_moved);
+    press(QPoint(10, 10));
+    move(QPoint(300, 10), Qt::LeftButton);
+    move(QPoint(590, 10), Qt::LeftButton);
+    release(QPoint(590, 10));
+    EXPECT_EQ(selected.count(), 0);
+    EXPECT_EQ(moved.count(), 0);
+    EXPECT_EQ(titles(), (std::vector<QString>{"file0.txt", "file1.txt", "file2.txt"}));
+    EXPECT_EQ(strip_->current_index(), 1);
+}
+
+TEST_F(TabStripTest, SingleModeShowsATooltipOnlyForTheShownTab) {
+    add_many(2);
+    strip_->set_single(true);
+    EXPECT_EQ(strip_->hovered_tab(), -1);
+    move(QPoint(100, 10));
+    EXPECT_EQ(strip_->hovered_tab(), 0);
+}
+
+TEST_F(TabStripTest, SingleModeListsOnlyTheShownTabForAssistiveTechnology) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->set_single(true);
+    const auto items = strip_->accessible_items();
+    ASSERT_EQ(items.size(), 1U);
+    EXPECT_EQ(items[0].name, "file1.txt");
+    EXPECT_TRUE(items[0].state.selected);
+    EXPECT_EQ(items[0].rect, QRect(0, 0, 600, TabStrip::height_pixels));
+}
+
+TEST_F(TabStripTest, LeavingSingleModeShowsEveryTabAgain) {
+    add_many(3);
+    strip_->set_current_index(2);
+    strip_->set_single(true);
+    strip_->set_single(false);
+    EXPECT_FALSE(strip_->single());
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_EQ(strip_->tab_rect(i).left(), i * TabStrip::minimum_tab_width) << i;
+        EXPECT_EQ(strip_->tab_rect(i).width(), TabStrip::minimum_tab_width) << i;
+    }
+}
+
+TEST_F(TabStripTest, ADropOverASingleTabGoesBeforeItOrAfterTheLastTab) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->set_single(true);
+    EXPECT_EQ(strip_->insertion_index_at(10), 1);
+    EXPECT_EQ(strip_->insertion_index_at(590), 3);
+}
+
+TEST_F(TabStripTest, ADropIndicatorOverASingleTabIsAtItsLeftEdgeBeforeItAndAtTheRightEdgeAfter) {
+    add_many(3);
+    strip_->set_current_index(1);
+    strip_->set_single(true);
+    const QColor line = colors_.color("tab.dragAndDropBorder");
+    ASSERT_NE(line, QColor("#202020"));
+
+    strip_->set_drop_indicator(1);
+    QImage image = grab();
+    EXPECT_EQ(pixel(image, QPoint(0, 10)), line);
+    EXPECT_NE(pixel(image, QPoint(599, 10)), line);
+
+    strip_->set_drop_indicator(3);
+    image = grab();
+    EXPECT_EQ(pixel(image, QPoint(599, 10)), line);
+    EXPECT_NE(pixel(image, QPoint(0, 10)), line);
+}

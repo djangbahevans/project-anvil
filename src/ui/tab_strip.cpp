@@ -97,15 +97,35 @@ void TabStrip::set_tab(int index, Tab tab) {
         return;
     }
     const bool retitled = entry.tab.title != tab.title;
+    const bool visible_in_strip = !single_ || index == current_;
     entry.tab = std::move(tab);
     if (retitled) {
         measure(entry);
         layout_valid_ = false;
     }
     update();
-    if (retitled) {
-        notify_accessible_item(this, QAccessible::NameChanged, index);
+    if (retitled && visible_in_strip) {
+        notify_accessible_item(this, QAccessible::NameChanged, accessible_index(index));
     }
+}
+
+int TabStrip::accessible_index(int tab) const {
+    if (!single_) {
+        return tab;
+    }
+    return tab == current_ ? 0 : -1;
+}
+
+void TabStrip::set_single(bool single) {
+    if (single == single_) {
+        return;
+    }
+    single_ = single;
+    layout_valid_ = false;
+    scroll_ = 0;
+    hovered_ = -1;
+    hovered_button_ = false;
+    update();
 }
 
 void TabStrip::move_tab(int from, int to) {
@@ -141,15 +161,17 @@ void TabStrip::set_current_index(int index) {
     }
     if (index != current_) {
         const int previous = current_;
+        const int previous_item = accessible_index(previous);
         current_ = index;
+        layout_valid_ = layout_valid_ && !single_;
         update();
         if (accessible_events_wanted()) {
             QAccessible::State selected;
             selected.selected = true;
-            if (previous >= 0) {
-                notify_accessible_item_state(this, selected, previous);
+            if (previous >= 0 && previous_item >= 0) {
+                notify_accessible_item_state(this, selected, previous_item);
             }
-            notify_accessible_item_state(this, selected, index);
+            notify_accessible_item_state(this, selected, accessible_index(index));
         }
     }
     scroll_into_view(index);
@@ -160,6 +182,9 @@ std::vector<AccessibleItem> TabStrip::accessible_items() const {
     std::vector<AccessibleItem> items;
     items.reserve(entries_.size());
     for (std::size_t i = 0; i < entries_.size(); ++i) {
+        if (single_ && static_cast<int>(i) != current_) {
+            continue;
+        }
         const Entry& entry = entries_[i];
         QAccessible::State state;
         state.selectable = true;
@@ -198,9 +223,16 @@ void TabStrip::ensure_layout() const {
         return;
     }
     int x = 0;
-    for (Entry& entry : entries_) {
-        entry.width =
+    for (std::size_t i = 0; i < entries_.size(); ++i) {
+        Entry& entry = entries_[i];
+        const int natural =
             std::max(minimum_tab_width, title_padding + entry.title_width + 1 + action_width);
+        if (single_) {
+            entry.x = 0;
+            entry.width = static_cast<int>(i) == current_ ? std::max(natural, width()) : 0;
+            continue;
+        }
+        entry.width = natural;
         entry.x = x;
         x += entry.width;
     }
@@ -209,6 +241,9 @@ void TabStrip::ensure_layout() const {
 
 int TabStrip::content_width() const {
     ensure_layout();
+    if (single_) {
+        return 0;
+    }
     return entries_.empty() ? 0 : entries_.back().x + entries_.back().width;
 }
 
@@ -255,6 +290,11 @@ QRect TabStrip::close_button_rect(int index) const {
 
 int TabStrip::tab_at(int x) const {
     ensure_layout();
+    if (single_) {
+        const bool on_tab =
+            current_ >= 0 && x >= 0 && x < entries_[static_cast<std::size_t>(current_)].width;
+        return on_tab ? current_ : -1;
+    }
     const int content_x = x + scroll_;
     const auto found = std::ranges::upper_bound(
         entries_, content_x, {}, [](const Entry& entry) { return entry.x + entry.width; });
@@ -385,8 +425,9 @@ void TabStrip::paintEvent(QPaintEvent*) {
         paint_tab(painter, dragged, drag_left_);
     }
     if (drop_indicator_ >= 0) {
-        const int x = drop_indicator_ < count() ? tab_rect(drop_indicator_).left()
-                                                : tab_rect(count() - 1).right() + 1;
+        const int x = single_                     ? (drop_indicator_ <= current_ ? 0 : width())
+                      : drop_indicator_ < count() ? tab_rect(drop_indicator_).left()
+                                                  : tab_rect(count() - 1).right() + 1;
         painter.fillRect(QRect(std::max(0, x - 1), 0, 2, height_pixels),
                          colors_.color("tab.dragAndDropBorder"));
     }
@@ -394,6 +435,7 @@ void TabStrip::paintEvent(QPaintEvent*) {
 
 void TabStrip::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    layout_valid_ = layout_valid_ && !single_;
     set_scroll(scroll_);
     if (current_ >= 0) {
         scroll_into_view(current_);
@@ -416,6 +458,10 @@ void TabStrip::drag_to(int x) {
     const int dragged = pressed_;
     const int dragged_width = entries_[static_cast<std::size_t>(dragged)].width;
     drag_left_ = std::clamp(x - grab_offset_, 0, std::max(0, width() - dragged_width));
+    if (single_) {
+        update();
+        return;
+    }
 
     // The tab changes places with a neighbor when the mouse passes the middle of that neighbor.
     const int pointer = x + scroll_;

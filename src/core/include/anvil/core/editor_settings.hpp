@@ -44,6 +44,10 @@ enum class SideBarLocation { left, right };
 // `standard`, because the activity bar has no place other than beside the side bar yet.
 enum class ActivityBarLocation { standard, top, bottom, hidden };
 
+// workbench.editor.showTabs and zenMode.showTabs: every editor of a group is a tab, only the active
+// editor is shown as one large tab, or the group has no strip of tabs.
+enum class TabsMode { multiple, single, none };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
@@ -99,6 +103,10 @@ struct EditorSettings {
     // workbench.activityBar.location, where "default" is `standard`
     ActivityBarLocation activity_bar_location = ActivityBarLocation::standard;
 
+    // workbench.editor.showTabs
+    TabsMode show_tabs = TabsMode::multiple;
+    // zenMode.showTabs: what `show_tabs` is while Zen Mode is on
+    TabsMode zen_show_tabs = TabsMode::multiple;
     // zenMode.fullScreen: turning on Zen Mode also puts the window into full screen
     bool zen_full_screen = true;
     // zenMode.centerLayout: turning on Zen Mode also centers the editor area
@@ -116,8 +124,9 @@ struct EditorSettings {
     // an `editor.renderWhitespace` that is not "none", "boundary", "selection", "trailing" or
     // "all", a `files.autoSave` that is not "off", "afterDelay", "onFocusChange" or
     // "onWindowChange", a `workbench.sideBar.location` that is not "left" or "right", a
-    // `workbench.activityBar.location` that is not "default", "top", "bottom" or "hidden", or a
-    // `window.titleBarStyle` that is not "custom" or "native", fails with
+    // `workbench.activityBar.location` that is not "default", "top", "bottom" or "hidden", a
+    // `workbench.editor.showTabs` or `zenMode.showTabs` that is not "multiple", "single" or "none",
+    // or a `window.titleBarStyle` that is not "custom" or "native", fails with
     // ErrorCode::invalid_argument and a message that names every offending key.
     static std::expected<EditorSettings, Error> from_settings(const Settings& settings,
                                                               const EditorDefaults& defaults);

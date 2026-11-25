@@ -167,6 +167,38 @@ TEST(EditorSettings, ZenModeHidesAndEntersFullScreenAndCentersUnlessToldNotTo) {
     EXPECT_TRUE(only_one->zen_hide_activity_bar);
 }
 
+TEST(EditorSettings, TabsAreMultipleUnlessTheSettingsSayOtherwise) {
+    const auto defaults = read("{}");
+    EXPECT_EQ(defaults->show_tabs, anvil::core::TabsMode::multiple);
+    EXPECT_EQ(defaults->zen_show_tabs, anvil::core::TabsMode::multiple);
+
+    EXPECT_EQ(read(R"j({"workbench.editor.showTabs": "single"})j")->show_tabs,
+              anvil::core::TabsMode::single);
+    EXPECT_EQ(read(R"j({"workbench.editor.showTabs": "none"})j")->show_tabs,
+              anvil::core::TabsMode::none);
+    EXPECT_EQ(read(R"j({"workbench": {"editor": {"showTabs": "multiple"}}})j")->show_tabs,
+              anvil::core::TabsMode::multiple);
+    EXPECT_EQ(read(R"j({"zenMode.showTabs": "none"})j")->zen_show_tabs,
+              anvil::core::TabsMode::none);
+    EXPECT_EQ(read(R"j({"zenMode.showTabs": "single"})j")->zen_show_tabs,
+              anvil::core::TabsMode::single);
+
+    const auto one = read(R"j({"zenMode.showTabs": "none"})j");
+    EXPECT_EQ(one->show_tabs, anvil::core::TabsMode::multiple);
+    const auto other = read(R"j({"workbench.editor.showTabs": "none"})j");
+    EXPECT_EQ(other->zen_show_tabs, anvil::core::TabsMode::multiple);
+}
+
+TEST(EditorSettings, ATabsSettingThatIsNotAModeIsReportedByName) {
+    for (const char* key : {"workbench.editor.showTabs", "zenMode.showTabs"}) {
+        for (const char* value : {R"j("many")j", "true", "1"}) {
+            const auto result = read(std::string("{\"") + key + "\": " + value + "}");
+            ASSERT_FALSE(result.has_value()) << key << " " << value;
+            EXPECT_NE(result.error().message.find(key), std::string::npos) << key;
+        }
+    }
+}
+
 TEST(EditorSettings, AZenModeSettingOfTheWrongKindIsReportedByName) {
     for (const char* key : {"zenMode.fullScreen", "zenMode.centerLayout", "zenMode.hideStatusBar",
                             "zenMode.hideActivityBar"}) {

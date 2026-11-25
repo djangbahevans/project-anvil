@@ -74,6 +74,13 @@ public:
     // Selects the tab and scrolls it into view.
     void set_current_index(int index);
 
+    // Shows only the selected tab, as one tab as wide as the strip, instead of every tab. The other
+    // tabs stay in the strip, with no area, and cannot be reached with the mouse or reordered.
+    void set_single(bool single);
+    bool single() const {
+        return single_;
+    }
+
     // Whether the group the strip belongs to has the focus. A strip that does not have it is
     // painted with the `tab.unfocused...` colors. A strip starts focused.
     void set_focused(bool focused);
@@ -165,6 +172,9 @@ private:
         std::uint64_t id = 0;
     };
 
+    // The index of the tab among the items that assistive technology sees, or -1 for a tab it does
+    // not see.
+    int accessible_index(int tab) const;
     void measure(Entry& entry) const;
     void ensure_layout() const;
     int content_width() const;
@@ -181,6 +191,7 @@ private:
     mutable std::vector<Entry> entries_;
     mutable bool layout_valid_ = false;
     int current_ = -1;
+    bool single_ = false;
     int scroll_ = 0;
     bool focused_ = true;
 
