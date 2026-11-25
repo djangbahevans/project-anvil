@@ -20,5 +20,7 @@ std::string_view scope_for_capture(std::span<const CaptureScope> table, std::str
 // The rows of each grammar. The scope names carry the language's suffix, as the scopes of its
 // TextMate grammar do.
 std::span<const CaptureScope> json_capture_scopes();
+std::span<const CaptureScope> c_capture_scopes();
+std::span<const CaptureScope> cpp_capture_scopes();
 
 } // namespace anvil::core

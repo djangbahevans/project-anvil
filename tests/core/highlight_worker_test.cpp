@@ -122,7 +122,7 @@ TEST(HighlightWorker, ParsesTheTextItIsGivenOffTheCallingThread) {
 
 TEST(HighlightWorker, ALanguageWithoutAGrammarAndATextThatIsTooLargeAreRefused) {
     Results results;
-    const auto unsupported = HighlightWorker::create("cpp", Text{}, 1, results.deliver());
+    const auto unsupported = HighlightWorker::create("python", Text{}, 1, results.deliver());
     ASSERT_FALSE(unsupported.has_value());
     EXPECT_EQ(unsupported.error().code, ErrorCode::unsupported);
 

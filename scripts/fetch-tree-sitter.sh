@@ -11,6 +11,8 @@ set -euo pipefail
 SOURCES=(
     "runtime|https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.2.tar.gz|356528363bf7fbad12a2cfeb5a2678c0118ef886a4d69ad9a379db5fdef0735f"
     "json|https://github.com/tree-sitter/tree-sitter-json/archive/refs/tags/v0.24.8.tar.gz|acf6e8362457e819ed8b613f2ad9a0e1b621a77556c296f3abea58f7880a9213"
+    "c|https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.1.tar.gz|25dd4bb3dec770769a407e0fc803f424ce02c494a56ce95fedc525316dcf9b48"
+    "cpp|https://github.com/tree-sitter/tree-sitter-cpp/archive/refs/tags/v0.23.4.tar.gz|7a2c55afe3028f4105f25762ea58cc16537d1f5a1dcd9cca90410b3cd5d46051"
 )
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -43,3 +43,17 @@ Anvil includes the following material from other projects. Each keeps its own li
 - **From:** https://github.com/tree-sitter/tree-sitter-json, release v0.24.8, fetched and checked by `scripts/fetch-tree-sitter.sh`.
 - **Copyright:** Copyright (c) 2014 Max Brunsfeld.
 - **License:** MIT.
+
+## tree-sitter-c
+
+- **What:** the C grammar (`src/parser.c`) and its `queries/highlights.scm`, compiled and embedded into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository.
+- **From:** https://github.com/tree-sitter/tree-sitter-c, release v0.24.1, fetched and checked by `scripts/fetch-tree-sitter.sh`.
+- **Copyright:** Copyright (c) 2014 Max Brunsfeld.
+- **License:** MIT.
+
+## tree-sitter-cpp
+
+- **What:** the C++ grammar (`src/parser.c`, `src/scanner.c`) and its `queries/highlights.scm`, compiled and embedded into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository.
+- **From:** https://github.com/tree-sitter/tree-sitter-cpp, release v0.23.4, fetched and checked by `scripts/fetch-tree-sitter.sh`.
+- **Copyright:** Copyright (c) 2014 Max Brunsfeld.
+- **License:** MIT.

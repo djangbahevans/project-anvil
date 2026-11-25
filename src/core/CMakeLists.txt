@@ -70,8 +70,15 @@ if(ANVIL_HAVE_TREE_SITTER)
     COMPILE_DEFINITIONS "_POSIX_C_SOURCE=200112L;_DEFAULT_SOURCE;_DARWIN_C_SOURCE")
 
   # One call per grammar in .deps/tree-sitter/<name>: compiles its parser (and scanner, when it
-  # has one) and embeds its highlights query as `anvil::core::grammar_queries::<name>`.
+  # has one) and embeds its highlights query as `anvil::core::grammar_queries::<name>`. A grammar
+  # that builds on another (`INHERIT c`, for C++) has that one's patterns in its query too.
+  #
+  # The query is made of Anvil's own patterns first, from `queries/<name>.scm` of this directory,
+  # and then the grammar's own `highlights.scm`; in each part the grammar comes before those it
+  # inherits, as the more specific. Where two patterns capture the same node the first one wins,
+  # so Anvil's patterns decide the nodes that they name and C++ can refine what C says.
   function(anvil_add_tree_sitter_grammar name)
+    cmake_parse_arguments(ARG "" "" "INHERIT" ${ARGN})
     set(grammar_dir "${ANVIL_TREE_SITTER_DIR}/${name}")
     set(sources "${grammar_dir}/src/parser.c")
     if(EXISTS "${grammar_dir}/src/scanner.c")
@@ -81,9 +88,23 @@ if(ANVIL_HAVE_TREE_SITTER)
       COMPILE_OPTIONS "${ANVIL_THIRD_PARTY_C_OPTIONS}"
       INCLUDE_DIRECTORIES "${grammar_dir}/src")
 
-    set(query_file "${grammar_dir}/queries/highlights.scm")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${query_file}")
-    file(READ "${query_file}" ANVIL_HIGHLIGHTS_QUERY)
+    set(query "")
+    foreach(source ${name} ${ARG_INHERIT})
+      set(overlay "${CMAKE_CURRENT_SOURCE_DIR}/queries/${source}.scm")
+      if(EXISTS "${overlay}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${overlay}")
+        file(READ "${overlay}" part)
+        string(APPEND query "${part}\n")
+      endif()
+    endforeach()
+    foreach(source ${name} ${ARG_INHERIT})
+      set(upstream "${ANVIL_TREE_SITTER_DIR}/${source}/queries/highlights.scm")
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${upstream}")
+      file(READ "${upstream}" part)
+      string(APPEND query "${part}\n")
+    endforeach()
+
+    set(ANVIL_HIGHLIGHTS_QUERY "${query}")
     set(ANVIL_GRAMMAR_NAME "${name}")
     set(generated "${CMAKE_CURRENT_BINARY_DIR}/grammar_query_${name}.cpp")
     configure_file("${CMAKE_SOURCE_DIR}/cmake/grammar_query.cpp.in" "${generated}" @ONLY)
@@ -93,6 +114,8 @@ if(ANVIL_HAVE_TREE_SITTER)
 
   target_sources(anvil_core PRIVATE ${ANVIL_TREE_SITTER_SOURCES} tree_sitter_highlighter.cpp highlight_worker.cpp)
   anvil_add_tree_sitter_grammar(json)
+  anvil_add_tree_sitter_grammar(c)
+  anvil_add_tree_sitter_grammar(cpp INHERIT c)
   target_include_directories(anvil_core PRIVATE "${ANVIL_TREE_SITTER_RUNTIME}/include")
   target_compile_definitions(anvil_core PUBLIC ANVIL_TREE_SITTER)
 endif()
