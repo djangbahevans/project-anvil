@@ -17,7 +17,7 @@ std::string keybindings_reference(const CommandTitles& titles, const core::Keybi
     std::vector<Line> lines;
     std::set<std::string, std::less<>> seen;
     for (const core::Keybinding& binding : table.bindings()) {
-        if (binding.command.empty() || !seen.insert(binding.command).second) {
+        if (!seen.insert(binding.command).second) {
             continue;
         }
         std::vector<std::string> labels;

@@ -66,6 +66,12 @@ TEST(KeybindingsReferenceTest, ARemovedBindingIsNotListedAndACommandWithoutKeysI
               std::string(heading) + "Find\tCtrl+F\n");
 }
 
+TEST(KeybindingsReferenceTest, TitlesThatDifferOnlyInCaseAreOrderedByTheirIds) {
+    EXPECT_EQ(reference({{"z", "Go"}, {"a", "go"}, {"m", "GO"}},
+                        {bind("f1", "z"), bind("f2", "a"), bind("f3", "m")}),
+              std::string(heading) + "go\tF2\nGO\tF3\nGo\tF1\n");
+}
+
 TEST(KeybindingsReferenceTest, ABindingToNothingIsNotListed) {
     EXPECT_EQ(reference({}, {bind("f1", "")}), heading);
 }
