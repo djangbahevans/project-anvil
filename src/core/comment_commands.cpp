@@ -410,11 +410,9 @@ Command line_comment(const Model& model, const Sel& selection, LineCommentType t
 
     if (s.start().line == s.end().line && ignore_first_line) {
         // VS Code replaces the line break after the line with itself. It changes nothing, but the
-        // edit reaches into the next line, where it conflicts with the edits of other cursors.
+        // range reaches into the next line, where it conflicts with the edits of other cursors.
         const std::size_t line = s.start().line;
-        command.ops.push_back({{{line, model.max_column(line)}, {line + 1, 1}},
-                               line == model.line_count() ? "" : "\n",
-                               false});
+        command.ops.push_back({{{line, model.max_column(line)}, {line + 1, 1}}, "", false});
         command.tracked = s;
         return command;
     }

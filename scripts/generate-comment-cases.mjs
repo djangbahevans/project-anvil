@@ -237,7 +237,7 @@ const commands = ['toggle', 'toggle', 'add', 'remove', 'block'];
 // a reversed selection that the edits empty, a selection pushed past the end of its line, cursors
 // that merge, a block comment over a blank line.
 const kept = 3000;
-const rare = new Set([4116, 7199, 9133, 10973, 11078, 11529]);
+const rare = new Set([4115, 7198, 9132, 10972, 11077, 11528]);
 for (let n = 0; n < 12000; n++) {
     const config = pick(names);
     const command = pick(commands);
