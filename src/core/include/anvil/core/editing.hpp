@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/document.hpp"
+#include "anvil/core/language_comments.hpp"
 #include "anvil/core/search.hpp"
 
 #include <cstddef>
@@ -27,6 +28,23 @@ enum class Motion {
     document_end,
     word_left,
     word_right,
+};
+
+// Which of VS Code's line comment commands runs: Toggle Line Comment, Add Line Comment or Remove
+// Line Comment.
+enum class LineCommentType { toggle, add, remove };
+
+// What the comment commands need to know besides the text and the selections.
+struct CommentOptions {
+    // The tokens of the language of the document.
+    LanguageComments tokens;
+    // `editor.tabSize`: the width of a tab, which aligns the comment tokens of indented lines.
+    std::size_t indent_size = 4;
+    // `editor.comments.insertSpace`: a space follows a line token and surrounds a block comment.
+    bool insert_space = true;
+    // `editor.comments.ignoreEmptyLines`: a line with nothing on it gets no line token, unless the
+    // lines of a toggle are all like that.
+    bool ignore_empty_lines = true;
 };
 
 // What an editing command did.
@@ -187,6 +205,22 @@ public:
     // Copies the text of each selection after itself and selects the copy; a caret copies its
     // line below it, like copy_lines(true).
     EditOutcome duplicate_selection();
+
+    // --- comments ---
+
+    // Toggle, add or remove the line comment token of the language on the lines of every selection
+    // as VS Code's `LineCommentCommand` does: a toggle removes the tokens when every line has one
+    // and adds them otherwise, at the smallest indentation of the lines; a selection that ends at
+    // the start of a line leaves that line out; selections that share a line comment it once.
+    // A language with only a block comment gets that around the text instead. One undo step.
+    // As in VS Code, a cursor whose edits overlap those of an earlier cursor is dropped, and the
+    // cursors that end up overlapping are merged. The caller decides what to do for a language that
+    // has no tokens, which VS Code treats like any other.
+    EditOutcome comment_lines(LineCommentType type, const CommentOptions& options);
+    // Wraps the text of every selection in the block comment of the language, or unwraps it when it
+    // is wrapped already, as VS Code's `BlockCommentCommand` does. Nothing happens when the
+    // language has no block comment.
+    EditOutcome toggle_block_comment(const CommentOptions& options);
 
     // --- occurrences ---
 
