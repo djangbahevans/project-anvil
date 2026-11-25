@@ -32,8 +32,10 @@ struct WatchOptions {
     // and at most `max_delay` after the first.
     std::chrono::milliseconds latency{50};
     std::chrono::milliseconds max_delay{500};
-    // Fail instead of watching more directories than this; 0 leaves the limit to the system
-    // (`fs.inotify.max_user_watches` on Linux).
+    // Do not watch more directories than this; 0 leaves the limit to the system
+    // (`fs.inotify.max_user_watches` on Linux). The directory that the watch starts on counts: when
+    // it is beyond the limit, `start` fails with `limit_exceeded`. A directory below it that is
+    // beyond the limit is reported by `poll` as `limit_exceeded` and is not watched.
     std::size_t max_directories = 0;
 };
 
@@ -47,17 +49,28 @@ struct WatchOptions {
 // created new path. A directory that appears is reported as created together with what it holds.
 // Starting a watch reports nothing for what exists.
 //
+// A recursive watch watches the path it starts on at once, and adds the directories below it from
+// its worker thread, breadth first, so that starting does not wait for the whole tree: a large
+// folder takes seconds to add. Changes in a directory that has no watch yet are not reported, and
+// `ready()` tells when every directory that existed at the start is watched. A problem with the
+// directories (the system's limit of watches, or a directory that cannot be watched) is returned by
+// `poll` like the loss of events, and the watch goes on with the directories it has.
+//
 // One implementation per operating system; Windows and macOS fail to start with `unsupported`.
 class FileWatcher {
 public:
     // Watches `path`, a directory or a file. Fails with `not_found` when it does not exist and
-    // with `limit_exceeded` when the system or `max_directories` allows no more directories.
+    // with `limit_exceeded` when the system or `max_directories` allows not even `path`.
     static std::expected<std::unique_ptr<FileWatcher>, Error>
     start(const std::filesystem::path& path, const WatchOptions& options = {});
 
     ~FileWatcher();
     FileWatcher(const FileWatcher&) = delete;
     FileWatcher& operator=(const FileWatcher&) = delete;
+
+    // Whether every directory that existed when the watch started is watched. False while the
+    // directories below the path of a recursive watch are still being added.
+    bool ready() const;
 
     // Waits up to `timeout` for events and takes all of them; an empty result is a timeout.
     // Returns an error that the watch ran into after its events were taken: events were lost
