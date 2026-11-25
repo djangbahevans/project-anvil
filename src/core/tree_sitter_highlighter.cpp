@@ -380,31 +380,24 @@ private:
     mutable std::unordered_map<std::size_t, std::vector<HighlightSpan>> cache_;
 };
 
-// The query of a grammar, compiled once for the process: compiling the query of a large grammar
-// takes longer than parsing a small document, and the result only reads.
-std::expected<std::shared_ptr<const QueryData>, Error> query_data_for(const Grammar& grammar) {
-    static std::mutex mutex;
-    static std::map<const Grammar*, std::shared_ptr<const QueryData>> cache;
-    const std::lock_guard lock(mutex);
-    if (const auto found = cache.find(&grammar); found != cache.end()) {
-        return found->second;
-    }
+// Compiles `source` as a highlights query of the grammar.
+std::expected<std::shared_ptr<const QueryData>, Error> build_query_data(const Grammar& grammar,
+                                                                        std::string_view source) {
     const std::string language_id(grammar.language_id);
     const TSLanguage* language = grammar.language();
     std::uint32_t error_offset = 0;
     TSQueryError error_type = TSQueryErrorNone;
-    std::unique_ptr<TSQuery, QueryDeleter> query(ts_query_new(
-        language, grammar.highlights.data(), static_cast<std::uint32_t>(grammar.highlights.size()),
-        &error_offset, &error_type));
+    std::unique_ptr<TSQuery, QueryDeleter> query(
+        ts_query_new(language, source.data(), static_cast<std::uint32_t>(source.size()),
+                     &error_offset, &error_type));
     if (!query) {
         static constexpr const char* kinds[] = {"none",       "syntax error", "node type",
                                                 "field name", "capture name", "structure",
                                                 "language"};
-        const std::string_view source = grammar.highlights;
         const std::string_view near = source.substr(error_offset, 40);
         return std::unexpected(Error{ErrorCode::environment_unavailable,
-                                     "the highlights query of " + std::string(language_id) +
-                                         " has an invalid " + kinds[error_type] + " at byte " +
+                                     "the highlights query of " + language_id + " has an invalid " +
+                                         kinds[error_type] + " at byte " +
                                          std::to_string(error_offset) + ", near \"" +
                                          std::string(near.substr(0, near.find('\n'))) + "\""});
     }
@@ -413,9 +406,9 @@ std::expected<std::shared_ptr<const QueryData>, Error> query_data_for(const Gram
     data->query = std::move(query);
     auto predicates = read_predicates(*data->query);
     if (!predicates) {
-        return std::unexpected(Error{ErrorCode::environment_unavailable,
-                                     "the highlights query of " + std::string(language_id) + ": " +
-                                         predicates.error()});
+        return std::unexpected(
+            Error{ErrorCode::environment_unavailable,
+                  "the highlights query of " + language_id + ": " + predicates.error()});
     }
     data->predicates = std::move(*predicates);
     const std::span<const CaptureScope> table = grammar.scopes();
@@ -426,8 +419,22 @@ std::expected<std::shared_ptr<const QueryData>, Error> query_data_for(const Gram
         const char* name = ts_query_capture_name_for_id(data->query.get(), i, &length);
         data->capture_scopes.push_back(scope_for_capture(table, std::string_view(name, length)));
     }
+    return data;
+}
 
-    cache.emplace(&grammar, data);
+// The embedded query of a grammar, compiled once for the process: compiling the query of a large
+// grammar takes longer than parsing a small document, and the result only reads.
+std::expected<std::shared_ptr<const QueryData>, Error> query_data_for(const Grammar& grammar) {
+    static std::mutex mutex;
+    static std::map<const Grammar*, std::shared_ptr<const QueryData>> cache;
+    const std::lock_guard lock(mutex);
+    if (const auto found = cache.find(&grammar); found != cache.end()) {
+        return found->second;
+    }
+    auto data = build_query_data(grammar, grammar.highlights);
+    if (data) {
+        cache.emplace(&grammar, *data);
+    }
     return data;
 }
 
@@ -456,6 +463,12 @@ bool TreeSitterHighlighter::supports(std::string_view language_id) {
 
 std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
 TreeSitterHighlighter::create(std::string_view language_id, Text text, std::stop_token stop) {
+    return create_with_query(language_id, {}, std::move(text), stop);
+}
+
+std::expected<std::unique_ptr<TreeSitterHighlighter>, Error>
+TreeSitterHighlighter::create_with_query(std::string_view language_id, std::string_view query,
+                                         Text text, std::stop_token stop) {
     const Grammar* grammar = find_grammar(language_id);
     if (!grammar) {
         return std::unexpected(Error{ErrorCode::unsupported,
@@ -474,7 +487,7 @@ TreeSitterHighlighter::create(std::string_view language_id, Text text, std::stop
                                          " grammar does not fit the tree-sitter runtime"});
     }
 
-    auto data = query_data_for(*grammar);
+    auto data = query.empty() ? query_data_for(*grammar) : build_query_data(*grammar, query);
     if (!data) {
         return std::unexpected(data.error());
     }

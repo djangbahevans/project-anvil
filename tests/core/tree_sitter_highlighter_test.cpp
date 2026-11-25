@@ -182,6 +182,53 @@ TEST(TreeSitterHighlighter, AnIdentifierIsAConstantOnlyWhenItsTextMatchesThePred
     EXPECT_EQ(constants, "MAX_SIZE Y2 ");
 }
 
+namespace {
+
+std::vector<std::string> strings_matching(std::string_view predicate) {
+    const Text text = text_of(R"(["apple", "banana", "avocado", 7])");
+    const std::string query = "((string) @string " + std::string(predicate) + ")";
+    const auto highlighter = TreeSitterHighlighter::create_with_query("json", query, text);
+    EXPECT_TRUE(highlighter.has_value()) << (highlighter ? "" : highlighter.error().message);
+    std::vector<std::string> found;
+    if (highlighter) {
+        for (const HighlightSpan& span : (*highlighter)->spans(0)) {
+            found.push_back(text.line(0).substr(span.begin, span.end - span.begin));
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST(TreeSitterHighlighter, AMatchPredicateKeepsTheNodesWhoseTextMatches) {
+    EXPECT_EQ(strings_matching(R"q((#match? @string "^\"a"))q"),
+              (std::vector<std::string>{"\"apple\"", "\"avocado\""}));
+    EXPECT_TRUE(strings_matching(R"q((#match? @string "zzz"))q").empty());
+}
+
+TEST(TreeSitterHighlighter, ANotMatchPredicateKeepsTheNodesWhoseTextDoesNotMatch) {
+    EXPECT_EQ(strings_matching(R"q((#not-match? @string "^\"a"))q"),
+              (std::vector<std::string>{"\"banana\""}));
+}
+
+TEST(TreeSitterHighlighter, AQueryWithAPredicateThatIsNotUnderstoodIsRefused) {
+    const auto refused = TreeSitterHighlighter::create_with_query(
+        "json", R"q(((string) @s (#eq? @s "\"a\"")))q", Text{});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_EQ(refused.error().code, ErrorCode::environment_unavailable);
+    EXPECT_NE(refused.error().message.find("#eq?"), std::string::npos) << refused.error().message;
+}
+
+TEST(TreeSitterHighlighter, AQueryThatDoesNotCompileSaysWhatIsWrongAndWhere) {
+    const auto refused =
+        TreeSitterHighlighter::create_with_query("json", "(string) @s\n(nonsense) @t", Text{});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_NE(refused.error().message.find("node type"), std::string::npos)
+        << refused.error().message;
+    EXPECT_NE(refused.error().message.find("nonsense"), std::string::npos)
+        << refused.error().message;
+}
+
 TEST(TreeSitterHighlighter, TheRootScopeIsTheLanguages) {
     const auto highlighter = json_highlighter(text_of("[]"));
     ASSERT_TRUE(highlighter);
