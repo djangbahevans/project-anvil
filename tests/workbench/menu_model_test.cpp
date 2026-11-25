@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <iterator>
 #include <nlohmann/json.hpp>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -343,4 +344,185 @@ TEST(MenuModel, AnUnknownMenuHasNoItems) {
 }
 
 } // namespace
+} // namespace anvil::workbench
+
+// --- ids that Anvil does not provide ---
+
+namespace anvil::workbench {
+
+namespace {
+
+// The ids of every entry of the menu, submenus and what is in them included.
+void collect_ids(const std::vector<MenuItem>& items, std::vector<std::string>& ids) {
+    for (const MenuItem& item : items) {
+        if (item.kind != MenuEntryKind::separator) {
+            ids.push_back(item.id);
+        }
+        collect_ids(item.items, ids);
+    }
+}
+
+// What a menu looks like, one line for each entry, the entries of a submenu indented.
+void describe(const std::vector<MenuItem>& items, const std::string& indent,
+              std::vector<std::string>& lines) {
+    for (const MenuItem& item : items) {
+        switch (item.kind) {
+        case MenuEntryKind::separator:
+            lines.push_back(indent + "-");
+            break;
+        case MenuEntryKind::submenu:
+            lines.push_back(indent + "submenu " + item.id);
+            describe(item.items, indent + "  ", lines);
+            break;
+        case MenuEntryKind::item:
+            lines.push_back(indent + item.id + (item.enabled ? "" : " disabled") +
+                            (item.checkable ? (item.checked ? " checked" : " unchecked") : ""));
+            break;
+        }
+    }
+}
+
+std::vector<std::string> described(const std::vector<MenuItem>& items) {
+    std::vector<std::string> lines;
+    describe(items, "", lines);
+    return lines;
+}
+
+// The reference for leaving ids out: the menu as it is, with the entries removed afterwards, the
+// submenus that empty out dropped, and the separators that no longer lie between two entries.
+std::vector<MenuItem> without(const std::vector<MenuItem>& items,
+                              const std::set<std::string>& ids) {
+    std::vector<MenuItem> kept;
+    for (const MenuItem& item : items) {
+        if (item.kind == MenuEntryKind::separator) {
+            kept.push_back(item);
+            continue;
+        }
+        if (ids.contains(item.id)) {
+            continue;
+        }
+        MenuItem copy = item;
+        if (item.kind == MenuEntryKind::submenu) {
+            copy.items = without(item.items, ids);
+            if (copy.items.empty()) {
+                continue;
+            }
+        }
+        kept.push_back(std::move(copy));
+    }
+    std::vector<MenuItem> result;
+    for (const MenuItem& item : kept) {
+        const bool separator = item.kind == MenuEntryKind::separator;
+        if (separator && (result.empty() || result.back().kind == MenuEntryKind::separator)) {
+            continue;
+        }
+        result.push_back(item);
+    }
+    while (!result.empty() && result.back().kind == MenuEntryKind::separator) {
+        result.pop_back();
+    }
+    return result;
+}
+
+std::vector<std::string_view> views_of(const std::set<std::string>& ids) {
+    return {ids.begin(), ids.end()};
+}
+
+} // namespace
+
+TEST(MenuModelUnprovided, LeavingIdsOutIsTheMenuWithThoseEntriesRemoved) {
+    std::mt19937 random(5);
+    for (const MenuItem& top : top_level_menus(desktop())) {
+        const std::vector<MenuItem> whole = menu_items(top.id, desktop());
+        std::vector<std::string> ids;
+        collect_ids(whole, ids);
+        ids.push_back("not.in.any.menu");
+        for (int round = 0; round < 60; ++round) {
+            std::set<std::string> left_out;
+            const std::size_t count = random() % (ids.size() / 2 + 1);
+            for (std::size_t i = 0; i < count; ++i) {
+                left_out.insert(ids[random() % ids.size()]);
+            }
+            const std::vector<std::string_view> unprovided = views_of(left_out);
+            EXPECT_EQ(described(menu_items(top.id, desktop(), unprovided)),
+                      described(without(whole, left_out)))
+                << top.id << " round " << round;
+        }
+    }
+}
+
+TEST(MenuModelUnprovided, AnEmptyListAndNoListLeaveTheMenuAsItIs) {
+    for (const MenuItem& top : top_level_menus(desktop())) {
+        EXPECT_EQ(described(menu_items(top.id, desktop(), {})),
+                  described(menu_items(top.id, desktop())))
+            << top.id;
+    }
+}
+
+TEST(MenuModelUnprovided, ASubmenuLeftOutTakesItsEntriesWithIt) {
+    const std::vector<MenuItem> file = menu_items("MenubarFileMenu", desktop());
+    const auto submenu = std::ranges::find_if(
+        file, [](const MenuItem& item) { return item.kind == MenuEntryKind::submenu; });
+    ASSERT_NE(submenu, file.end());
+    std::vector<std::string> inside;
+    collect_ids(submenu->items, inside);
+    ASSERT_FALSE(inside.empty());
+    const std::vector<std::string_view> unprovided = {submenu->id};
+    std::vector<std::string> remaining;
+    collect_ids(menu_items("MenubarFileMenu", desktop(), unprovided), remaining);
+    EXPECT_EQ(std::ranges::count(remaining, submenu->id), 0);
+    for (const std::string& id : inside) {
+        EXPECT_EQ(std::ranges::count(remaining, id), 0) << id;
+    }
+}
+
+TEST(MenuModelUnprovided, EveryEntryThatAnvilDoesNotProvideIsInTheMenusOfVsCode) {
+    std::set<std::string> in_the_table;
+    for (const MenuEntry& entry : menu_table) {
+        in_the_table.insert(std::string(entry.id));
+    }
+    std::set<std::string> seen;
+    for (const std::string_view id : unprovided_menu_items()) {
+        EXPECT_TRUE(in_the_table.contains(std::string(id))) << id;
+        EXPECT_TRUE(seen.insert(std::string(id)).second) << id << " is listed twice";
+    }
+    EXPECT_FALSE(seen.empty());
+}
+
+TEST(MenuModelUnprovided, TheHelpMenuListsWhatAnvilProvidesBetweenSeparators) {
+    const std::vector<MenuItem> help =
+        menu_items("MenubarHelpMenu", desktop(), unprovided_menu_items());
+    std::vector<std::string> lines;
+    for (const MenuItem& item : help) {
+        lines.push_back(item.kind == MenuEntryKind::separator ? "-" : item.id);
+    }
+    EXPECT_EQ(lines, (std::vector<std::string>{
+                         "workbench.action.showCommands",
+                         "workbench.action.openDocumentationUrl",
+                         "-",
+                         "workbench.action.keybindingsReference",
+                         "-",
+                         "workbench.action.openIssueReporter",
+                         "-",
+                         "workbench.action.openLicenseUrl",
+                         "-",
+                         "workbench.action.showAboutDialog",
+                     }));
+}
+
+TEST(MenuModelUnprovided, TheHelpMenuHasEveryItemAnvilLeavesOutUntilTheyAreLeftOut) {
+    std::vector<std::string> shown;
+    collect_ids(menu_items("MenubarHelpMenu", desktop()), shown);
+    std::vector<std::string> left_in;
+    collect_ids(menu_items("MenubarHelpMenu", desktop(), unprovided_menu_items()), left_in);
+    int removed = 0;
+    for (const std::string_view id : unprovided_menu_items()) {
+        EXPECT_EQ(std::ranges::count(left_in, std::string(id)), 0) << id;
+        removed += static_cast<int>(std::ranges::count(shown, std::string(id)));
+    }
+    // Every one of them is in the menu of a desktop window but the chat entry, which VS Code shows
+    // only where its chat is set up.
+    EXPECT_EQ(removed, static_cast<int>(unprovided_menu_items().size()) - 1);
+}
+
 } // namespace anvil::workbench

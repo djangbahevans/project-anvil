@@ -1391,7 +1391,8 @@ void MainWindow::build_menus() {
                 submenu->deleteLater();
             }
             menu->clear();
-            populate_menu(menu, workbench::menu_items(id, menu_context()));
+            populate_menu(menu, workbench::menu_items(id, menu_context(),
+                                                      workbench::unprovided_menu_items()));
         });
     }
 }

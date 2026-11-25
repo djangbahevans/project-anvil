@@ -98,8 +98,8 @@ bool shown(const MenuEntry& entry, const core::ContextKeys& context) {
 
 // Builds the entries of one menu level: those at `depth` that follow `index`, with the entries
 // below them, moving `index` past all of them.
-std::vector<MenuItem> build(std::size_t& index, std::size_t depth,
-                            const core::ContextKeys& context) {
+std::vector<MenuItem> build(std::size_t& index, std::size_t depth, const core::ContextKeys& context,
+                            std::span<const std::string_view> unprovided) {
     std::vector<MenuItem> items;
     bool pending_separator = false;
     while (index < std::size(menu_table) && menu_table[index].depth >= depth) {
@@ -111,9 +111,10 @@ std::vector<MenuItem> build(std::size_t& index, std::size_t depth,
         MenuItem item{.kind = entry.kind,
                       .label = parse_menu_label(entry.label),
                       .id = std::string(entry.id)};
-        const bool visible = shown(entry, context);
+        const bool visible =
+            shown(entry, context) && std::ranges::find(unprovided, entry.id) == unprovided.end();
         if (entry.kind == MenuEntryKind::submenu) {
-            std::vector<MenuItem> children = build(index, depth + 1, context);
+            std::vector<MenuItem> children = build(index, depth + 1, context, unprovided);
             if (!visible || children.empty()) {
                 continue;
             }
@@ -161,14 +162,38 @@ std::vector<MenuItem> top_level_menus(const core::ContextKeys& context) {
     return menus;
 }
 
-std::vector<MenuItem> menu_items(std::string_view menu_id, const core::ContextKeys& context) {
+std::vector<MenuItem> menu_items(std::string_view menu_id, const core::ContextKeys& context,
+                                 std::span<const std::string_view> unprovided) {
     for (std::size_t i = 0; i < std::size(menu_table); ++i) {
         if (menu_table[i].depth == 0 && menu_table[i].id == menu_id) {
             std::size_t index = i + 1;
-            return build(index, 1, context);
+            return build(index, 1, context, unprovided);
         }
     }
     return {};
+}
+
+std::span<const std::string_view> unprovided_menu_items() {
+    static constexpr std::string_view ids[] = {
+        // Help: webviews.
+        "workbench.action.openWalkthrough",
+        "workbench.action.showInteractivePlayground",
+        "welcome.showAllWalkthroughs",
+        "update.showCurrentReleaseNotes",
+        "workbench.action.getStartedWithAccessibilityFeatures",
+        // Help: chat.
+        "workbench.action.askVScode",
+        // Help: pages of Microsoft's product.
+        "workbench.action.openVideoTutorialsUrl",
+        "workbench.action.openTipsAndTricksUrl",
+        "workbench.action.openYouTubeUrl",
+        "workbench.action.openRequestFeatureUrl",
+        "workbench.action.openPrivacyStatementUrl",
+        // Help: tools of Chromium and Electron.
+        "workbench.action.toggleDevTools",
+        "workbench.action.openProcessExplorer",
+    };
+    return ids;
 }
 
 } // namespace anvil::workbench

@@ -5,6 +5,7 @@
 #include "anvil/workbench/menu_table.hpp"
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -56,9 +57,16 @@ void set_menu_config_context(core::ContextKeys& keys, const core::Settings& sett
 std::vector<MenuItem> top_level_menus(const core::ContextKeys& context);
 
 // The entries of the top-level menu `menu_id` (`MenubarFileMenu`) as the context shows them.
-// An entry whose `when` clause does not hold is left out, and so is a submenu with no entries
+// An entry whose `when` clause does not hold is left out, and so is an entry whose id is in
+// `unprovided`, with the entries of a submenu that is left out, and a submenu with no entries
 // left. A separator is kept only between two entries. An item whose `precondition` does not hold
 // is disabled, and one with a `toggled` condition is checkable.
-std::vector<MenuItem> menu_items(std::string_view menu_id, const core::ContextKeys& context);
+std::vector<MenuItem> menu_items(std::string_view menu_id, const core::ContextKeys& context,
+                                 std::span<const std::string_view> unprovided = {});
+
+// The ids of the entries of VS Code's menus that Anvil does not provide and leaves out of its
+// menus: the webviews, Microsoft's pages and the tools of Chromium and Electron among the Help
+// items. Offering one is removing its id from the list.
+std::span<const std::string_view> unprovided_menu_items();
 
 } // namespace anvil::workbench
