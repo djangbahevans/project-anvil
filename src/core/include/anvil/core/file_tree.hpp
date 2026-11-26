@@ -53,6 +53,26 @@ struct FileExcludes {
     static FileExcludes from_settings(const Settings& settings);
 };
 
+// How the files of a folder are searched, as VS Code's search settings say.
+struct FileSearchOptions {
+    // The globs to leave out: those of `files.exclude`, with `search.exclude` laid over them. Its
+    // defaults, `**/node_modules`, `**/bower_components` and `**/*.code-search`, are part of it,
+    // and what it says about a pattern wins over what `files.exclude` says.
+    std::vector<std::string> excludes;
+    // `search.useIgnoreFiles`: whether `.gitignore` and `.ignore` files are respected.
+    bool use_ignore_files = true;
+    // `search.useGlobalIgnoreFiles` and `search.useParentIgnoreFiles`: whether those of the user
+    // and of the folders above the searched one are too.
+    bool use_global_ignore_files = false;
+    bool use_parent_ignore_files = false;
+    // `search.followSymlinks`.
+    bool follow_symlinks = true;
+    // What was wrong with the settings, one message per ignored value.
+    std::vector<std::string> problems;
+
+    static FileSearchOptions from_settings(const Settings& settings);
+};
+
 // A change that reading a directory again found.
 struct FileTreeChange {
     enum class Kind {

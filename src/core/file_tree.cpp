@@ -53,33 +53,46 @@ FileExcludes FileExcludes::defaults() {
 
 namespace {
 
-// The entries of the setting that say on or off, in the order of the setting.
+// The entries of the setting that say on or off, in the order of the setting. `key` names the
+// setting in the problems.
 std::vector<std::pair<std::string, bool>> switches_of(const nlohmann::json& setting,
+                                                      const std::string& key,
                                                       std::vector<std::string>& problems) {
     std::vector<std::pair<std::string, bool>> result;
     if (!setting.is_object()) {
-        problems.push_back("files.exclude is not an object");
+        problems.push_back(key + " is not an object");
         return result;
     }
     for (const auto& [pattern, value] : setting.items()) {
         if (value.is_boolean()) {
             result.emplace_back(pattern, value.get<bool>());
         } else if (value.is_object()) {
-            problems.push_back("files.exclude: the condition of \"" + pattern +
-                               "\" is not supported");
+            problems.push_back(key + ": the condition of \"" + pattern + "\" is not supported");
         } else {
-            problems.push_back("files.exclude: the value of \"" + pattern +
-                               "\" is not true or false");
+            problems.push_back(key + ": the value of \"" + pattern + "\" is not true or false");
         }
     }
     return result;
+}
+
+// Turns patterns on or off as the entries say.
+void apply_switches(std::vector<std::string>& patterns,
+                    std::vector<std::pair<std::string, bool>> switches) {
+    for (auto& [pattern, on] : switches) {
+        const auto present = std::ranges::find(patterns, pattern);
+        if (on && present == patterns.end()) {
+            patterns.push_back(std::move(pattern));
+        } else if (!on && present != patterns.end()) {
+            patterns.erase(present);
+        }
+    }
 }
 
 } // namespace
 
 FileExcludes FileExcludes::from_setting(const nlohmann::json& setting) {
     FileExcludes result;
-    for (auto& [pattern, on] : switches_of(setting, result.problems)) {
+    for (auto& [pattern, on] : switches_of(setting, "files.exclude", result.problems)) {
         if (on) {
             result.patterns.push_back(std::move(pattern));
         }
@@ -93,12 +106,48 @@ FileExcludes FileExcludes::from_settings(const Settings& settings) {
     if (setting == nullptr) {
         return result;
     }
-    for (auto& [pattern, on] : switches_of(*setting, result.problems)) {
-        const auto present = std::ranges::find(result.patterns, pattern);
-        if (on && present == result.patterns.end()) {
-            result.patterns.push_back(std::move(pattern));
-        } else if (!on && present != result.patterns.end()) {
-            result.patterns.erase(present);
+    apply_switches(result.patterns, switches_of(*setting, "files.exclude", result.problems));
+    return result;
+}
+
+FileSearchOptions FileSearchOptions::from_settings(const Settings& settings) {
+    FileSearchOptions result;
+    FileExcludes files = FileExcludes::from_settings(settings);
+    result.excludes = std::move(files.patterns);
+    result.problems = std::move(files.problems);
+
+    // `search.exclude` lies over `files.exclude`: its defaults and its entries win.
+    std::vector<std::pair<std::string, bool>> search = {
+        {"**/node_modules", true}, {"**/bower_components", true}, {"**/*.code-search", true}};
+    if (const nlohmann::json* setting = settings.find("search.exclude");
+        setting != nullptr && !setting->is_null()) {
+        for (auto& [pattern, on] : switches_of(*setting, "search.exclude", result.problems)) {
+            const auto present =
+                std::ranges::find(search, pattern, [](const auto& entry) -> const std::string& {
+                    return entry.first;
+                });
+            if (present != search.end()) {
+                present->second = on;
+            } else {
+                search.emplace_back(std::move(pattern), on);
+            }
+        }
+    }
+    apply_switches(result.excludes, std::move(search));
+
+    for (const auto& [key, field] :
+         {std::pair{"search.useIgnoreFiles", &FileSearchOptions::use_ignore_files},
+          std::pair{"search.useGlobalIgnoreFiles", &FileSearchOptions::use_global_ignore_files},
+          std::pair{"search.useParentIgnoreFiles", &FileSearchOptions::use_parent_ignore_files},
+          std::pair{"search.followSymlinks", &FileSearchOptions::follow_symlinks}}) {
+        const nlohmann::json* setting = settings.find(key);
+        if (setting == nullptr || setting->is_null()) {
+            continue;
+        }
+        if (setting->is_boolean()) {
+            result.*field = setting->get<bool>();
+        } else {
+            result.problems.push_back(std::string(key) + " must be true or false");
         }
     }
     return result;

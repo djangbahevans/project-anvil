@@ -676,3 +676,67 @@ TEST(FileTreeRefresh, ADirectoryOfTensOfThousandsOfEntriesIsComparedInOnePass) {
         EXPECT_LT(took, 3000.0) << "comparing 50,000 entries with 50,000 took " << took << " ms";
     }
 }
+
+namespace {
+
+anvil::core::FileSearchOptions search_options(const std::string& json) {
+    return anvil::core::FileSearchOptions::from_settings(*anvil::core::Settings::parse(json));
+}
+bool excludes(const anvil::core::FileSearchOptions& options, const std::string& pattern) {
+    return std::ranges::find(options.excludes, pattern) != options.excludes.end();
+}
+
+} // namespace
+
+TEST(FileSearchOptionsTest, TheDefaultsAreThoseOfVsCode) {
+    const auto options = search_options("{}");
+    EXPECT_EQ(options.excludes,
+              (std::vector<std::string>{"**/.git", "**/.svn", "**/.hg", "**/.jj", "**/.DS_Store",
+                                        "**/Thumbs.db", "**/node_modules", "**/bower_components",
+                                        "**/*.code-search"}));
+    EXPECT_TRUE(options.use_ignore_files);
+    EXPECT_FALSE(options.use_global_ignore_files);
+    EXPECT_FALSE(options.use_parent_ignore_files);
+    EXPECT_TRUE(options.follow_symlinks);
+    EXPECT_TRUE(options.problems.empty());
+}
+
+TEST(FileSearchOptionsTest, TheSearchExcludesLieOverTheFileExcludes) {
+    const auto options = search_options(
+        R"({"files.exclude": {"**/target": true, "**/dist": true, "**/.git": false,)"
+        R"( "**/node_modules": false},)"
+        R"( "search.exclude": {"**/dist": false, "**/out": true, "**/bower_components": false}})");
+    EXPECT_TRUE(excludes(options, "**/target"));
+    EXPECT_TRUE(excludes(options, "**/out"));
+    EXPECT_FALSE(excludes(options, "**/dist"));
+    EXPECT_FALSE(excludes(options, "**/.git"));
+    EXPECT_FALSE(excludes(options, "**/bower_components"));
+    // A default of `search.exclude` wins over `files.exclude`.
+    EXPECT_TRUE(excludes(options, "**/node_modules"));
+    EXPECT_TRUE(options.problems.empty());
+}
+
+TEST(FileSearchOptionsTest, TheSwitchesAreReadFlatOrNested) {
+    const auto options = search_options(
+        R"({"search.useIgnoreFiles": false, "search": {"useGlobalIgnoreFiles": true,)"
+        R"( "useParentIgnoreFiles": true, "followSymlinks": false}})");
+    EXPECT_FALSE(options.use_ignore_files);
+    EXPECT_TRUE(options.use_global_ignore_files);
+    EXPECT_TRUE(options.use_parent_ignore_files);
+    EXPECT_FALSE(options.follow_symlinks);
+}
+
+TEST(FileSearchOptionsTest, AValueOfTheWrongTypeIsReportedByName) {
+    for (const char* key :
+         {"search.useIgnoreFiles", "search.useGlobalIgnoreFiles", "search.useParentIgnoreFiles",
+          "search.followSymlinks", "search.exclude", "files.exclude"}) {
+        const auto options = search_options(std::string("{\"") + key + "\": \"yes\"}");
+        ASSERT_EQ(options.problems.size(), 1U) << key;
+        EXPECT_NE(options.problems[0].find(key), std::string::npos) << options.problems[0];
+        EXPECT_TRUE(options.use_ignore_files);
+        EXPECT_TRUE(excludes(options, "**/node_modules"));
+    }
+    const auto entry = search_options(R"({"search.exclude": {"**/a": 1}})");
+    ASSERT_EQ(entry.problems.size(), 1U);
+    EXPECT_NE(entry.problems[0].find("search.exclude"), std::string::npos);
+}
