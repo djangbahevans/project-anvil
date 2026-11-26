@@ -2871,7 +2871,8 @@ TEST_F(LayoutCacheTest, ASelectedUnderscoreShowsOnItsOwnLine) {
 }
 
 TEST_F(LayoutCacheTest, LinesAreAsFarApartAsInVsCodeOrAsALaidOutLineNeeds) {
-    for (const double ratio : {1.35, 1.5}) {
+    // At 1.0 the room that the text needs decides, at the others VS Code's height does.
+    for (const double ratio : {1.0, 1.35, 1.5}) {
         for (int size = 6; size <= 48; ++size) {
             SCOPED_TRACE(std::to_string(size) + " times " + std::to_string(ratio));
             settings_.font_size = size;

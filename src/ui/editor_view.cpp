@@ -1523,7 +1523,6 @@ void EditorView::paintEvent(QPaintEvent*) {
                 painter.fillRect(
                     QRectF(left + std::min(first, last), y, std::abs(last - first), line_height_),
                     format.format.background());
-                format.format.clearBackground();
             }
             if (format.format.hasProperty(QTextFormat::ForegroundBrush)) {
                 text_colors.push_back(format);
