@@ -7484,6 +7484,15 @@ TEST_F(GoToTest, EscapeDuringASmoothMovementGoesWhereTheViewWasGoing) {
     QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
     EXPECT_FALSE(view.scrolling());
     EXPECT_EQ(view.verticalScrollBar()->value(), 50);
+
+    // From rest, where the preview has not yet left the saved position.
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("350");
+    ASSERT_TRUE(view.scrolling());
+    ASSERT_EQ(view.verticalScrollBar()->value(), 50);
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+    EXPECT_FALSE(view.scrolling());
+    EXPECT_EQ(view.verticalScrollBar()->value(), 50);
 }
 
 TEST_F(GoToTest, EscapeBringsBackEveryCursor) {
