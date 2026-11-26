@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QGuiApplication>
@@ -157,16 +158,18 @@ EditorView::~EditorView() = default;
 
 void EditorView::update_metrics() {
     const QFontMetrics metrics(font());
-    // The font's line spacing is rounded down for some sizes to less than a laid out line, and
-    // some fonts draw the underscore below that line, either of which puts it on the next row.
     QTextLayout sample(QStringLiteral("_gjpqy"), font());
     sample.beginLayout();
     const QTextLine line = sample.createLine();
     sample.endLayout();
     const qreal ink =
         line.ascent() + QFontMetricsF(font()).tightBoundingRect(sample.text()).bottom();
-    line_height_ =
-        std::max(metrics.lineSpacing(), static_cast<int>(std::ceil(std::max(line.height(), ink))));
+    // VS Code's line height, and for a font that needs more, room for a laid out line and for the
+    // underscores that some fonts draw below it.
+    const int wanted =
+        static_cast<int>(std::lround(line_height_ratio_ * QFontInfo(font()).pixelSize()));
+    line_height_ = std::max(wanted, static_cast<int>(std::ceil(std::max(line.height(), ink))));
+    text_top_ = (line_height_ - static_cast<int>(std::ceil(line.height()))) / 2;
     char_width_ = std::max(1, metrics.horizontalAdvance(QLatin1Char('M')));
 }
 
@@ -183,6 +186,7 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     const int previous_char_width = char_width_;
 
     tab_size_ = static_cast<std::size_t>(settings.tab_size);
+    line_height_ratio_ = settings.line_height_ratio;
     if (controller_) {
         controller_->set_tab_size(tab_size_);
     }
@@ -1506,11 +1510,27 @@ void EditorView::paintEvent(QPaintEvent*) {
             }
         }
 
+        // A background fills its line, which is higher than the text that a layout would color.
+        // The layout is given only the colors of text: it redraws what it has a format for inside
+        // the height of the text, which cuts off underscores that a font draws below it.
+        QList<QTextLayout::FormatRange> text_colors;
         for (QTextLayout::FormatRange& format : formats) {
             format.start -= static_cast<int>(begin);
+            if (format.format.hasProperty(QTextFormat::BackgroundBrush)) {
+                const auto column = static_cast<std::size_t>(format.start);
+                const qreal first = chunks.x_of(column);
+                const qreal last = chunks.x_of(column + static_cast<std::size_t>(format.length));
+                painter.fillRect(
+                    QRectF(left + std::min(first, last), y, std::abs(last - first), line_height_),
+                    format.format.background());
+                format.format.clearBackground();
+            }
+            if (format.format.hasProperty(QTextFormat::ForegroundBrush)) {
+                text_colors.push_back(format);
+            }
         }
         painter.setPen(colors.foreground);
-        chunks.draw(painter, QPointF(left, y), formats, from_x, to_x);
+        chunks.draw(painter, QPointF(left, y + text_top_), text_colors, from_x, to_x);
         if (render_whitespace_ != core::RenderWhitespace::none) {
             std::vector<core::ColumnRange> selected;
             if (render_whitespace_ == core::RenderWhitespace::selection) {
@@ -1545,7 +1565,8 @@ void EditorView::paintEvent(QPaintEvent*) {
                     QFont underlined = font();
                     underlined.setUnderline(true);
                     painter.setFont(underlined);
-                    painter.drawText(QPoint(x + 2, y + QFontMetrics(font()).ascent()), preedit_);
+                    painter.drawText(QPoint(x + 2, y + text_top_ + QFontMetrics(font()).ascent()),
+                                     preedit_);
                     painter.setFont(font());
                 }
             }
@@ -1563,7 +1584,7 @@ void EditorView::paintEvent(QPaintEvent*) {
         const int y = static_cast<int>(row) * line_height_ - scroll_y;
         painter.setPen(line == active_line ? colors.line_number_active : colors.line_number);
         // From the top, like the text, so that numbers and text stand on one baseline.
-        painter.drawText(QRect(0, y, gutter - gutter_padding_, line_height_),
+        painter.drawText(QRect(0, y + text_top_, gutter - gutter_padding_, line_height_),
                          Qt::AlignRight | Qt::AlignTop, QString::number(line + 1));
     }
 

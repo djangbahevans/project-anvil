@@ -323,7 +323,10 @@ private:
     std::unique_ptr<core::EditController> controller_;
     int text_padding_ = 6;
     int gutter_padding_ = 8;
-    int line_height_ = 16;
+    int line_height_ = 19;
+    // The space above the text in its line, which centers it.
+    int text_top_ = 0;
+    double line_height_ratio_ = 1.35;
     int char_width_ = 8;
     std::size_t tab_size_ = 4;
     bool insert_spaces_ = true;
