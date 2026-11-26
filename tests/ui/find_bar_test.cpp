@@ -1,4 +1,5 @@
 #include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/scroll_bar.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -49,6 +50,16 @@ protected:
         view_.activateWindow();
         view_.setFocus();
         QApplication::processEvents();
+    }
+
+    // The color in the middle of the top edge of a part of the bar.
+    static QColor top_edge(QWidget* part) {
+        const QImage image = part->grab().toImage();
+        return image.pixelColor(image.width() / 2, 0);
+    }
+    static QColor error_color() {
+        return anvil::ui::WorkbenchColors(QApplication::palette())
+            .color("inputValidation.errorBorder");
     }
 
     void find(const QString& pattern) {
@@ -140,20 +151,19 @@ TEST_F(FindBarTest, EnterAndShiftEnterMoveBetweenMatches) {
     EXPECT_EQ(primary(), (core::Selection{4, 5}));
 }
 
-TEST_F(FindBarTest, NavigationWrapsAroundAndSaysSo) {
+TEST_F(FindBarTest, NavigationWrapsAround) {
     open("a b a");
     find("a");
     press(bar_.find_field(), Qt::Key_Return);
     EXPECT_EQ(primary(), (core::Selection{4, 5}));
-    EXPECT_FALSE(bar_.status().contains("wrapped"));
 
     press(bar_.find_field(), Qt::Key_Return);
     EXPECT_EQ(primary(), (core::Selection{0, 1}));
-    EXPECT_EQ(bar_.status(), "1 of 2 (wrapped)");
+    EXPECT_EQ(bar_.status(), "1 of 2");
 
     press(bar_.find_field(), Qt::Key_Return, Qt::ShiftModifier);
     EXPECT_EQ(primary(), (core::Selection{4, 5}));
-    EXPECT_EQ(bar_.status(), "2 of 2 (wrapped)");
+    EXPECT_EQ(bar_.status(), "2 of 2");
 
     press(bar_.find_field(), Qt::Key_Return, Qt::ShiftModifier);
     EXPECT_EQ(bar_.status(), "1 of 2");
@@ -164,7 +174,7 @@ TEST_F(FindBarTest, ASingleMatchIsFoundAgainAfterWrapping) {
     find("b");
     press(bar_.find_field(), Qt::Key_Return);
     EXPECT_EQ(primary(), (core::Selection{2, 3}));
-    EXPECT_EQ(bar_.status(), "1 of 1 (wrapped)");
+    EXPECT_EQ(bar_.status(), "1 of 1");
 }
 
 TEST_F(FindBarTest, NoMatchesLeavesTheSelectionAndSaysSo) {
@@ -176,12 +186,12 @@ TEST_F(FindBarTest, NoMatchesLeavesTheSelectionAndSaysSo) {
     EXPECT_EQ(primary(), core::Selection::caret(1));
 }
 
-TEST_F(FindBarTest, AnEmptyPatternShowsNothing) {
+TEST_F(FindBarTest, AnEmptyPatternFindsNothing) {
     open("abc");
     find("b");
     ASSERT_EQ(bar_.status(), "1 of 1");
     find("");
-    EXPECT_EQ(bar_.status(), "");
+    EXPECT_EQ(bar_.status(), "No results");
     EXPECT_EQ(bar_.match_count(), 0u);
 }
 
@@ -210,7 +220,7 @@ TEST_F(FindBarTest, AnInvalidRegularExpressionShowsAnErrorStateNotACrash) {
     find("(b");
     EXPECT_TRUE(bar_.has_error());
     EXPECT_EQ(bar_.status(), "Invalid pattern");
-    EXPECT_FALSE(bar_.find_field()->styleSheet().isEmpty());
+    EXPECT_EQ(top_edge(bar_.find_box()), error_color());
     EXPECT_FALSE(bar_.find_field()->toolTip().isEmpty());
     EXPECT_EQ(primary(), core::Selection::caret(2));
     press(bar_.find_field(), Qt::Key_Return);
@@ -219,7 +229,7 @@ TEST_F(FindBarTest, AnInvalidRegularExpressionShowsAnErrorStateNotACrash) {
 
     find("\\(b");
     EXPECT_FALSE(bar_.has_error());
-    EXPECT_TRUE(bar_.find_field()->styleSheet().isEmpty());
+    EXPECT_NE(top_edge(bar_.find_box()), error_color());
     EXPECT_TRUE(bar_.status().startsWith("1 of 1"));
 }
 
@@ -509,7 +519,7 @@ TEST_F(FindBarTest, ASearchThatCannotFinishReportsAnErrorInsteadOfFreezing) {
     // The pattern is fine; only this text is too much for it. The field is not marked invalid, and
     // the message goes away when the text changes.
     EXPECT_FALSE(bar_.has_error());
-    EXPECT_TRUE(bar_.find_field()->styleSheet().isEmpty());
+    EXPECT_NE(top_edge(bar_.find_box()), error_color());
     EXPECT_TRUE(bar_.find_field()->toolTip().isEmpty());
 
     view_.replace_ranges({{0, 60, "a"}});
@@ -528,7 +538,7 @@ TEST_F(FindBarTest, EmptyMatchesAreSteppedThroughInsteadOfFoundAgain) {
     EXPECT_EQ(primary(), core::Selection::caret(6));
     bar_.find_next();
     EXPECT_EQ(primary(), core::Selection::caret(0));
-    EXPECT_TRUE(bar_.status().contains("wrapped"));
+    EXPECT_EQ(bar_.status(), "1 of 3");
 
     bar_.find_previous();
     EXPECT_EQ(primary(), core::Selection::caret(6));
@@ -834,4 +844,311 @@ TEST_F(FindBarTest, ClickingStillTogglesTheOptions) {
     bar_.match_case_button()->click();
     EXPECT_TRUE(bar_.match_case_button()->isChecked());
     EXPECT_EQ(bar_.match_count(), 1u);
+}
+
+namespace {
+
+using anvil::ui::WorkbenchColors;
+
+// The bar over the editor, as the editor area has them: both in one parent.
+class FindWidgetTest : public ::testing::Test {
+protected:
+    FindWidgetTest() : colors_(QApplication::palette()) {
+        WorkbenchColors::Colors theme{
+            {"editorWidget.background", QColor(10, 20, 30)},
+            {"editorWidget.foreground", QColor(200, 200, 200)},
+            {"widget.border", QColor(40, 50, 60)},
+            {"widget.shadow", QColor(0, 0, 0, 200)},
+            {"input.background", QColor(70, 80, 90)},
+            {"input.border", QColor(100, 110, 120)},
+            {"input.foreground", QColor(250, 250, 250)},
+            {"focusBorder", QColor(0, 255, 255)},
+            {"icon.foreground", QColor(255, 255, 0)},
+            {"inputOption.activeBackground", QColor(130, 0, 130)},
+            {"inputOption.activeBorder", QColor(255, 0, 255)},
+            {"inputOption.activeForeground", QColor(0, 255, 0)},
+            {"toolbar.hoverBackground", QColor(0, 120, 0)},
+            {"errorForeground", QColor(255, 0, 0)},
+        };
+        colors_.set_colors(theme);
+        host_.resize(700, 400);
+        view_ = new EditorView(&host_);
+        view_->setGeometry(0, 0, 700, 400);
+        bar_ = new FindBar(view_, &host_);
+        bar_->set_colors(&colors_);
+        std::string text;
+        for (int line = 0; line < 200; ++line) {
+            text += line == 100 ? std::string(40, '.') + "needle\n" : "needle\n";
+        }
+        document_ = make_document(text);
+        view_->set_document(document_);
+        host_.show();
+        host_.activateWindow();
+        open();
+        // Opening seeds the field from the word at the caret.
+        find("");
+    }
+
+    void open(bool replace = false) {
+        bar_->open(replace);
+        QApplication::processEvents();
+    }
+    void find(const QString& pattern) {
+        bar_->find_field()->setText(pattern);
+        QApplication::processEvents();
+    }
+    // The widget keeps clear of two widths of the scroll bar, as VS Code does.
+    int right_edge() const {
+        return view_->geometry().right() + 1 - 2 * anvil::ui::ScrollBar::editor_vertical_width;
+    }
+    void view_width(int width) {
+        view_->resize(width, 400);
+        QApplication::processEvents();
+    }
+    static QColor pixel(QWidget* widget, int x, int y) {
+        return widget->grab().toImage().pixelColor(x, y);
+    }
+    // Whether a pixel is close to the color: the thin strokes of a glyph are smoothed, and few of
+    // their pixels have the color exactly.
+    static bool shows(QWidget* widget, const QColor& color) {
+        const QImage image = widget->grab().toImage();
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor found = image.pixelColor(x, y);
+                if (std::abs(found.red() - color.red()) < 50 &&
+                    std::abs(found.green() - color.green()) < 50 &&
+                    std::abs(found.blue() - color.blue()) < 50) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    QColor count_color() const {
+        return bar_->count_label()->palette().color(QPalette::WindowText);
+    }
+
+    WorkbenchColors colors_;
+    QWidget host_;
+    EditorView* view_ = nullptr;
+    FindBar* bar_ = nullptr;
+    std::shared_ptr<core::Document> document_;
+};
+
+} // namespace
+
+TEST_F(FindWidgetTest, ItFloatsAtTheTopRightOfTheViewAndFollowsIt) {
+    EXPECT_EQ(bar_->size(), QSize(FindBar::widget_width, FindBar::find_height));
+    EXPECT_EQ(bar_->geometry().right() + 1, right_edge());
+    EXPECT_EQ(bar_->geometry().top(), view_->geometry().top() + 4);
+    EXPECT_EQ(view_->geometry(), QRect(0, 0, 700, 400));
+    EXPECT_EQ(host_.childAt(bar_->geometry().center())->window(), &host_);
+    EXPECT_TRUE(bar_->isAncestorOf(host_.childAt(bar_->geometry().center())));
+
+    view_->setGeometry(20, 30, 600, 300);
+    QApplication::processEvents();
+    EXPECT_EQ(bar_->geometry().right() + 1, right_edge());
+    EXPECT_EQ(bar_->geometry().top(), 34);
+
+    open(true);
+    EXPECT_EQ(bar_->size(), QSize(FindBar::widget_width, FindBar::replace_height));
+    EXPECT_EQ(view_->geometry(), QRect(20, 30, 600, 300));
+}
+
+TEST_F(FindWidgetTest, ThePartsStandWhereVsCodePutsThem) {
+    open(true);
+    const QRect find_box = bar_->find_box()->geometry();
+    const QRect replace_box = bar_->replace_box()->geometry();
+    EXPECT_EQ(find_box.topLeft(), QPoint(27, 4));
+    EXPECT_EQ(find_box.height(), FindBar::field_height);
+    EXPECT_EQ(replace_box, find_box.translated(0, FindBar::field_height + 3));
+    // The chevron is in the middle of the room left of the fields, as high as both of them.
+    const QRect toggle = bar_->toggle_replace_button()->geometry();
+    EXPECT_EQ(toggle, QRect(6, 5, 18, FindBar::replace_height - 10));
+    EXPECT_NEAR(toggle.x() + toggle.width() / 2.0, (1 + find_box.left()) / 2.0, 1.0);
+    EXPECT_EQ(toggle.y() + toggle.height() / 2.0, FindBar::replace_height / 2.0);
+    // The options are in the find field, at its right end.
+    for (QAbstractButton* option :
+         {bar_->match_case_button(), bar_->whole_word_button(), bar_->regex_button()}) {
+        EXPECT_EQ(option->parentWidget(), bar_->find_box());
+        EXPECT_GE(option->geometry().left(), bar_->find_field()->geometry().right());
+        EXPECT_TRUE(bar_->find_box()->rect().contains(option->geometry()));
+    }
+    EXPECT_LT(find_box.right(), bar_->count_label()->geometry().left());
+    EXPECT_LT(bar_->count_label()->geometry().right(), bar_->previous_button()->geometry().left());
+    EXPECT_LT(bar_->previous_button()->geometry().right(), bar_->next_button()->geometry().left());
+    EXPECT_LT(bar_->next_button()->geometry().right(), bar_->close_button()->geometry().left());
+    EXPECT_GT(bar_->replace_button()->geometry().left(), replace_box.right());
+    EXPECT_GT(bar_->replace_all_button()->geometry().left(),
+              bar_->replace_button()->geometry().right());
+}
+
+TEST_F(FindWidgetTest, ANarrowViewGivesUpTheCountThenTheOptionsAndArrows) {
+    const auto shown = [this] {
+        return std::vector<bool>{bar_->count_label()->isVisible(),
+                                 bar_->match_case_button()->isVisible(),
+                                 bar_->next_button()->isVisible()};
+    };
+    EXPECT_EQ(shown(), (std::vector<bool>{true, true, true}));
+    view_width(300);
+    EXPECT_EQ(shown(), (std::vector<bool>{false, true, true}));
+    view_width(250);
+    EXPECT_EQ(shown(), (std::vector<bool>{false, false, true}));
+    view_width(150);
+    EXPECT_EQ(shown(), (std::vector<bool>{false, false, false}));
+    for (const int width : {500, 300, 150}) {
+        view_width(width);
+        EXPECT_EQ(bar_->geometry().right() + 1, right_edge()) << width;
+        EXPECT_GE(bar_->geometry().left(), view_->geometry().left()) << width;
+        EXPECT_TRUE(bar_->rect().contains(bar_->close_button()->geometry())) << width;
+    }
+    // The keys of the options work without room for their buttons.
+    bar_->find_field()->setFocus();
+    QTest::keyClick(bar_->find_field(), Qt::Key_C, option_modifiers());
+    EXPECT_TRUE(bar_->match_case_button()->isChecked());
+}
+
+TEST_F(FindWidgetTest, ItTakesTheColorsOfTheTheme) {
+    open(true);
+    // Between the chevron and the fields is the widget itself.
+    EXPECT_EQ(pixel(bar_, 23, 16), QColor(10, 20, 30));
+    EXPECT_EQ(pixel(bar_, bar_->width() / 2, 0), QColor(40, 50, 60));
+    EXPECT_EQ(pixel(bar_->find_box(), 3, 12), QColor(70, 80, 90));
+    EXPECT_EQ(pixel(bar_->find_box(), bar_->find_box()->width() / 2, 0), QColor(0, 255, 255));
+    EXPECT_EQ(pixel(bar_->replace_box(), bar_->replace_box()->width() / 2, 0),
+              QColor(100, 110, 120));
+    EXPECT_EQ(bar_->find_field()->palette().color(QPalette::Text), QColor(250, 250, 250));
+    EXPECT_TRUE(shows(bar_->close_button(), QColor(255, 255, 0)));
+    EXPECT_TRUE(shows(bar_->toggle_replace_button(), QColor(255, 255, 0)));
+
+    EXPECT_FALSE(shows(bar_->match_case_button(), QColor(130, 0, 130)));
+    bar_->match_case_button()->click();
+    EXPECT_EQ(pixel(bar_->match_case_button(), 10, 2), QColor(130, 0, 130));
+    EXPECT_TRUE(shows(bar_->match_case_button(), QColor(255, 0, 255)));
+    EXPECT_TRUE(shows(bar_->match_case_button(), QColor(0, 255, 0)));
+
+    colors_.set_colors({{"editorWidget.background", QColor(1, 2, 3)}});
+    EXPECT_EQ(pixel(bar_, 23, 16), QColor(1, 2, 3));
+}
+
+TEST_F(FindWidgetTest, AShadowLiesAroundItWhileItShowsAndTheThemeHasOne) {
+    const auto beside = [this] {
+        QApplication::processEvents();
+        return host_.grab().toImage().pixelColor(bar_->geometry().left() - 2,
+                                                 bar_->geometry().bottom() - 4);
+    };
+    const QColor shadowed = beside();
+    bar_->close_bar();
+    const QColor plain = beside();
+    EXPECT_LT(shadowed.lightness(), plain.lightness());
+    open();
+    EXPECT_EQ(beside(), shadowed);
+    colors_.set_colors({});
+    EXPECT_EQ(beside().lightness(), plain.lightness());
+}
+
+TEST_F(FindWidgetTest, TheCountIsAlwaysShownAndInTheErrorColorWhenNothingIsFound) {
+    find("");
+    EXPECT_EQ(bar_->status(), "No results");
+    EXPECT_EQ(count_color(), QColor(200, 200, 200));
+    find("nothing like it");
+    EXPECT_EQ(bar_->status(), "No results");
+    EXPECT_EQ(count_color(), QColor(255, 0, 0));
+    find("needle");
+    EXPECT_EQ(count_color(), QColor(200, 200, 200));
+}
+
+TEST_F(FindWidgetTest, TheButtonsAreEnabledAsVsCodeEnablesThem) {
+    open(true);
+    const auto enabled = [this] {
+        return std::vector<bool>{
+            bar_->previous_button()->isEnabled(), bar_->next_button()->isEnabled(),
+            bar_->replace_button()->isEnabled(), bar_->replace_all_button()->isEnabled(),
+            bar_->close_button()->isEnabled()};
+    };
+    find("");
+    EXPECT_EQ(enabled(), (std::vector<bool>{false, false, false, false, true}));
+    EXPECT_FALSE(shows(bar_->next_button(), QColor(255, 255, 0)));
+    find("nothing like it");
+    EXPECT_EQ(enabled(), (std::vector<bool>{false, false, true, true, true}));
+    find("needle");
+    EXPECT_EQ(enabled(), (std::vector<bool>{true, true, true, true, true}));
+    EXPECT_TRUE(shows(bar_->next_button(), QColor(255, 255, 0)));
+}
+
+TEST_F(FindWidgetTest, AButtonUnderThePointerHasAHoverBackground) {
+    QWidget* close = bar_->close_button();
+    EXPECT_FALSE(shows(close, QColor(0, 120, 0)));
+    close->setAttribute(Qt::WA_UnderMouse);
+    EXPECT_TRUE(shows(close, QColor(0, 120, 0)));
+}
+
+TEST_F(FindWidgetTest, TabGoesBetweenTheFieldsWhileReplaceShows) {
+    open(true);
+    bar_->find_field()->setFocus();
+    QTest::keyClick(bar_->find_field(), Qt::Key_Tab);
+    EXPECT_EQ(QApplication::focusWidget(), bar_->replace_field());
+    QTest::keyClick(bar_->replace_field(), Qt::Key_Backtab, Qt::ShiftModifier);
+    EXPECT_EQ(QApplication::focusWidget(), bar_->find_field());
+
+    bar_->toggle_replace_button()->click();
+    bar_->find_field()->setFocus();
+    QTest::keyClick(bar_->find_field(), Qt::Key_Tab);
+    EXPECT_EQ(QApplication::focusWidget(), bar_->match_case_button());
+}
+
+TEST_F(FindWidgetTest, AMatchThatTheWidgetWouldCoverIsScrolledFromUnderIt) {
+    view_->scroll_to(QPoint(0, 100 * view_->line_height()));
+    view_->select_range({700, 700});
+    view_->scroll_to(QPoint(0, 100 * view_->line_height()));
+    QApplication::processEvents();
+    const std::size_t match = 700 + 40;
+    const auto covered = [&] {
+        QRect at = view_->cursor_rect(match);
+        at.moveTopLeft(view_->viewport()->mapTo(&host_, at.topLeft()));
+        return at.intersects(bar_->geometry());
+    };
+    ASSERT_TRUE(covered());
+    find("needle");
+    ASSERT_EQ(document_->selections().primary(), (core::Selection{match, match + 6}));
+    QApplication::processEvents();
+    EXPECT_FALSE(covered());
+}
+
+TEST_F(FindWidgetTest, AMatchBesideTheWidgetDoesNotScrollTheEditor) {
+    view_->scroll_to(QPoint(0, 10 * view_->line_height()));
+    view_->select_range({70, 70});
+    view_->scroll_to(QPoint(0, 10 * view_->line_height()));
+    QApplication::processEvents();
+    const QPoint before = view_->scroll_target();
+    find("needle");
+    ASSERT_EQ(document_->selections().primary(), (core::Selection{70, 76}));
+    EXPECT_EQ(view_->scroll_target(), before);
+}
+
+TEST_F(FindWidgetTest, TheFocusGoesThroughThePartsInTheOrderOfVsCode) {
+    open(true);
+    find("needle");
+    std::vector<QWidget*> visited;
+    for (QWidget* part = bar_->toggle_replace_button(); visited.size() < 10;) {
+        part = part->nextInFocusChain();
+        if ((part->focusPolicy() & Qt::TabFocus) && bar_->isAncestorOf(part)) {
+            visited.push_back(part);
+        }
+    }
+    EXPECT_EQ(visited, (std::vector<QWidget*>{bar_->find_field(), bar_->match_case_button(),
+                                              bar_->whole_word_button(), bar_->regex_button(),
+                                              bar_->replace_field(), bar_->previous_button(),
+                                              bar_->next_button(), bar_->close_button(),
+                                              bar_->replace_button(), bar_->replace_all_button()}));
+}
+
+TEST_F(FindWidgetTest, TheShadowGoesWithTheBar) {
+    const auto children = [this] {
+        return host_.findChildren<QWidget*>(Qt::FindDirectChildrenOnly);
+    };
+    const auto before = children().size();
+    delete bar_;
+    EXPECT_EQ(children().size(), before - 2);
+    host_.grab();
 }

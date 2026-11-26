@@ -2509,16 +2509,37 @@ TEST_F(MainWindowTest, FindAndReplaceAreReachableFromTheEditMenuAndTheirShortcut
     EXPECT_TRUE(window_->find_bar()->replace_field()->isVisibleTo(window_->find_bar()));
 }
 
-TEST_F(MainWindowTest, TheFindBarSitsBetweenTheTabBarAndTheEditor) {
+TEST_F(MainWindowTest, TheFindBarFloatsOverTheEditorInTheColorsOfTheTheme) {
     create_window();
-    window_->find_bar()->open();
+    window_->resize(900, 400);
+    window_->show();
     QApplication::processEvents();
-    const int tabs_bottom = window_->tab_strip()->geometry().bottom();
-    const int bar_top = window_->find_bar()->geometry().top();
-    const int bar_bottom = window_->find_bar()->geometry().bottom();
-    const int editor_top = window_->view()->geometry().top();
-    EXPECT_LE(tabs_bottom, bar_top);
-    EXPECT_LE(bar_bottom, editor_top);
+    type("find me, find me\nfind me");
+    const QRect view = window_->view()->geometry();
+    window_->find_bar()->open(true);
+    window_->find_bar()->find_field()->setText("find");
+    QApplication::processEvents();
+    EXPECT_EQ(window_->view()->geometry(), view);
+    const QRect bar = window_->find_bar()->geometry();
+    EXPECT_EQ(bar.top(), view.top() + 4);
+    EXPECT_EQ(bar.right() + 1, view.right() + 1 - 2 * ui::ScrollBar::editor_vertical_width);
+    EXPECT_LT(window_->tab_strip()->geometry().bottom(), bar.top());
+    EXPECT_EQ(window_->find_bar()->grab().toImage().pixelColor(23, 16), QColor("#202122"));
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/find_widget_dark.png");
+        window_->find_bar()->find_field()->setText("nothing like it");
+        window_->find_bar()->regex_button()->click();
+        QApplication::processEvents();
+        window_->grab().save(QString::fromUtf8(directory) + "/find_widget_no_results.png");
+        window_->find_bar()->regex_button()->click();
+        window_->find_bar()->find_field()->setText("find");
+        for (const char* theme : {"Light 2026", "Dark High Contrast"}) {
+            window_->change_setting("workbench.colorTheme", theme, "Theme");
+            QApplication::processEvents();
+            window_->grab().save(QString::fromUtf8(directory) + "/find_widget_" +
+                                 QString(theme).replace(' ', '_') + ".png");
+        }
+    }
 }
 
 TEST_F(MainWindowTest, FindNextAndPreviousWorkFromTheMenuShortcuts) {
@@ -10340,7 +10361,8 @@ TEST_F(ZoomWholeWindowTest, TheFindBarTheSplitAreaAndTheNativeMenuBarFollowTheLe
     const QSplitterHandle* sash = window_->editor_area()->root_splitter()->handle(1);
     EXPECT_EQ(sash->width(), 1 + 2 * (window_->zoom().scaled(ui::Splitter::sash_width) / 2));
     for (auto* group : window_->editor_area()->groups()) {
-        EXPECT_EQ(group->find_bar()->layout()->contentsMargins().left(), window_->zoom().scaled(6));
+        EXPECT_EQ(group->find_bar()->find_box()->height(),
+                  window_->zoom().scaled(ui::FindBar::field_height));
     }
     EXPECT_EQ(window_->menu_bar()->font().pixelSize(),
               window_->zoom().scaled(QFontInfo(QApplication::font("QMenu")).pixelSize()));

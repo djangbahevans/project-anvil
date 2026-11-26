@@ -594,6 +594,7 @@ protected:
     void SetUp() override {
         host_ = std::make_unique<QWidget>();
         view_ = new EditorView(host_.get());
+        view_->setGeometry(0, 0, 800, 400);
         bar_ = new FindBar(view_, host_.get());
         base_ = QFontInfo(bar_->font()).pixelSize();
         bar_->set_zoom(&zoom_);
@@ -608,7 +609,7 @@ protected:
     int base_ = 0;
 };
 
-TEST_F(FindBarZoomTest, TheFontTheMarginsAndTheSpacingAreScaled) {
+TEST_F(FindBarZoomTest, TheFontAndTheSizesAreScaled) {
     for (const double level : levels) {
         zoom_.set_level(level);
         QApplication::processEvents();
@@ -618,12 +619,16 @@ TEST_F(FindBarZoomTest, TheFontTheMarginsAndTheSpacingAreScaled) {
             EXPECT_EQ(child->font().pixelSize(), zoom_.scaled(base_))
                 << child->metaObject()->className();
         }
-        const QMargins margins = bar_->layout()->contentsMargins();
-        EXPECT_EQ(margins,
-                  QMargins(zoom_.scaled(6), zoom_.scaled(4), zoom_.scaled(6), zoom_.scaled(4)));
-        EXPECT_EQ(bar_->layout()->spacing(), zoom_.scaled(4));
-        EXPECT_GE(bar_->sizeHint().height(),
-                  bar_->fontMetrics().height() + margins.top() + margins.bottom());
+        EXPECT_EQ(bar_->size(),
+                  QSize(zoom_.scaled(FindBar::widget_width), zoom_.scaled(FindBar::find_height)));
+        EXPECT_EQ(bar_->find_box()->geometry().topLeft(),
+                  QPoint(zoom_.scaled(27), zoom_.scaled(4)));
+        EXPECT_EQ(bar_->find_box()->height(), zoom_.scaled(FindBar::field_height));
+        EXPECT_EQ(bar_->close_button()->width(), zoom_.scaled(22));
+        EXPECT_EQ(bar_->match_case_button()->width(), zoom_.scaled(20));
+        EXPECT_EQ(bar_->geometry().top(), zoom_.scaled(4));
+        EXPECT_EQ(bar_->geometry().right() + 1,
+                  800 - zoom_.scaled(2 * anvil::ui::ScrollBar::editor_vertical_width));
     }
 }
 
@@ -632,7 +637,7 @@ TEST_F(FindBarZoomTest, TheBarGrowsWithTheZoomAndTheFieldStaysInsideIt) {
     zoom_.set_level(3);
     QApplication::processEvents();
     EXPECT_GT(bar_->sizeHint().height(), plain);
-    EXPECT_TRUE(bar_->rect().contains(bar_->findChild<QLineEdit*>()->geometry()));
+    EXPECT_TRUE(bar_->rect().contains(bar_->find_box()->geometry()));
 }
 
 // --- the quick pick ---
