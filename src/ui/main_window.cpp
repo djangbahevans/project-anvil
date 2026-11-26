@@ -173,6 +173,11 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             dismissed();
         }
     });
+    quick_open_ = std::make_unique<QuickOpen>(this, colors_);
+    quick_open_->pick()->set_zoom(&zoom_);
+    connect(quick_open_.get(), &QuickOpen::chosen, this, &MainWindow::open_chosen);
+    connect(quick_open_.get(), &QuickOpen::failed, this,
+            [this](const QString& message) { status_bar_->show_message(message, 15000); });
     go_to_line_ = new QuickPick(this, colors_);
     go_to_line_->set_zoom(&zoom_);
     go_to_line_->set_ignored_prefix(":");
@@ -428,6 +433,8 @@ MainWindow::~MainWindow() {
     for (QMenu* menu : findChildren<QMenu*>()) {
         menu->setStyle(nullptr);
     }
+    // Ends a listing that is running, while the window is whole.
+    quick_open_.reset();
     // The pick closes when its widget is deleted, after the members that its handlers use are gone.
     palette_->disconnect(this);
     // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
@@ -824,6 +831,7 @@ void MainWindow::apply_settings() {
     themes_->select(editor.color_theme, platform::editor_defaults().color_theme);
     apply_file_associations();
     apply_file_excludes();
+    apply_search_settings();
     apply_explorer_settings();
     apply_extension_host_options();
 }
@@ -904,6 +912,112 @@ void MainWindow::apply_file_associations() {
     if (associations_changed) {
         languages_.set_user_associations(file_associations_);
         refresh_document_languages();
+    }
+}
+
+void MainWindow::apply_search_settings() {
+    core::FileSearchOptions read = core::FileSearchOptions::from_settings(settings_->settings());
+    if (read.problems != search_options_.problems && options_.logger) {
+        for (const std::string& problem : read.problems) {
+            // Those of `files.exclude` are logged with the explorer's.
+            if (std::ranges::find(file_excludes_.problems, problem) ==
+                file_excludes_.problems.end()) {
+                options_.logger->log(core::LogLevel::warning, "settings", problem);
+            }
+        }
+    }
+    search_options_ = std::move(read);
+}
+
+void MainWindow::remember_shown(const core::Uri& uri) {
+    constexpr std::size_t remembered = 200;
+    std::erase(recent_documents_, uri);
+    recent_documents_.insert(recent_documents_.begin(), uri);
+    if (recent_documents_.size() > remembered) {
+        recent_documents_.erase(recent_documents_.begin() + remembered, recent_documents_.end());
+    }
+}
+
+QuickOpenEntry MainWindow::quick_open_entry(const core::Uri& uri) const {
+    QuickOpenEntry entry{.uri = uri};
+    const auto path = uri.file_path();
+    if (!path) {
+        entry.label = tab_info(uri).title.toStdString();
+        entry.path = entry.label;
+        return entry;
+    }
+    entry.label = path->filename().string();
+    if (options_.workspace && exthost::is_path_within(*path, options_.workspace->folder)) {
+        const std::filesystem::path relative = path->lexically_relative(options_.workspace->folder);
+        entry.path = relative.generic_string();
+        entry.description = relative.parent_path().generic_string();
+    } else {
+        entry.path = path->string();
+        entry.description = path->parent_path().string();
+    }
+    return entry;
+}
+
+std::vector<QuickOpenEntry> MainWindow::recent_entries(bool open_only) const {
+    std::vector<QuickOpenEntry> entries;
+    std::set<core::Uri> listed;
+    for (const core::Uri& uri : recent_documents_) {
+        bool offered = documents_.contains(uri);
+        if (!open_only) {
+            // A file that was closed is offered while it is there; an untitled document is not a
+            // file.
+            std::error_code error;
+            const auto path = uri.file_path();
+            offered = path && (offered || std::filesystem::exists(*path, error));
+        }
+        if (offered && listed.insert(uri).second) {
+            entries.push_back(quick_open_entry(uri));
+        }
+    }
+    if (open_only) {
+        for (const auto& [uri, document] : documents_) {
+            if (listed.insert(uri).second) {
+                entries.push_back(quick_open_entry(uri));
+            }
+        }
+    }
+    return entries;
+}
+
+void MainWindow::show_quick_open() {
+    if (QApplication::activeModalWidget()) {
+        return;
+    }
+    if (quick_open_->is_open()) {
+        quick_open_->pick()->select_next();
+        return;
+    }
+    std::optional<QuickOpen::Files> files;
+    if (options_.workspace) {
+        const std::filesystem::path& folder = options_.workspace->folder;
+        if (options_.list_files) {
+            files = QuickOpen::Files{folder, options_.list_files(folder, search_options_)};
+        } else if (options_.ripgrep) {
+            files = QuickOpen::Files{
+                folder, ripgrep_file_source(*options_.ripgrep, folder, search_options_)};
+        } else {
+            status_bar_->show_message(tr("Go to File lists only the open documents: ripgrep, which "
+                                         "lists the files of the folder, was not found. ANVIL_RG "
+                                         "names one."),
+                                      15000);
+        }
+    }
+    quick_open_->pick()->set_top_offset(has_custom_title_bar() ? title_bar_->height()
+                                                               : menu_bar_->height());
+    std::vector<QuickOpenEntry> entries = recent_entries(!files);
+    quick_open_->open(std::move(entries), std::move(files));
+}
+
+void MainWindow::open_chosen(const core::Uri& uri) {
+    if (const auto found = documents_.find(uri); found != documents_.end()) {
+        show_document(uri, found->second);
+    } else if (const auto path = uri.file_path()) {
+        open_file(QString::fromStdString(path->string()));
     }
 }
 
@@ -1532,6 +1646,7 @@ void MainWindow::register_commands() {
     add("workbench.action.navigateToLastEditLocation", tr("Go to Last Edit Location"),
         [this] { navigate(history_.go_to_last_edit(), true); });
     add("workbench.action.gotoLine", tr("Go to Line/Column..."), [this] { show_go_to_line(); });
+    add("workbench.action.quickOpen", tr("Go to File..."), [this] { show_quick_open(); });
     add("editor.action.jumpToBracket", tr("Go to Bracket"), [this] { view()->jump_to_bracket(); });
     add("editor.action.commentLine", tr("Toggle Line Comment"),
         [this] { run_comment_command(false, core::LineCommentType::toggle); });
@@ -2439,6 +2554,8 @@ void MainWindow::rekey_document(const core::Uri& uri, const core::Uri& new_uri,
         bridge_.language_changed(new_uri, *chosen);
     }
     history_.replace_uri(uri, new_uri);
+    std::erase(recent_documents_, new_uri);
+    std::ranges::replace(recent_documents_, uri, new_uri);
     layout_.replace_document(uri, new_uri);
 }
 
@@ -2452,6 +2569,7 @@ void MainWindow::document_renamed(const core::Uri& uri, const core::Uri& new_uri
 }
 
 void MainWindow::document_deleted(const core::Uri& uri) {
+    std::erase(recent_documents_, uri);
     if (!documents_.contains(uri)) {
         return;
     }
@@ -2853,6 +2971,7 @@ void MainWindow::refresh_current() {
             }
         }
         shown_uri_ = *current;
+        remember_shown(*current);
         bridge_.show(*current);
     } else if (!current) {
         shown_uri_.reset();

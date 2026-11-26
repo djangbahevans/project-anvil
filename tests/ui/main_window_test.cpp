@@ -1,6 +1,7 @@
 #include "anvil/core/live_highlighter.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
+#include "anvil/search/ripgrep.hpp"
 #include "anvil/ui/about.hpp"
 #include "anvil/ui/activity_bar.hpp"
 #include "anvil/ui/main_window.hpp"
@@ -72,6 +73,8 @@ protected:
         options.executable = executable_;
         options.start_process = start_process_;
         options.open_url = open_url_;
+        options.ripgrep = ripgrep_;
+        options.list_files = list_files_;
         options.custom_title_bar = custom_title_bar_;
         options.workspace = workspace_;
         options.choose_folder = choose_folder_;
@@ -318,6 +321,10 @@ protected:
     std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
+    std::optional<std::filesystem::path> ripgrep_;
+    std::function<ui::FileSourceFactory(const std::filesystem::path&,
+                                        const core::FileSearchOptions&)>
+        list_files_;
     std::filesystem::path state_directory_;
     // The tests keep the system frame except those about the title bar.
     bool custom_title_bar_ = false;
@@ -2834,6 +2841,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.clipboardCopyAction",
                                           "editor.action.clipboardCutAction",
                                           "editor.action.clipboardPasteAction",
+                                          "workbench.action.quickOpen",
                                           "workbench.action.files.save",
                                           "workbench.action.files.saveAs",
                                           "workbench.action.editor.changeLanguageMode",
@@ -3070,6 +3078,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
     const std::vector<std::string> command_ids = {
         "workbench.action.files.newUntitledFile",
         "workbench.action.files.openFile",
+        "workbench.action.quickOpen",
         "workbench.action.files.save",
         "workbench.action.files.saveAs",
         "saveAll",
@@ -10880,4 +10889,252 @@ TEST_F(ExplorerDragWindowTest, DoNotAskAgainIsWrittenToTheSettingsAndTheNextMove
     drag(explorer, project() / "b.txt", project() / "src");
     EXPECT_TRUE(std::filesystem::exists(project() / "src" / "b.txt"));
     EXPECT_EQ(move_questions_.size(), 2U);
+}
+
+namespace {
+
+// Gives the files it was made with in one batch.
+class ListedFiles final : public ui::FileSource {
+public:
+    ListedFiles(std::vector<std::string> files, std::optional<Error> error)
+        : files_(std::move(files)), error_(std::move(error)) {}
+    search::ListingBatch read(std::chrono::milliseconds) override {
+        return {.files = std::exchange(files_, {}), .finished = true, .error = error_};
+    }
+
+private:
+    std::vector<std::string> files_;
+    std::optional<Error> error_;
+};
+
+class QuickOpenWindowTest : public MainWindowKeysTest {
+protected:
+    void SetUp() override {
+        MainWindowKeysTest::SetUp();
+        for (const char* name : {"a.txt", "b.txt", "src/main.cpp", "src/util.cpp"}) {
+            std::filesystem::create_directories((scratch_ / "project" / name).parent_path());
+            EXPECT_TRUE(platform::write_file(project() / name, name).has_value());
+        }
+        workspace_ = *core::Workspace::open(scratch_ / "project");
+        list_files_ = [this](const std::filesystem::path& folder,
+                             const core::FileSearchOptions& options) -> ui::FileSourceFactory {
+            listed_folder_ = folder;
+            listed_options_ = options;
+            return [files = files_,
+                    error =
+                        listing_error_]() -> std::expected<std::unique_ptr<ui::FileSource>, Error> {
+                return std::make_unique<ListedFiles>(files, error);
+            };
+        };
+    }
+    std::filesystem::path project() const {
+        return std::filesystem::canonical(scratch_) / "project";
+    }
+    bool open(const std::string& name) {
+        return window_->open_file(QString::fromStdString((project() / name).string()));
+    }
+
+    ui::QuickOpen& quick_open() {
+        return *window_->quick_open();
+    }
+    ui::QuickPick* pick() {
+        return window_->quick_open()->pick();
+    }
+    void go_to_file() {
+        ASSERT_TRUE(window_->commands().execute("workbench.action.quickOpen"));
+    }
+    // The labels and descriptions that show, as "label|description".
+    std::vector<std::string> rows() {
+        std::vector<std::string> rows;
+        for (const std::size_t item : pick()->shown_items()) {
+            rows.push_back((pick()->items()[item].label + "|" + pick()->items()[item].description)
+                               .toStdString());
+        }
+        return rows;
+    }
+    void filter(const char* text) {
+        pick()->filter_field()->setText(text);
+        ASSERT_TRUE(wait_until([&] { return quick_open().is_complete(); }));
+    }
+    void enter() {
+        QTest::keyClick(pick()->filter_field(), Qt::Key_Return);
+    }
+    std::filesystem::path shown_path() {
+        return *window_->current_uri().file_path();
+    }
+
+    std::vector<std::string> files_ = {"a.txt", "b.txt", "src/main.cpp", "src/util.cpp"};
+    std::optional<Error> listing_error_;
+    std::filesystem::path listed_folder_;
+    core::FileSearchOptions listed_options_;
+};
+
+} // namespace
+
+TEST_F(QuickOpenWindowTest, TheChosenFileOpensInTheFocusedGroup) {
+    create_active_window();
+    ASSERT_TRUE(open("a.txt"));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.splitEditorRight"));
+    const workbench::GroupId second = window_->editor_layout().focused();
+    go_to_file();
+    EXPECT_EQ(listed_folder_, window_->workspace()->folder);
+    filter("main");
+    ASSERT_EQ(rows(), std::vector<std::string>{"main.cpp|src"});
+    enter();
+    EXPECT_FALSE(pick()->isVisible());
+    EXPECT_EQ(window_->editor_layout().focused(), second);
+    EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "main.cpp");
+    EXPECT_EQ(current_text(), "src/main.cpp");
+}
+
+TEST_F(QuickOpenWindowTest, TheFilesThatWereShownAreOfferedNewestFirstWithClosedOnes) {
+    create_active_window();
+    ASSERT_TRUE(open("a.txt"));
+    ASSERT_TRUE(open("src/main.cpp"));
+    ASSERT_TRUE(open("b.txt"));
+    ASSERT_TRUE(open("a.txt"));
+    go_to_file();
+    EXPECT_EQ(rows(), (std::vector<std::string>{"a.txt|", "b.txt|", "main.cpp|src"}));
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+
+    // A closed file stays in the list, and one that is gone leaves it.
+    // The untitled document that the window started with and the three files.
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_TRUE(window_->close_document(0));
+    }
+    ASSERT_EQ(window_->open_document_count(), 1U);
+    ASSERT_FALSE(window_->current_uri().file_path().has_value());
+    std::filesystem::remove(project() / "b.txt");
+    go_to_file();
+    // Closing shows the tab that takes the place of the closed one, which counts as shown.
+    std::vector<std::string> listed = rows();
+    std::ranges::sort(listed);
+    ASSERT_EQ(listed, (std::vector<std::string>{"a.txt|", "main.cpp|src"}));
+    const std::string second = rows()[1];
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Down);
+    enter();
+    EXPECT_EQ(shown_path().filename().string(), second.substr(0, second.find('|')));
+}
+
+TEST_F(QuickOpenWindowTest, AFileOutsideTheFolderIsShownWithItsDirectory) {
+    create_active_window();
+    const auto outside = write("outside.txt", "O");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(outside.string())));
+    go_to_file();
+    EXPECT_EQ(rows(), std::vector<std::string>{"outside.txt|" + outside.parent_path().string()});
+}
+
+TEST_F(QuickOpenWindowTest, WithoutAFolderTheOpenDocumentsAreListed) {
+    workspace_.reset();
+    create_active_window();
+    ASSERT_TRUE(open("a.txt"));
+    ASSERT_TRUE(open("b.txt"));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.files.newUntitledFile"));
+    ASSERT_TRUE(open("a.txt"));
+    go_to_file();
+    const std::vector<std::string> shown = rows();
+    ASSERT_GE(shown.size(), 3U);
+    EXPECT_EQ(shown[0].substr(0, 6), "a.txt|");
+    EXPECT_EQ(shown[1].substr(0, 9), "Untitled-");
+    EXPECT_EQ(shown[2].substr(0, 6), "b.txt|");
+    filter("untit");
+    enter();
+    EXPECT_FALSE(window_->current_uri().file_path().has_value());
+    EXPECT_TRUE(listed_folder_.empty());
+}
+
+TEST_F(QuickOpenWindowTest, WithoutRipgrepTheOpenDocumentsAreListedAndTheStatusBarSaysWhy) {
+    list_files_ = {};
+    create_active_window();
+    ASSERT_TRUE(open("a.txt"));
+    go_to_file();
+    EXPECT_TRUE(pick()->isVisible());
+    EXPECT_TRUE(window_->status_bar().message().contains("ripgrep"))
+        << window_->status_bar().message().toStdString();
+    filter("a.t");
+    EXPECT_EQ(rows(), std::vector<std::string>{"a.txt|"});
+}
+
+TEST_F(QuickOpenWindowTest, AFailedListingIsReportedInTheStatusBar) {
+    listing_error_ = Error{ErrorCode::io_error, "src cannot be read"};
+    create_active_window();
+    go_to_file();
+    ASSERT_TRUE(wait_until([&] {
+        return window_->status_bar().message() == "Listing the files failed: src cannot be read";
+    }));
+}
+
+TEST_F(QuickOpenWindowTest, TheSearchSettingsReachTheListing) {
+    settings_file_ =
+        write("settings.json",
+              R"({"search.exclude": {"**/dist": true}, "search.followSymlinks": false})");
+    create_active_window();
+    go_to_file();
+    EXPECT_NE(std::ranges::find(listed_options_.excludes, "**/dist"),
+              listed_options_.excludes.end());
+    EXPECT_FALSE(listed_options_.follow_symlinks);
+}
+
+TEST_F(QuickOpenWindowTest, AWrongSearchSettingIsLogged) {
+    settings_file_ = write("settings.json", R"({"search.useIgnoreFiles": "no"})");
+    create_window();
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "search.useIgnoreFiles", "settings"));
+}
+
+TEST_F(QuickOpenWindowTest, TheKeysOpenItAndPressedAgainMoveDown) {
+    create_active_window();
+    ASSERT_TRUE(open("a.txt"));
+    ASSERT_TRUE(open("b.txt"));
+    window_->view()->setFocus();
+    for (const Qt::Key key : {Qt::Key_P, Qt::Key_E}) {
+        QTest::keyClick(QApplication::focusWidget(), key, Qt::ControlModifier);
+        ASSERT_TRUE(pick()->isVisible()) << static_cast<char>(key);
+        EXPECT_EQ(pick()->active_item(), 0U);
+        QTest::keyClick(QApplication::focusWidget(), key, Qt::ControlModifier);
+        EXPECT_EQ(pick()->active_item(), 1U);
+        QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+        ASSERT_FALSE(pick()->isVisible());
+    }
+}
+
+TEST_F(QuickOpenWindowTest, ARenamedFileIsOfferedUnderItsNewName) {
+    create_active_window();
+    ASSERT_TRUE(open("a.txt"));
+    window_->sidebar()->activate("workbench.view.explorer");
+    auto* explorer = qobject_cast<ui::ExplorerView*>(
+        window_->sidebar()->container_widget("workbench.view.explorer"));
+    ASSERT_NE(explorer, nullptr);
+    std::filesystem::rename(project() / "a.txt", project() / "renamed.txt");
+    emit explorer->renamed(
+        QString::fromStdString((window_->workspace()->folder / "a.txt").string()),
+        QString::fromStdString((window_->workspace()->folder / "renamed.txt").string()));
+    go_to_file();
+    EXPECT_EQ(rows().front(), "renamed.txt|");
+}
+
+TEST_F(QuickOpenWindowTest, ItListsTheFilesOfTheFolderWithRipgrep) {
+    list_files_ = {};
+    const char* override_path = std::getenv("ANVIL_RG");
+    const char* path_variable = std::getenv("PATH");
+    ripgrep_ = search::find_ripgrep({.override_path = override_path ? override_path : "",
+                                     .vscode_dir = ANVIL_VSCODE_DIR,
+                                     .path_variable = path_variable ? path_variable : ""});
+    if (!ripgrep_) {
+        ASSERT_EQ(std::getenv("ANVIL_REQUIRE_RIPGREP"), nullptr) << "ripgrep is required";
+        GTEST_SKIP() << "needs ripgrep";
+    }
+    std::filesystem::create_directories(project() / "node_modules");
+    ASSERT_TRUE(platform::write_file(project() / "node_modules" / "util.js", "x").has_value());
+    create_active_window();
+    go_to_file();
+    filter("util");
+    ASSERT_EQ(rows(), std::vector<std::string>{"util.cpp|src"});
+    enter();
+    EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "util.cpp");
+
+    // A file made since is there the next time.
+    ASSERT_TRUE(platform::write_file(project() / "later.txt", "x").has_value());
+    go_to_file();
+    filter("later");
+    EXPECT_EQ(rows(), std::vector<std::string>{"later.txt|"});
 }
