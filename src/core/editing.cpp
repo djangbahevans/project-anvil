@@ -1,6 +1,7 @@
 #include "anvil/core/editing.hpp"
 
 #include "anvil/core/char_class.hpp"
+#include "anvil/core/visible_column.hpp"
 
 #include <algorithm>
 
@@ -108,19 +109,26 @@ std::size_t word_left(const Text& text, std::size_t offset) {
     return offset;
 }
 
+std::size_t visible_column_at(const Text& text, std::size_t offset, std::size_t tab_size) {
+    const std::size_t start = text.line_start(text.position_at(offset).line);
+    const std::string before = text.slice(start, offset - start);
+    return visible_column(before, before.size(), tab_size);
+}
+
+// Where Up or Down takes `offset`: the visible column `goal`, or the one it has, on the line
+// above or below, and past the first or last line the start or end of the text.
 std::size_t move_vertically(const Text& text, std::size_t offset, int direction,
-                            std::optional<std::size_t> goal_column) {
-    const Position position = text.position_at(offset);
-    if (direction < 0) {
-        if (position.line == 0) {
-            return 0;
-        }
-        return text.offset_at({position.line - 1, goal_column.value_or(position.column)});
+                            std::optional<std::size_t> goal, std::size_t tab_size) {
+    const std::size_t line = text.position_at(offset).line;
+    if (direction < 0 && line == 0) {
+        return 0;
     }
-    if (position.line + 1 >= text.line_count()) {
+    if (direction > 0 && line + 1 >= text.line_count()) {
         return text.size();
     }
-    return text.offset_at({position.line + 1, goal_column.value_or(position.column)});
+    const std::size_t target = direction < 0 ? line - 1 : line + 1;
+    const std::size_t column = goal ? *goal : visible_column_at(text, offset, tab_size);
+    return text.line_start(target) + offset_at_visible_column(text.line(target), column, tab_size);
 }
 
 std::size_t line_indentation_length(const Text& text, std::size_t line, std::size_t limit_bytes) {
@@ -461,10 +469,15 @@ EditOutcome EditController::move(Motion motion, bool extend) {
     const auto& current = document_.selections().all();
     const bool vertical = motion == Motion::up || motion == Motion::down;
     std::optional<std::size_t> goal;
+    bool at_edge = false;
     if (vertical && current.size() == 1) {
-        goal = goal_column_
-                   ? goal_column_
-                   : std::optional<std::size_t>(text.position_at(current[0].active).column);
+        goal =
+            goal_column_
+                ? goal_column_
+                : std::optional<std::size_t>(visible_column_at(text, current[0].active, tab_size_));
+        // As in VS Code, a caret that is at the start or end of the text and moves further that
+        // way forgets its column.
+        at_edge = current[0].active == (motion == Motion::up ? 0 : text.size());
     }
 
     std::vector<Selection> moved;
@@ -487,10 +500,10 @@ EditOutcome EditController::move(Motion motion, bool extend) {
                                                     : text.size();
             break;
         case Motion::up:
-            target = move_vertically(text, selection.active, -1, goal);
+            target = move_vertically(text, selection.active, -1, goal, tab_size_);
             break;
         case Motion::down:
-            target = move_vertically(text, selection.active, 1, goal);
+            target = move_vertically(text, selection.active, 1, goal, tab_size_);
             break;
         case Motion::line_start:
             target = text.line_start(text.position_at(selection.active).line);
@@ -520,7 +533,7 @@ EditOutcome EditController::move(Motion motion, bool extend) {
     EditOutcome outcome =
         adopt(SelectionSet::from(std::move(moved), document_.selections().primary_index()));
     // Vertical movement remembers the column it started from; any other movement forgets it.
-    goal_column_ = vertical ? goal : std::nullopt;
+    goal_column_ = vertical && !at_edge ? goal : std::nullopt;
     return outcome;
 }
 

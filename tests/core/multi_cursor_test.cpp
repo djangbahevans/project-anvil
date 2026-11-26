@@ -66,6 +66,15 @@ TEST(AddCursorsVertically, ACursorOnAShortLineStopsAtItsEndAndRemembersTheColumn
         << "back at column 5 on the long line";
 }
 
+TEST(AddCursorsVertically, AColumnInsideATabIsWantedAgainOnTheNextLine) {
+    // Visible column 3 is nearer the end of the tab than its start.
+    Editor editor("abcdef\n\tx\nabcdef", {Selection::caret(3)});
+    editor.controller.add_cursors_vertically(true);
+    editor.controller.add_cursors_vertically(true);
+    EXPECT_EQ(editor.selections(),
+              (Carets{Selection::caret(3), Selection::caret(8), Selection::caret(13)}));
+}
+
 TEST(AddCursorsVertically, ChangingTheSelectionsForgetsTheRememberedColumn) {
     Editor editor("abcdef\nab\nabcdef", {Selection::caret(5)});
     editor.controller.add_cursors_vertically(true);

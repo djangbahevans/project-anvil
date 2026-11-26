@@ -36,7 +36,7 @@ Delete the old recording and update the file name in `tests/exthost/replay_test.
 
 ## 5. Record the results of the ported matchers again
 
-The core's fuzzy matcher, its file name comparer and its token theme matcher are tested against results recorded from VS Code's own code (the scorer in the checkout, and `vscode-textmate` with `vscode-oniguruma` in its `node_modules`). Record them from the new checkout and run the core tests; a difference is a change in VS Code's behavior to port.
+The core's fuzzy matcher, its file name comparer, its token theme matcher and its visible columns are tested against results recorded from VS Code's own code (the scorer in the checkout, and `vscode-textmate` with `vscode-oniguruma` in its `node_modules`). Record them from the new checkout and run the core tests; a difference is a change in VS Code's behavior to port.
 
 ```sh
 node scripts/generate-fuzzy-cases.mjs
@@ -49,6 +49,8 @@ node scripts/generate-languages.mjs          # the languages, then the cases tha
 node scripts/generate-language-cases.mjs
 node scripts/generate-language-comments.mjs   # the comment tokens of the languages
 node scripts/generate-comment-cases.mjs       # what the comment commands do, recorded from VS Code
+node scripts/generate-grapheme-table.mjs     # the grapheme classes, then the cases that use them
+node scripts/generate-cursor-column-cases.mjs # visible columns and how Up and Down keep them
 ```
 
 The key table (`src/core/include/anvil/core/key_table.hpp`) lists VS Code's `KeyCode` values with the names key bindings use for them, so a new key in the release is a new row. CI checks the three key scripts with `--check`.
