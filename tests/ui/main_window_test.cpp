@@ -10648,3 +10648,16 @@ TEST_F(WindowStateTest, AWindowThatIsNotClosedWritesNothingWhenItIsDestroyed) {
     window_.reset();
     EXPECT_FALSE(std::filesystem::exists(state_directory_));
 }
+
+TEST_F(WindowStateTest, ASavedSizeThatIsTheDefaultIsNotScaledByTheZoomOfTheSettings) {
+    std::filesystem::create_directories(state_directory_);
+    ASSERT_TRUE(
+        platform::write_file(state_directory_ / "global.json", R"({"layout.sidebar.width": 300})")
+            .has_value());
+    ASSERT_TRUE(platform::write_file(state_directory_ / "no-folder.json",
+                                     R"({"layout.sidebar.visible": true})")
+                    .has_value());
+    settings_file_ = write("settings.json", R"({"window.zoomLevel": 1})");
+    create_window();
+    EXPECT_EQ(window_->workbench()->size(ui::Part::sidebar), 300);
+}

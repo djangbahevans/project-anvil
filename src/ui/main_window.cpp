@@ -413,8 +413,6 @@ MainWindow::MainWindow(Options options, QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
-    // Deleting the widgets changes the layout, which is not a change to save.
-    state_keeper_.reset();
     // The menus are deleted with the window, after its members, and must not outlive their style.
     for (QMenu* menu : findChildren<QMenu*>()) {
         menu->setStyle(nullptr);
