@@ -22,6 +22,8 @@ struct EditorDefaults {
     // The color theme when `workbench.colorTheme` is not set: VS Code's default in the pinned
     // release, which is the `id` of one of the themes in resources/themes/themes.json.
     std::string color_theme = "Dark 2026";
+    // The distance between lines as a multiple of the font size: VS Code's, which is 1.5 on macOS.
+    double line_height_ratio = 1.35;
 };
 
 // Whether the window draws its own title bar (`custom`) or has the system's frame (`native`).
@@ -64,6 +66,8 @@ struct EditorSettings {
     std::string font_family;
     // editor.fontSize, in pixels
     int font_size = 14;
+    // The distance between lines as a multiple of the font size, from EditorDefaults
+    double line_height_ratio = 1.35;
     // window.zoomLevel: the level of the window's zoom, from -8 to 8 (see `zoom_factor`); the
     // editor's font is `font_size` scaled by it
     double zoom_level = 0;

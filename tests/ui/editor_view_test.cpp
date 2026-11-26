@@ -2823,3 +2823,119 @@ TEST_F(WrapTest, EndOnTheLastRowInViewDoesNotScroll) {
     key(Qt::Key_End);
     EXPECT_EQ(view_.verticalScrollBar()->value(), 0);
 }
+
+TEST_F(LayoutCacheTest, ASelectedUnderscoreShowsOnItsOwnLine) {
+    // As with a theme, which sets the selection's background, so selected text keeps its color.
+    WorkbenchColors colors(QApplication::palette());
+    colors.set_colors({{"editor.background", QColor("#000000")},
+                       {"editor.foreground", QColor("#ffffff")},
+                       {"editor.selectionBackground", QColor("#000080")},
+                       {"editorCursor.foreground", QColor("#ff0000")}});
+    view_.set_colors(&colors);
+    int fonts = 0;
+    for (const char* family :
+         {"monospace", "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Ubuntu Mono"}) {
+        if (std::string(family) != "monospace" &&
+            !QFontDatabase::families().contains(QString::fromLatin1(family))) {
+            continue;
+        }
+        ++fonts;
+        for (const int size : {6, 10, 12, 13, 14, 15, 18, 24, 40}) {
+            SCOPED_TRACE(std::string(family) + " " + std::to_string(size));
+            settings_.font_family = family;
+            settings_.font_size = size;
+            view_.apply_settings(settings_);
+            open("a___b\nc");
+            set_selections({core::Selection{0, 5}});
+            const QImage with = paint();
+            const int left = view_.cursor_rect(1).left() + 1;
+            const int right = view_.cursor_rect(4).left() - 1;
+            // The pixels between these columns, which hold underscores alone, in the rows of the
+            // viewport from `top`, that are not `color`.
+            const auto others = [&](int top, const QColor& color) {
+                int count = 0;
+                for (int y = top; y < top + view_.line_height(); ++y) {
+                    for (int x = left; x < right; ++x) {
+                        count += with.pixelColor(x, y) != color ? 1 : 0;
+                    }
+                }
+                return count;
+            };
+            EXPECT_GT(others(0, QColor("#000080")), 0) << "the underscores are on their own line";
+            EXPECT_EQ(others(view_.line_height(), QColor("#000000")), 0)
+                << "nothing of them is on the next line";
+        }
+    }
+    EXPECT_GE(fonts, 1);
+    view_.set_colors(nullptr);
+}
+
+TEST_F(LayoutCacheTest, LinesAreAsFarApartAsInVsCodeOrAsALaidOutLineNeeds) {
+    // At 1.0 the room that the text needs decides, at the others VS Code's height does.
+    for (const double ratio : {1.0, 1.35, 1.5}) {
+        for (int size = 6; size <= 48; ++size) {
+            SCOPED_TRACE(std::to_string(size) + " times " + std::to_string(ratio));
+            settings_.font_size = size;
+            settings_.line_height_ratio = ratio;
+            view_.apply_settings(settings_);
+            QTextLayout layout(QStringLiteral("_gjpqy"), view_.font());
+            layout.beginLayout();
+            const QTextLine line = layout.createLine();
+            layout.endLayout();
+            const double ink =
+                line.ascent() +
+                QFontMetricsF(view_.font()).tightBoundingRect(layout.text()).bottom();
+            const int vs_code = static_cast<int>(std::lround(ratio * size));
+            EXPECT_EQ(view_.line_height(),
+                      std::max(vs_code, static_cast<int>(std::ceil(std::max(line.height(), ink)))));
+        }
+    }
+    settings_.font_size = 14;
+    settings_.line_height_ratio = 1.35;
+    view_.apply_settings(settings_);
+    EXPECT_EQ(view_.line_height(), 19);
+}
+
+TEST_F(LayoutCacheTest, SelectedLinesAreFilledToTheirWholeHeight) {
+    open("abcdef\nabcdef\nabcdef");
+    set_selections({core::Selection{0, 20}});
+    view_.set_highlights({{14, 17}});
+    const QImage image = paint();
+    const int lh = view_.line_height();
+    const int x = view_.cursor_rect(1).left() + 1;
+    const QRgb selection = view_.palette().color(QPalette::Highlight).rgb();
+    // Every pixel down through the two selected lines, between two characters.
+    for (int y = 0; y < 2 * lh; ++y) {
+        EXPECT_EQ(image.pixel(view_.cursor_rect(1).left(), y), selection) << y;
+    }
+    // A find match fills its line as well.
+    const QRgb plain = view_.palette().color(QPalette::Base).rgb();
+    const int match = view_.cursor_rect(15).left();
+    EXPECT_NE(image.pixel(match, 2 * lh), plain);
+    EXPECT_NE(image.pixel(match, 3 * lh - 1), plain);
+    EXPECT_EQ(image.pixel(x, 3 * lh + 1), plain);
+}
+
+TEST_F(LayoutCacheTest, TextStandsInTheMiddleOfItsLine) {
+    settings_.font_size = 40;
+    settings_.line_height_ratio = 2.0;
+    view_.apply_settings(settings_);
+    open("MMMM\n");
+    view_.select_range(core::Selection::caret(5));
+    const QImage image = paint();
+    const QRgb background = image.pixel(view_.viewport()->width() - 1, 1);
+    int top = -1;
+    int bottom = -1;
+    for (int y = 0; y < view_.line_height(); ++y) {
+        for (int x = view_.cursor_rect(0).left(); x < view_.cursor_rect(4).left(); ++x) {
+            if (image.pixel(x, y) != background) {
+                top = top < 0 ? y : top;
+                bottom = y;
+            }
+        }
+    }
+    // Eighty pixels for a capital of about thirty: much room on both sides.
+    ASSERT_GE(top, 0);
+    EXPECT_GT(top, 16);
+    EXPECT_GT(view_.line_height() - bottom, 16);
+}

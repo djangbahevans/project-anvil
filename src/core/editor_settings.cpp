@@ -27,6 +27,7 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
     EditorSettings result;
     result.font_family = defaults.font_family;
     result.font_size = defaults.font_size;
+    result.line_height_ratio = defaults.line_height_ratio;
     result.line_ending = defaults.auto_line_ending;
     result.color_theme = defaults.color_theme;
     std::vector<std::string> problems;
