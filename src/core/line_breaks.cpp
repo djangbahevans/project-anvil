@@ -63,12 +63,11 @@ BreakClass break_class(char32_t c) {
     return c > 0xFFFF ? BreakClass::none : listed_class(c);
 }
 
-bool can_break(BreakClass previous, char32_t c, BreakClass current) {
+bool can_break(BreakClass previous, BreakClass current) {
     using enum BreakClass;
-    return c != ' ' &&
-           ((previous == after && current != after) || (previous != before && current == before) ||
-            (previous == ideograph && current != after) ||
-            (current == ideograph && previous != before));
+    return (previous == after && current != after) || (previous != before && current == before) ||
+           (previous == ideograph && current != after) ||
+           (current == ideograph && previous != before);
 }
 
 struct Character {
@@ -154,7 +153,7 @@ std::size_t wrap(std::string_view line, const WrapOptions& options, const Emit& 
         const Character character = character_at(line, at);
         const BreakClass current = break_class(character.code_point);
         const double width = width_of(character.code_point, column, options);
-        if (can_break(previous, character.code_point, current)) {
+        if (can_break(previous, current)) {
             candidate = at;
             candidate_column = column;
         }
