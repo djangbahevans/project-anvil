@@ -133,6 +133,7 @@ const std::set<std::string> level_zero_sizes = {
 // The `constexpr` numbers that are not a size in pixels, and why.
 const std::map<std::string, std::string> not_sizes = {
     {"editor_area.cpp:scale", "a ratio of the width of the area, not a size in pixels"},
+    {"editor_view.cpp:caret_width", "the text caret, which is as thin at every zoom"},
     {"explorer_model.cpp:poll_interval_ms", "a time"},
     {"explorer_view.cpp:hover_expand_ms", "a time"},
     {"include/anvil/ui/editor_area.hpp:centered_margin_ratio", "a ratio of the width of the area"},

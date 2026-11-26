@@ -7,6 +7,7 @@ add_library(anvil_ui STATIC
   default_keybindings.cpp
   editor_area.cpp
   chunked_line.cpp
+  line_layout.cpp
   editor_view.cpp
   explorer_model.cpp
   explorer_view.cpp
@@ -25,6 +26,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/default_keybindings.hpp
   include/anvil/ui/editor_area.hpp
   include/anvil/ui/chunked_line.hpp
+  include/anvil/ui/line_layout.hpp
   include/anvil/ui/editor_view.hpp
   include/anvil/ui/explorer_model.hpp
   include/anvil/ui/explorer_view.hpp
