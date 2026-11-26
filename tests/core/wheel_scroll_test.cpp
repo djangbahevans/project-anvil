@@ -53,6 +53,7 @@ TEST(WheelScroll, FollowsTheRules) {
         {"Shift applies to the winner", {-1, -2}, shift, {}, 100, 0},
         {"both axes without a winner", {-2, -1}, no_keys, both, 100, 50},
         {"a huge turn stays in range", {0, -1}, no_keys, {.sensitivity = 1e300}, 0, 1 << 30},
+        {"and the other way", {0, 1}, no_keys, {.sensitivity = 1e300}, 0, -(1 << 30)},
     };
     for (const Case& c : cases) {
         const ScrollDistance result = wheel_scroll(c.turn, c.keys, c.macos, c.settings);

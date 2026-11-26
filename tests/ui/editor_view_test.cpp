@@ -3077,10 +3077,11 @@ TEST_F(ScrollingTest, TextThatFitsHasNoSidewaysRange) {
 }
 
 TEST_F(ScrollingTest, ColumnsPastTheLastOneCountWhereLinesDoNotWrapAtTheView) {
-    // The line ends two characters short of the width of the view.
+    // The line ends a few characters short of the width of the view, also beside the scroll bar
+    // that wrapped text always has.
     open("");
     const int fits = (view_.viewport()->width() - view_.cursor_rect(0).x()) / view_.char_width();
-    open(std::string(static_cast<std::size_t>(fits) - 2, 'x'));
+    open(std::string(static_cast<std::size_t>(fits) - 8, 'x'));
     settings_.scroll_beyond_last_column = 40;
     apply();
     EXPECT_GT(view_.horizontalScrollBar()->maximum(), 0);
@@ -3089,6 +3090,9 @@ TEST_F(ScrollingTest, ColumnsPastTheLastOneCountWhereLinesDoNotWrapAtTheView) {
     view_.viewport()->grab();
     EXPECT_GT(view_.horizontalScrollBar()->maximum(), 0);
 
+    // More columns than the view is wide, which would give a range if they counted.
+    settings_.scroll_beyond_last_column = 400;
+    apply();
     for (const auto wrapping : {EditorView::Wrapping::view, EditorView::Wrapping::bounded}) {
         view_.set_wrapping(wrapping, 500);
         view_.viewport()->grab();
