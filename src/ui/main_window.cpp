@@ -2047,6 +2047,12 @@ void MainWindow::open_find_bar(bool with_replace) {
     }
 }
 
+void MainWindow::release_document(const core::Uri& uri) {
+    forget_document_language(uri);
+    wrap_overrides_.erase(documents_.at(uri));
+    documents_.erase(uri);
+}
+
 bool MainWindow::close_document(std::size_t index) {
     return close_tab_at(layout_.focused(), index);
 }
@@ -2085,9 +2091,7 @@ bool MainWindow::close_document_in(workbench::GroupId group,
     layout_.close_tab(target.group, target.index);
     if (layout_.locations(*uri).empty()) {
         bridge_.remove_document(*uri);
-        forget_document_language(*uri);
-        wrap_overrides_.erase(document);
-        documents_.erase(*uri);
+        release_document(*uri);
     }
     return true;
 }
@@ -2141,9 +2145,7 @@ bool MainWindow::close_group(workbench::GroupId group) {
     for (const auto& document : documents) {
         if (const auto uri = uri_of(document); uri && layout_.locations(*uri).empty()) {
             bridge_.remove_document(*uri);
-            forget_document_language(*uri);
-            wrap_overrides_.erase(document);
-            documents_.erase(*uri);
+            release_document(*uri);
         }
     }
     if (documents_.empty()) {
@@ -2504,9 +2506,7 @@ void MainWindow::document_deleted(const core::Uri& uri) {
          locations = layout_.locations(uri)) {
         layout_.close_tab(locations.front().group, locations.front().index);
     }
-    forget_document_language(uri);
-    wrap_overrides_.erase(documents_.at(uri));
-    documents_.erase(uri);
+    release_document(uri);
 }
 
 void MainWindow::save_as_dialog() {

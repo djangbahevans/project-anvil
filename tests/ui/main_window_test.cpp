@@ -3911,16 +3911,15 @@ TEST_F(MainWindowWordWrapTest, EveryViewOfTheDocumentFollowsTheOverride) {
     EXPECT_EQ(rows_of(left), 1U);
 }
 
-TEST_F(MainWindowWordWrapTest, ClosingTheDocumentForgetsTheOverride) {
+TEST_F(MainWindowWordWrapTest, ClosingTheDocumentForgetsTheOverrideAndLetsTheDocumentGo) {
     open_wide();
     open("other.txt");
     open("wide.txt");
-    // Kept, as an extension can keep a document that the window has closed.
-    const std::shared_ptr<anvil::core::Document> kept = window_->view()->document();
+    const std::weak_ptr<anvil::core::Document> closed = window_->view()->document();
     toggle();
     window_->commands().execute("workbench.action.closeActiveEditor");
     QApplication::processEvents();
-    ASSERT_NE(window_->view()->document(), kept);
+    EXPECT_TRUE(closed.expired());
     open("wide.txt");
     EXPECT_FALSE(wraps());
 }

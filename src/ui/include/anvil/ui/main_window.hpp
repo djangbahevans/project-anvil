@@ -493,6 +493,8 @@ private:
     // one is closed in every group without asking.
     void document_renamed(const core::Uri& uri, const core::Uri& new_uri);
     void document_deleted(const core::Uri& uri);
+    // Drops a document that no tab shows any more, with what the window keeps about it.
+    void release_document(const core::Uri& uri);
     // Writes the document to `path`. A failure is shown in a dialog, or in the status bar when
     // `automatic`, which is for a save that nobody asked for.
     bool write_document(const core::Uri& uri, const std::filesystem::path& path,
