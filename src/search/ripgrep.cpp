@@ -56,9 +56,17 @@ std::optional<std::filesystem::path> find_ripgrep(const RipgrepLocations& locati
     return platform::find_executable(name, locations.path_variable);
 }
 
-std::vector<std::string> list_arguments(const core::FileSearchOptions& options) {
+std::vector<std::string> list_arguments(const core::FileSearchOptions& options,
+                                        const std::vector<std::string>& includes) {
     std::vector<std::string> arguments{"--files", "--hidden", "--case-sensitive",
                                        "--no-require-git"};
+    // Before the excludes: a later glob wins.
+    for (const std::string& include : includes) {
+        if (std::string glob = anchored(include); !glob.empty()) {
+            arguments.emplace_back("-g");
+            arguments.push_back(std::move(glob));
+        }
+    }
     for (const std::string& exclude : options.excludes) {
         if (const std::string glob = anchored(exclude); !glob.empty()) {
             arguments.emplace_back("-g");
@@ -86,9 +94,10 @@ FileListing::FileListing(platform::Process process) : process_(std::move(process
 
 std::expected<FileListing, Error> FileListing::start(const std::filesystem::path& ripgrep,
                                                      const std::filesystem::path& folder,
-                                                     const core::FileSearchOptions& options) {
+                                                     const core::FileSearchOptions& options,
+                                                     const std::vector<std::string>& includes) {
     platform::ProcessSpec spec{.executable = ripgrep,
-                               .arguments = list_arguments(options),
+                               .arguments = list_arguments(options, includes),
                                .environment = platform::current_environment(),
                                .working_directory = folder,
                                .pipe_output = true,
@@ -163,14 +172,14 @@ ListingBatch FileListing::read(std::chrono::milliseconds timeout) {
         }
     }
     if (output_closed_ && error_closed_) {
-        end(batch);
+        end(batch, timeout);
     }
     return batch;
 }
 
-void FileListing::end(ListingBatch& batch) {
+void FileListing::end(ListingBatch& batch, std::chrono::milliseconds timeout) {
     // Both streams are closed, so ripgrep is about to exit; until it has, the listing goes on.
-    const std::optional<int> status = process_->wait(std::chrono::milliseconds(100));
+    const std::optional<int> status = process_->wait(timeout);
     if (!status) {
         return;
     }
