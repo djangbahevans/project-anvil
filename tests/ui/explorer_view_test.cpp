@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTest>
@@ -1675,4 +1676,458 @@ TEST_F(ExplorerOperationsTest, TheReasonShowsUnderTheFieldAndTheTreeIsDrawnWhile
     if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
         image.save(QString::fromUtf8(directory) + "/explorer_naming.png");
     }
+}
+
+// --- drag and drop ---
+
+namespace {
+
+class ExplorerDragTest : public ExplorerOperationsTest {
+protected:
+    void SetUp() override {
+        ExplorerOperationsTest::SetUp();
+        write(root_ / "docs" / "guide.md");
+        view_->model()->reload(root_ / "docs");
+    }
+
+    QModelIndex row_of(const std::filesystem::path& path) const {
+        return view_->model()->index_of(path);
+    }
+    // A point on the label of the row.
+    QPoint on(const std::filesystem::path& path) const {
+        const QRect rect = view_->tree()->visualRect(row_of(path));
+        return {rect.left() + 10, rect.center().y()};
+    }
+    QPoint below_the_rows() const {
+        return {40, view_->tree()->viewport()->height() - 3};
+    }
+    void open(const std::filesystem::path& folder) {
+        view_->tree()->expand(row_of(folder));
+        settle();
+    }
+
+    void mouse(QEvent::Type type, const QPoint& position, Qt::MouseButton button,
+               Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers = {}) {
+        QWidget* viewport = view_->tree()->viewport();
+        QMouseEvent event(type, position, viewport->mapToGlobal(position), button, buttons,
+                          modifiers);
+        QApplication::sendEvent(viewport, &event);
+    }
+    void press(const QPoint& position, Qt::KeyboardModifiers modifiers = {}) {
+        mouse(QEvent::MouseButtonPress, position, Qt::LeftButton, Qt::LeftButton, modifiers);
+    }
+    void move(const QPoint& position, Qt::KeyboardModifiers modifiers = {}) {
+        mouse(QEvent::MouseMove, position, Qt::NoButton, Qt::LeftButton, modifiers);
+    }
+    void release(const QPoint& position, Qt::KeyboardModifiers modifiers = {}) {
+        mouse(QEvent::MouseButtonRelease, position, Qt::LeftButton, Qt::NoButton, modifiers);
+    }
+    // Presses on a row and moves far enough that it is a drag, to `to`.
+    void begin_drag(const std::filesystem::path& from, const QPoint& to,
+                    Qt::KeyboardModifiers modifiers = {}) {
+        const QPoint start = on(from);
+        press(start);
+        move(start + QPoint(QApplication::startDragDistance() + 1, 0));
+        move(to, modifiers);
+    }
+    void drag(const std::filesystem::path& from, const QPoint& to,
+              Qt::KeyboardModifiers modifiers = {}) {
+        begin_drag(from, to, modifiers);
+        release(to, modifiers);
+        settle();
+    }
+    void also_select(const std::filesystem::path& path) {
+        view_->tree()->selectionModel()->select(row_of(path), QItemSelectionModel::Select |
+                                                                  QItemSelectionModel::Rows);
+    }
+    std::vector<std::string> renames() const {
+        std::vector<std::string> result;
+        for (const QList<QVariant>& call : *renamed_) {
+            result.push_back(call.at(0).toString().toStdString() + " -> " +
+                             call.at(1).toString().toStdString());
+        }
+        return result;
+    }
+    std::string renaming(const char* from, const char* to) const {
+        return (root_ / from).string() + " -> " + (root_ / to).string();
+    }
+    static std::string content(const std::filesystem::path& path) {
+        std::ifstream file(path);
+        return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    }
+};
+
+} // namespace
+
+TEST_F(ExplorerDragTest, DraggingAFileOntoAFolderMovesIt) {
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+    EXPECT_EQ(renames(), (std::vector<std::string>{renaming("a.txt", "docs/a.txt")}));
+    EXPECT_FALSE(row_of(root_ / "a.txt").isValid());
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_FALSE(view_->drop_target().has_value());
+}
+
+TEST_F(ExplorerDragTest, WithCtrlTheItemIsCopiedAndStays) {
+    drag(root_ / "a.txt", on(root_ / "docs"), Qt::ControlModifier);
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+    EXPECT_EQ(renamed_->count(), 0);
+    EXPECT_EQ(deleted_->count(), 0);
+}
+
+TEST_F(ExplorerDragTest, AFolderIsCopiedWithItsContent) {
+    drag(root_ / "src", on(root_ / "docs"), Qt::ControlModifier);
+    EXPECT_TRUE(std::filesystem::exists(root_ / "src" / "main.cpp"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "src" / "main.cpp"));
+}
+
+TEST_F(ExplorerDragTest, ADropOnAFileGoesIntoItsFolderAndOneBelowTheRowsIntoTheWorkspaceFolder) {
+    open(root_ / "src");
+    drag(root_ / "a.txt", on(root_ / "src" / "main.cpp"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "src" / "a.txt"));
+
+    drag(root_ / "src" / "main.cpp", below_the_rows());
+    EXPECT_TRUE(std::filesystem::exists(root_ / "main.cpp"));
+    EXPECT_EQ(view_->tree()->currentIndex().data().toString(), "main.cpp");
+}
+
+TEST_F(ExplorerDragTest, AFolderIsNotDroppedOntoItselfOrBelowAndNothingMovesWhereItIs) {
+    std::filesystem::create_directories(root_ / "src" / "inner");
+    open(root_ / "src");
+    view_->model()->reload(root_ / "src");
+    settle();
+    for (const std::filesystem::path& target : {root_ / "src", root_ / "src" / "inner"}) {
+        begin_drag(root_ / "src", on(target));
+        EXPECT_FALSE(view_->drop_target().has_value()) << target;
+        EXPECT_EQ(view_->tree()->viewport()->cursor().shape(), Qt::ForbiddenCursor) << target;
+        release(on(target));
+        settle();
+    }
+    // Where the item is already, and outside the view.
+    drag(root_ / "a.txt", below_the_rows());
+    drag(root_ / "a.txt", on(root_ / "b.md"), Qt::ControlModifier);
+    drag(root_ / "a.txt", QPoint(-20, 10));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "src" / "inner"));
+    EXPECT_EQ(renamed_->count(), 0);
+    EXPECT_EQ(failed_->count(), 0);
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(ExplorerDragTest, SeveralSelectedItemsAreDraggedTogether) {
+    select(root_ / "a.txt");
+    also_select(root_ / "b.md");
+    drag(root_ / "b.md", on(root_ / "docs"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "b.md"));
+    EXPECT_EQ(renamed_->count(), 2);
+}
+
+TEST_F(ExplorerDragTest, AnItemBelowASelectedFolderGoesWithTheFolder) {
+    open(root_ / "src");
+    select(root_ / "src");
+    also_select(root_ / "src" / "main.cpp");
+    drag(root_ / "src", on(root_ / "docs"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "src" / "main.cpp"));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "docs" / "main.cpp"));
+    EXPECT_EQ(renames(), (std::vector<std::string>{renaming("src", "docs/src")}));
+    EXPECT_EQ(failed_->count(), 0);
+}
+
+TEST_F(ExplorerDragTest, DraggingARowThatIsNotSelectedDragsOnlyIt) {
+    select(root_ / "a.txt");
+    drag(root_ / "b.md", on(root_ / "docs"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "b.md"));
+}
+
+TEST_F(ExplorerDragTest, ATakenNameAsksBeforeItIsReplaced) {
+    std::ofstream(root_ / "docs" / "a.txt") << "old";
+    answer_ = false;
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0].message,
+              "A file or folder with the name 'a.txt' already exists in the destination folder. "
+              "Do you want to replace it?");
+    EXPECT_EQ(questions_[0].detail, "This action is irreversible!");
+    EXPECT_EQ(questions_[0].button, "Replace");
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "old");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_EQ(renamed_->count(), 0);
+    EXPECT_EQ(deleted_->count(), 0);
+
+    answer_ = true;
+    std::vector<std::string> order;
+    QObject::connect(view_.get(), &ExplorerView::deleted, view_.get(),
+                     [&] { order.push_back("deleted"); });
+    QObject::connect(view_.get(), &ExplorerView::renamed, view_.get(),
+                     [&] { order.push_back("renamed"); });
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "x");
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+    // The documents of the replaced file go before those of the moved one take its place.
+    EXPECT_EQ(order, (std::vector<std::string>{"deleted", "renamed"}));
+    ASSERT_EQ(deleted_->count(), 1);
+    EXPECT_EQ(deleted_->at(0).at(0).value<std::vector<std::filesystem::path>>(),
+              (std::vector<std::filesystem::path>{root_ / "docs" / "a.txt"}));
+}
+
+TEST_F(ExplorerDragTest, ACopyOntoATakenNameAsksToo) {
+    std::ofstream(root_ / "docs" / "a.txt") << "old";
+    drag(root_ / "a.txt", on(root_ / "docs"), Qt::ControlModifier);
+    EXPECT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "x");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, AReplaceActsOnWhatWasDraggedWhenItWasAsked) {
+    std::ofstream(root_ / "docs" / "a.txt") << "old";
+    while_asking_ = [this] { select(root_ / "b.md"); };
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "b.md"));
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "x");
+}
+
+TEST_F(ExplorerDragTest, AFolderThatHoldsTheItemIsNotReplacedByIt) {
+    std::filesystem::create_directories(root_ / "p" / "p");
+    write(root_ / "p" / "p" / "deep.txt");
+    write(root_ / "p" / "sibling.txt");
+    view_->model()->reload(root_);
+    settle();
+    open(root_ / "p");
+    drag(root_ / "p" / "p", below_the_rows());
+    EXPECT_TRUE(std::filesystem::exists(root_ / "p" / "p" / "deep.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "p" / "sibling.txt"));
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_EQ(failed_->count(), 1);
+}
+
+TEST_F(ExplorerDragTest, AMoveDoesNotReplaceADocumentWithUnsavedChanges) {
+    std::ofstream(root_ / "docs" / "a.txt") << "old";
+    view_->set_unsaved_changes_check(
+        [this](const std::filesystem::path& path) { return path == root_ / "docs" / "a.txt"; });
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "old");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    ASSERT_EQ(failed_->count(), 1);
+    EXPECT_TRUE(failed_->at(0).at(0).toString().contains("unsaved changes"));
+
+    // A copy leaves documents alone, so it asks as for any other file.
+    drag(root_ / "a.txt", on(root_ / "docs"), Qt::ControlModifier);
+    EXPECT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "x");
+}
+
+TEST_F(ExplorerDragTest, ADocumentChangedWhileTheQuestionIsOpenIsNotReplaced) {
+    std::ofstream(root_ / "docs" / "a.txt") << "old";
+    bool unsaved = false;
+    view_->set_unsaved_changes_check([&](const std::filesystem::path&) { return unsaved; });
+    while_asking_ = [&] { unsaved = true; };
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(content(root_ / "docs" / "a.txt"), "old");
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, AMoveThatFailsIsReportedAndTheRestAreMoved) {
+    select(root_ / "a.txt");
+    also_select(root_ / "b.md");
+    begin_drag(root_ / "a.txt", on(root_ / "docs"));
+    std::filesystem::remove(root_ / "a.txt");
+    release(on(root_ / "docs"));
+    settle();
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "b.md"));
+    ASSERT_EQ(failed_->count(), 1);
+    EXPECT_TRUE(failed_->at(0).at(0).toString().contains("a.txt"));
+}
+
+TEST_F(ExplorerDragTest, AShortMovementIsAClickAndNotADrag) {
+    const QPoint start = on(root_ / "a.txt");
+    press(start);
+    move(start + QPoint(1, 0));
+    EXPECT_FALSE(view_->drop_target().has_value());
+    release(on(root_ / "docs"));
+    settle();
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_EQ(view_->selected_paths(), (std::vector<std::filesystem::path>{root_ / "a.txt"}));
+}
+
+TEST_F(ExplorerDragTest, APressOnTheTwistieDoesNotDragTheFolder) {
+    const QRect src = view_->tree()->visualRect(row_of(root_ / "src"));
+    press(QPoint(src.left() - 4, src.center().y()));
+    move(on(root_ / "docs"));
+    release(on(root_ / "docs"));
+    settle();
+    EXPECT_TRUE(std::filesystem::exists(root_ / "src" / "main.cpp"));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "docs" / "src"));
+}
+
+TEST_F(ExplorerDragTest, EscapeEndsTheDrag) {
+    begin_drag(root_ / "a.txt", on(root_ / "docs"));
+    ASSERT_TRUE(view_->drop_target().has_value());
+    QTest::keyClick(view_->tree(), Qt::Key_Escape);
+    EXPECT_FALSE(view_->drop_target().has_value());
+    EXPECT_FALSE(view_->tree()->viewport()->testAttribute(Qt::WA_SetCursor));
+    move(on(root_ / "docs"));
+    release(on(root_ / "docs"));
+    settle();
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, TheFolderUnderThePointerIsHighlightedAndTheCursorTellsWhatHappens) {
+    // A palette color can differ from the pixel that it paints by a step of rounding.
+    const auto highlighted = [&](const QColor& drawn) {
+        const QColor highlight = colors_->color("list.dropBackground");
+        return std::abs(drawn.red() - highlight.red()) <= 1 &&
+               std::abs(drawn.green() - highlight.green()) <= 1 &&
+               std::abs(drawn.blue() - highlight.blue()) <= 1;
+    };
+    begin_drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_EQ(view_->drop_target(), std::optional(root_ / "docs"));
+    EXPECT_EQ(view_->tree()->viewport()->cursor().shape(), Qt::DragMoveCursor);
+    const auto drawn_at = [&](const QPoint& position) {
+        return view_->tree()->viewport()->grab().toImage().pixelColor(position);
+    };
+    const QPoint right_of_docs(view_->tree()->viewport()->width() - 4, on(root_ / "docs").y());
+    EXPECT_TRUE(highlighted(drawn_at(right_of_docs)));
+
+    move(on(root_ / "docs"), Qt::ControlModifier);
+    EXPECT_EQ(view_->tree()->viewport()->cursor().shape(), Qt::DragCopyCursor);
+
+    // The workspace folder is highlighted below its rows too.
+    open(root_ / "src");
+    move(on(root_ / "src" / "main.cpp"));
+    move(below_the_rows());
+    EXPECT_EQ(view_->drop_target(), std::nullopt) << "a.txt is in the workspace folder already";
+    release(below_the_rows());
+    begin_drag(root_ / "src" / "main.cpp", below_the_rows());
+    EXPECT_EQ(view_->drop_target(), std::optional(root_));
+    EXPECT_TRUE(highlighted(drawn_at(below_the_rows())));
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        view_->grab().toImage().save(QString::fromUtf8(directory) + "/explorer_dragging.png");
+    }
+    QTest::keyClick(view_->tree(), Qt::Key_Escape);
+    EXPECT_FALSE(highlighted(drawn_at(below_the_rows())));
+}
+
+TEST_F(ExplorerDragTest, AClosedFolderOpensWhenTheDragRestsOnIt) {
+    view_->set_hover_expand_delay(20);
+    const QModelIndex docs = row_of(root_ / "docs");
+    ASSERT_FALSE(view_->tree()->isExpanded(docs));
+    begin_drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_FALSE(view_->tree()->isExpanded(docs));
+    EXPECT_TRUE(QTest::qWaitFor([&] { return view_->tree()->isExpanded(docs); }, 2000));
+    release(on(root_ / "docs"));
+}
+
+TEST_F(ExplorerDragTest, AFolderThatTheDragOnlyPassesStaysClosed) {
+    view_->set_hover_expand_delay(50);
+    const QModelIndex docs = row_of(root_ / "docs");
+    begin_drag(root_ / "a.txt", on(root_ / "docs"));
+    move(on(root_ / "b.md"));
+    QTest::qWait(150);
+    EXPECT_FALSE(view_->tree()->isExpanded(docs));
+    release(QPoint(-20, 10));
+}
+
+TEST_F(ExplorerDragTest, ARightClickOnASelectedRowKeepsTheSelection) {
+    select(root_ / "a.txt");
+    also_select(root_ / "b.md");
+    const QPoint position = on(root_ / "b.md");
+    QContextMenuEvent event(QContextMenuEvent::Mouse, position,
+                            view_->tree()->viewport()->mapToGlobal(position));
+    QApplication::sendEvent(view_->tree()->viewport(), &event);
+    EXPECT_EQ(view_->selected_paths(),
+              (std::vector<std::filesystem::path>{root_ / "a.txt", root_ / "b.md"}));
+    EXPECT_EQ(view_->focused_path(), std::optional(root_ / "b.md"));
+}
+
+TEST_F(ExplorerDragTest, ADeleteOfSeveralItemsDeletesEachOnce) {
+    open(root_ / "src");
+    select(root_ / "src");
+    also_select(root_ / "src" / "main.cpp");
+    also_select(root_ / "b.md");
+    view_->trash_selected();
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0].message,
+              "Are you sure you want to delete the following 2 files/directories and their "
+              "contents?");
+    EXPECT_EQ(trashed_, (std::vector<std::filesystem::path>{root_ / "b.md", root_ / "src"}));
+    EXPECT_EQ(failed_->count(), 0);
+}
+
+// --- typing to find ---
+
+class ExplorerFindTest : public ExplorerViewTest {
+protected:
+    void SetUp() override {
+        ExplorerViewTest::SetUp();
+        interval_ = QApplication::keyboardInputInterval();
+        QApplication::setKeyboardInputInterval(100);
+        open_workspace();
+    }
+    void TearDown() override {
+        QApplication::setKeyboardInputInterval(interval_);
+    }
+    // Lets the typed text reset.
+    static void pause() {
+        QTest::qWait(150);
+    }
+    void type(const char* text) {
+        QTest::keyClicks(tree(), QString::fromLatin1(text));
+    }
+    int interval_ = 0;
+};
+
+TEST_F(ExplorerFindTest, TypingSelectsTheRowThatStartsWithTheLettersIgnoringCase) {
+    type("Z");
+    EXPECT_EQ(current_name(), "zeta.txt");
+    EXPECT_TRUE(tree()->selectionModel()->isSelected(tree()->currentIndex()));
+    EXPECT_EQ(tree()->selectionModel()->selectedRows().size(), 1);
+
+    pause();
+    type("a1");
+    EXPECT_EQ(current_name(), "a10.txt");
+    pause();
+    type("D");
+    EXPECT_EQ(current_name(), "docs");
+}
+
+TEST_F(ExplorerFindTest, TheTypedTextStartsAgainAfterAPause) {
+    type("a1");
+    EXPECT_EQ(current_name(), "a10.txt");
+    pause();
+    type("z");
+    EXPECT_EQ(current_name(), "zeta.txt") << "not a search for a1z";
+}
+
+TEST_F(ExplorerFindTest, OnlyTheRowsThatShowAreSearched) {
+    type("m");
+    EXPECT_NE(current_name(), "main.cpp") << "src is closed";
+    pause();
+    expand(index_of("/w/src"));
+    type("m");
+    EXPECT_EQ(current_name(), "main.cpp");
+    EXPECT_EQ(files_.listings("/w/src/util"), 0) << "searching reads nothing";
+}
+
+class ExplorerFindLoadingTest : public ExplorerLoadTest {};
+
+TEST_F(ExplorerFindLoadingTest, TheLoadingRowIsNotFoundAndTheEntriesAreFoundOnceTheyArrive) {
+    open_loaded_workspace();
+    tree()->expand(index_of("/w/src"));
+    ASSERT_EQ(view_->model()->rowCount(index_of("/w/src")), 1);
+    tree()->setCurrentIndex(index_of("/w/src"));
+    QTest::keyClick(tree(), 'l');
+    EXPECT_EQ(current_name(), "src");
+
+    arrive();
+    QApplication::processEvents();
+    QTest::qWait(QApplication::keyboardInputInterval() + 50);
+    QTest::keyClick(tree(), 'm');
+    EXPECT_EQ(current_name(), "main.cpp");
 }

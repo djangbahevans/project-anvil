@@ -1,5 +1,6 @@
 #include "anvil/ui/explorer_view.hpp"
 
+#include "anvil/exthost/workspace_file_edit.hpp"
 #include "anvil/platform/file.hpp"
 #include "anvil/platform/file_system.hpp"
 #include "anvil/ui/codicons.hpp"
@@ -18,6 +19,7 @@
 #include <QPushButton>
 #include <QStackedLayout>
 #include <QStyledItemDelegate>
+#include <QTimer>
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -126,7 +128,14 @@ public:
         setRootIsDecorated(true);
         setExpandsOnDoubleClick(false);
         setEditTriggers(NoEditTriggers);
-        setSelectionMode(SingleSelection);
+        setSelectionMode(ExtendedSelection);
+        hover_expand_.setSingleShot(true);
+        hover_expand_.setInterval(hover_expand_ms);
+        connect(&hover_expand_, &QTimer::timeout, this, [this] {
+            if (dragging() && drop_target_.isValid()) {
+                expand(drop_target_);
+            }
+        });
         setFrameShape(NoFrame);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setVerticalScrollMode(ScrollPerPixel);
@@ -145,6 +154,27 @@ public:
         apply_zoom();
     }
 
+    // What the explorer does with a drag; the tree only follows the pointer.
+    struct DragHandlers {
+        std::function<std::vector<std::filesystem::path>(const QModelIndexList&)> sources;
+        std::function<std::optional<QModelIndex>(const std::vector<std::filesystem::path>&,
+                                                 const QModelIndex&)>
+            folder;
+        std::function<void(const std::vector<std::filesystem::path>&, const QModelIndex&, bool)>
+            drop;
+    };
+    void set_drag_handlers(DragHandlers handlers) {
+        drag_handlers_ = std::move(handlers);
+    }
+    void set_hover_expand_delay(int milliseconds) {
+        hover_expand_.setInterval(milliseconds);
+    }
+    // Whether a drag is over a place that takes the rows, and the folder, invalid for the folder of
+    // the workspace.
+    std::optional<QModelIndex> drop_folder() const {
+        return dragging() && takes_drop_ ? std::optional<QModelIndex>(drop_target_) : std::nullopt;
+    }
+
     void set_editor_factory(ExplorerLabelDelegate::EditorFactory factory) {
         static_cast<ExplorerLabelDelegate*>(itemDelegate())->set_editor_factory(std::move(factory));
     }
@@ -155,12 +185,19 @@ public:
         closeEditor(editor, QAbstractItemDelegate::NoHint);
     }
 
+    // Makes the row the current one and the only selected one.
+    void select_only(const QModelIndex& index) {
+        selectionModel()->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect |
+                                                     QItemSelectionModel::Rows);
+    }
+
     void setModel(QAbstractItemModel* model) override {
-        QTreeView::setModel(model);
+        // Before the base class connects, which moves the current row away from one that goes.
         connect(model, &QAbstractItemModel::rowsAboutToBeRemoved, this,
                 [this](const QModelIndex& parent, int first, int last) {
                     remember_selection_in(parent, first, last);
                 });
+        QTreeView::setModel(model);
         connect(
             model, &QAbstractItemModel::rowsRemoved, this,
             [this](const QModelIndex& parent, int first, int) { move_selection(parent, first); });
@@ -174,6 +211,15 @@ protected:
     }
 
     void keyPressEvent(QKeyEvent* event) override {
+        if (dragging()) {
+            if (event->key() == Qt::Key_Escape) {
+                end_drag();
+            } else if (event->key() == Qt::Key_Control) {
+                show_drag_cursor(true);
+            }
+            event->accept();
+            return;
+        }
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
             event->modifiers() == Qt::NoModifier && currentIndex().isValid()) {
             activate_(currentIndex());
@@ -183,7 +229,68 @@ protected:
         QTreeView::keyPressEvent(event);
     }
 
+    void keyReleaseEvent(QKeyEvent* event) override {
+        if (dragging() && event->key() == Qt::Key_Control) {
+            show_drag_cursor(false);
+        }
+        QTreeView::keyReleaseEvent(event);
+    }
+
+    // The tree drags the rows itself: `QDrag` runs a loop of its own, and the selection that is
+    // dragged is the one at the press, which a press with a modifier would change.
+    void mousePressEvent(QMouseEvent* event) override {
+        end_drag();
+        const QPoint position = event->position().toPoint();
+        const QModelIndex index = indexAt(position);
+        // Left of the label is the twistie, which a press opens and closes.
+        if (event->button() == Qt::LeftButton && index.isValid() &&
+            (model()->flags(index) & Qt::ItemIsSelectable) &&
+            !index.data(ExplorerModel::PendingRole).toBool() &&
+            position.x() >= visualRect(index).left()) {
+            press_ = position;
+            pressed_rows_ = selectionModel()->isSelected(index) ? selectionModel()->selectedRows()
+                                                                : QModelIndexList{index};
+        }
+        QTreeView::mousePressEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (!dragging() || event->button() != Qt::LeftButton) {
+            pressed_rows_.clear();
+            QTreeView::mouseReleaseEvent(event);
+            return;
+        }
+        const std::vector<std::filesystem::path> sources = sources_;
+        const std::optional<QModelIndex> folder = folder_at(event->position().toPoint());
+        const bool copy = event->modifiers() & Qt::ControlModifier;
+        end_drag();
+        setState(NoState);
+        event->accept();
+        if (folder) {
+            drag_handlers_.drop(sources, *folder, copy);
+        }
+    }
+
+    void paintEvent(QPaintEvent* event) override {
+        QTreeView::paintEvent(event);
+        if (drop_folder() != std::optional<QModelIndex>(QModelIndex())) {
+            return;
+        }
+        // The space below the rows is part of the folder of the workspace.
+        int bottom = 0;
+        for (QModelIndex index = model()->index(0, 0); index.isValid(); index = indexBelow(index)) {
+            bottom = visualRect(index).bottom() + 1;
+        }
+        QPainter painter(viewport());
+        painter.fillRect(QRect(0, bottom, viewport()->width(), viewport()->height() - bottom),
+                         colors_.color("list.dropBackground"));
+    }
+
     void mouseMoveEvent(QMouseEvent* event) override {
+        if (!pressed_rows_.isEmpty() && (event->buttons() & Qt::LeftButton)) {
+            drag_to(event->position().toPoint(), event->modifiers() & Qt::ControlModifier);
+            return;
+        }
         const QModelIndex index = indexAt(event->position().toPoint());
         if (index != hovered_) {
             hovered_ = index;
@@ -206,7 +313,9 @@ protected:
         if (selected) {
             painter->fillRect(row, colors_.color(hasFocus() ? "list.activeSelectionBackground"
                                                             : "list.inactiveSelectionBackground"));
-        } else if (hovered) {
+        } else if (takes_drop(index)) {
+            painter->fillRect(row, colors_.color("list.dropBackground"));
+        } else if (hovered && !dragging()) {
             painter->fillRect(row, colors_.color("list.hoverBackground"));
         }
         QTreeView::drawRow(painter, option, index);
@@ -235,6 +344,78 @@ protected:
     }
 
 private:
+    static constexpr int hover_expand_ms = 500;
+
+    bool dragging() const {
+        return !sources_.empty();
+    }
+
+    std::optional<QModelIndex> folder_at(const QPoint& position) const {
+        if (!viewport()->rect().contains(position)) {
+            return std::nullopt;
+        }
+        return drag_handlers_.folder(sources_, indexAt(position));
+    }
+
+    void drag_to(const QPoint& position, bool copy) {
+        if (!dragging()) {
+            if ((position - press_).manhattanLength() < QApplication::startDragDistance()) {
+                return;
+            }
+            sources_ = drag_handlers_.sources(pressed_rows_);
+            if (sources_.empty()) {
+                return;
+            }
+        }
+        const std::optional<QModelIndex> folder = folder_at(position);
+        takes_drop_ = folder.has_value();
+        const QModelIndex target = folder.value_or(QModelIndex());
+        if (target != drop_target_ || !takes_drop_) {
+            drop_target_ = target;
+            hover_expand_.stop();
+            if (target.isValid() && !isExpanded(target)) {
+                hover_expand_.start();
+            }
+        }
+        show_drag_cursor(copy);
+        viewport()->update();
+    }
+
+    void show_drag_cursor(bool copy) {
+        viewport()->setCursor(!takes_drop_ ? Qt::ForbiddenCursor
+                              : copy       ? Qt::DragCopyCursor
+                                           : Qt::DragMoveCursor);
+    }
+
+    void end_drag() {
+        const bool was_dragging = dragging();
+        pressed_rows_.clear();
+        sources_.clear();
+        takes_drop_ = false;
+        drop_target_ = QModelIndex();
+        hover_expand_.stop();
+        if (was_dragging) {
+            viewport()->unsetCursor();
+            viewport()->update();
+        }
+    }
+
+    // Whether the row is the folder that a drag would drop into, or below it.
+    bool takes_drop(const QModelIndex& index) const {
+        if (!dragging() || !takes_drop_) {
+            return false;
+        }
+        if (!drop_target_.isValid()) {
+            return true;
+        }
+        for (QModelIndex row = index; row.isValid(); row = row.parent()) {
+            if (row == drop_target_) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void apply_zoom() {
         setIndentation(scaled_by(zoom_, indent));
         scale_scroll_bars(*this, zoom_ ? zoom_->level() : 0);
@@ -263,7 +444,7 @@ private:
         const QModelIndex target =
             count > 0 ? model()->index(std::min(first, count - 1), 0, parent) : parent;
         if (target.isValid()) {
-            setCurrentIndex(target);
+            select_only(target);
         }
     }
 
@@ -274,6 +455,15 @@ private:
     QPersistentModelIndex hovered_;
     bool selection_moves_ = false;
     std::function<void(const QPoint&, const QPoint&)> context_menu_;
+    DragHandlers drag_handlers_;
+    QPoint press_;
+    // The rows of a press that can become a drag.
+    QModelIndexList pressed_rows_;
+    // What is being dragged; empty when nothing is.
+    std::vector<std::filesystem::path> sources_;
+    bool takes_drop_ = false;
+    QPersistentModelIndex drop_target_;
+    QTimer hover_expand_;
 };
 
 // The name of the folder above the tree, in capitals.
@@ -477,7 +667,12 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
         const QModelIndex under = tree_->indexAt(local);
         if (under.isValid() && model_->flags(under) & Qt::ItemIsSelectable &&
             !model_->data(under, ExplorerModel::PendingRole).toBool()) {
-            tree_->setCurrentIndex(under);
+            // A right click on a selected row keeps the selection.
+            if (tree_->selectionModel()->isSelected(under)) {
+                tree_->selectionModel()->setCurrentIndex(under, QItemSelectionModel::NoUpdate);
+            } else {
+                tree_->setCurrentIndex(under);
+            }
         } else {
             tree_->clearSelection();
             tree_->setCurrentIndex(QModelIndex());
@@ -499,6 +694,16 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
         }
     });
     connect(model_, &ExplorerModel::directory_read, this, [this] { continue_new(); });
+    tree->set_drag_handlers(
+        {.sources = [this](const QModelIndexList& rows) { return paths_of(rows); },
+         .folder = [this](const std::vector<std::filesystem::path>& sources,
+                          const QModelIndex& under) { return folder_to_drop_into(sources, under); },
+         .drop =
+             [this](const std::vector<std::filesystem::path>& sources, const QModelIndex& folder,
+                    bool copy) {
+                 drop_items(sources, folder.isValid() ? model_->path_of(folder) : *model_->folder(),
+                            copy);
+             }});
     folder_layout->addWidget(header_);
     folder_layout->addWidget(tree_, 1);
 
@@ -611,19 +816,167 @@ std::string file_name_of(const std::filesystem::path& path) {
 } // namespace
 
 std::vector<std::filesystem::path> ExplorerView::selected_paths() const {
+    return paths_of(tree_->selectionModel()->selectedRows());
+}
+
+std::vector<std::filesystem::path> ExplorerView::paths_of(const QModelIndexList& rows) const {
     std::vector<std::filesystem::path> paths;
-    for (const QModelIndex& row : tree_->selectionModel()->selectedRows()) {
+    for (const QModelIndex& row : rows) {
         if (is_real_row(*model_, row)) {
             paths.push_back(model_->path_of(row));
         }
     }
-    return paths;
+    std::ranges::sort(paths);
+    std::vector<std::filesystem::path> outermost;
+    for (const std::filesystem::path& path : paths) {
+        if (std::ranges::none_of(outermost, [&](const std::filesystem::path& other) {
+                return exthost::is_path_within(path, other);
+            })) {
+            outermost.push_back(path);
+        }
+    }
+    return outermost;
+}
+
+QModelIndex ExplorerView::focused_row() const {
+    const QModelIndex current = tree_->currentIndex();
+    if (is_real_row(*model_, current) && tree_->selectionModel()->isSelected(current)) {
+        return current;
+    }
+    for (const QModelIndex& row : tree_->selectionModel()->selectedRows()) {
+        if (is_real_row(*model_, row)) {
+            return row;
+        }
+    }
+    return {};
+}
+
+std::optional<std::filesystem::path> ExplorerView::focused_path() const {
+    const QModelIndex row = focused_row();
+    return row.isValid() ? std::optional(model_->path_of(row)) : std::nullopt;
 }
 
 bool ExplorerView::selection_is_directory() const {
-    const QModelIndexList rows = tree_->selectionModel()->selectedRows();
-    return rows.isEmpty() || !is_real_row(*model_, rows.first()) ||
-           model_->is_directory(rows.first());
+    const QModelIndex row = focused_row();
+    return !row.isValid() || model_->is_directory(row);
+}
+
+void ExplorerView::set_hover_expand_delay(int milliseconds) {
+    static_cast<ExplorerTree*>(tree_)->set_hover_expand_delay(milliseconds);
+}
+
+std::optional<std::filesystem::path> ExplorerView::drop_target() const {
+    const auto folder = static_cast<const ExplorerTree*>(tree_)->drop_folder();
+    if (!folder) {
+        return std::nullopt;
+    }
+    return folder->isValid() ? model_->path_of(*folder) : *model_->folder();
+}
+
+std::optional<QModelIndex>
+ExplorerView::folder_to_drop_into(const std::vector<std::filesystem::path>& sources,
+                                  const QModelIndex& under) const {
+    if (!model_->folder()) {
+        return std::nullopt;
+    }
+    const QModelIndex folder =
+        is_real_row(*model_, under) && model_->is_directory(under) ? under : under.parent();
+    const std::filesystem::path directory =
+        folder.isValid() ? model_->path_of(folder) : *model_->folder();
+    bool moves_something = false;
+    for (const std::filesystem::path& source : sources) {
+        if (exthost::is_path_within(directory, source)) {
+            return std::nullopt;
+        }
+        moves_something = moves_something || source.parent_path() != directory;
+    }
+    return moves_something ? std::optional(folder) : std::nullopt;
+}
+
+void ExplorerView::drop_items(const std::vector<std::filesystem::path>& sources,
+                              const std::filesystem::path& directory, bool copy) {
+    finish_editing();
+    std::vector<std::filesystem::path> written;
+    QString failure;
+    const auto fail = [&failure](const QString& message) {
+        if (failure.isEmpty()) {
+            failure = message;
+        }
+    };
+    for (const std::filesystem::path& source : sources) {
+        if (source.parent_path() == directory || exthost::is_path_within(directory, source)) {
+            continue;
+        }
+        const std::filesystem::path destination = directory / source.filename();
+        const QString name = QString::fromStdString(file_name_of(source));
+        const bool replaces = platform::stat_path(destination).has_value();
+        if (replaces) {
+            // Replacing removes the target first, which would take the source with it.
+            if (exthost::is_path_within(source, destination)) {
+                fail(tr("%1 cannot replace a folder that holds it").arg(name));
+                continue;
+            }
+            const auto unsaved = [&] {
+                return !copy && unsaved_changes_ && unsaved_changes_(destination);
+            };
+            const QString kept = tr("%1 has unsaved changes and is not replaced").arg(name);
+            if (unsaved()) {
+                fail(kept);
+                continue;
+            }
+            if (actions_.confirm &&
+                !actions_.confirm(this,
+                                  tr("A file or folder with the name '%1' already exists in the "
+                                     "destination folder. Do you want to replace it?")
+                                      .arg(name),
+                                  tr("This action is irreversible!"), tr("Replace"))) {
+                continue;
+            }
+            // The question runs a nested event loop, in which a document can be changed.
+            if (unsaved()) {
+                fail(kept);
+                continue;
+            }
+        }
+        const std::expected<void, Error> done =
+            copy ? platform::copy_path(source, destination, replaces)
+                 : platform::rename_path(source, destination, replaces);
+        if (!done) {
+            fail(tr("%1 failed: %2")
+                     .arg(copy ? tr("Copying %1").arg(name) : tr("Moving %1").arg(name),
+                          QString::fromStdString(done.error().message)));
+            continue;
+        }
+        written.push_back(destination);
+        // The documents of the replaced file go before those of the moved one take its place.
+        if (replaces) {
+            emit deleted({destination});
+        }
+        if (!copy) {
+            emit renamed(QString::fromStdString(source.string()),
+                         QString::fromStdString(destination.string()));
+        }
+    }
+    for (const std::filesystem::path& source : sources) {
+        model_->reload(source.parent_path());
+    }
+    model_->reload(directory);
+    QItemSelection selection;
+    QModelIndex first;
+    for (const std::filesystem::path& path : written) {
+        if (const QModelIndex row = model_->index_of(path); row.isValid()) {
+            selection.select(row, row);
+            first = first.isValid() ? first : row;
+        }
+    }
+    if (first.isValid()) {
+        tree_->selectionModel()->setCurrentIndex(first, QItemSelectionModel::NoUpdate);
+        tree_->selectionModel()->select(selection, QItemSelectionModel::ClearAndSelect);
+        tree_->scrollTo(first);
+    }
+    if (!failure.isEmpty()) {
+        emit operation_failed(failure);
+    }
 }
 
 bool ExplorerView::is_editing() const {
@@ -652,9 +1005,8 @@ void ExplorerView::begin_new(bool folder) {
     }
     finish_editing();
     QModelIndex directory;
-    const QModelIndexList rows = tree_->selectionModel()->selectedRows();
-    if (!rows.isEmpty() && is_real_row(*model_, rows.first())) {
-        directory = model_->is_directory(rows.first()) ? rows.first() : rows.first().parent();
+    if (const QModelIndex row = focused_row(); row.isValid()) {
+        directory = model_->is_directory(row) ? row : row.parent();
     }
     new_request_ = NewRequest{folder, !directory.isValid(), QPersistentModelIndex(directory)};
     if (directory.isValid()) {
@@ -683,12 +1035,11 @@ void ExplorerView::continue_new() {
 }
 
 void ExplorerView::rename_selected() {
-    const QModelIndexList rows = tree_->selectionModel()->selectedRows();
-    if (rows.isEmpty() || !is_real_row(*model_, rows.first())) {
+    const QModelIndex row = focused_row();
+    if (!row.isValid()) {
         return;
     }
     finish_editing();
-    const QModelIndex row = rows.first();
     const std::filesystem::path path = model_->path_of(row);
     begin_editing(Edit::rename, row, path.parent_path(), path);
 }

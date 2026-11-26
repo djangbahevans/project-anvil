@@ -5,6 +5,7 @@
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/ui/zoom.hpp"
 
+#include <QModelIndex>
 #include <QPersistentModelIndex>
 #include <QPointer>
 #include <QString>
@@ -59,6 +60,13 @@ ExplorerActions default_explorer_actions();
 // field accepts the name and Escape drops it. A name that is empty, starts with a slash, has a
 // separator or is taken is refused with the reason under the field, and nothing changes. The
 // signals tell the window what happened, so that it can keep its documents in step.
+//
+// Several rows can be selected. Dragging them onto a folder, or onto the space below the rows for
+// the folder of the workspace, moves them there, or copies them with Ctrl (Cmd on macOS) held; a
+// drop on a file is a drop on its folder. The folder under the pointer is highlighted and opens
+// after a short hover, and Escape ends the drag. A folder is not dropped onto itself or below, and
+// a name that is taken asks before it is replaced. Typing the first letters of a name selects the
+// next visible row that starts with them.
 class ExplorerView : public QWidget {
     Q_OBJECT
 
@@ -93,6 +101,16 @@ public:
         return trash_enabled_;
     }
 
+    // Tells whether a document with unsaved changes is open at or below a path, which a move does
+    // not replace.
+    void set_unsaved_changes_check(std::function<bool(const std::filesystem::path&)> check) {
+        unsaved_changes_ = std::move(check);
+    }
+    // How long a drag rests on a closed folder before it opens.
+    void set_hover_expand_delay(int milliseconds);
+    // The folder that the rows would be dropped into, while a drag is over a place that takes them.
+    std::optional<std::filesystem::path> drop_target() const;
+
     // The commands. A new file or folder goes into the selected folder, into the folder of the
     // selected file, or into the folder of the workspace when nothing is selected. A directory
     // that has not been read is expanded first.
@@ -106,6 +124,9 @@ public:
 
     // The paths of the selected rows, which are the ones that a delete acts on.
     std::vector<std::filesystem::path> selected_paths() const;
+    // The path of the row that has the focus among the selected ones, which a command on one item
+    // acts on.
+    std::optional<std::filesystem::path> focused_path() const;
     // Whether the selected row is a directory; true for none, which stands for the folder.
     bool selection_is_directory() const;
     // Whether the field for a name is open.
@@ -187,6 +208,19 @@ private:
     void finish_editing();
     void select_path(const std::filesystem::path& path);
     void delete_items(bool permanently);
+    // The row that a command on one item acts on: the current one when it is selected, else the
+    // first selected one.
+    QModelIndex focused_row() const;
+    // The paths of the rows, without those that are below another of them.
+    std::vector<std::filesystem::path> paths_of(const QModelIndexList& rows) const;
+    // The folder that `sources` would be dropped into when the pointer is over `under`, which is
+    // invalid for the folder of the workspace; nothing when they cannot be dropped there.
+    std::optional<QModelIndex>
+    folder_to_drop_into(const std::vector<std::filesystem::path>& sources,
+                        const QModelIndex& under) const;
+    // Moves or copies the items into `directory`, asking before an item is replaced.
+    void drop_items(const std::vector<std::filesystem::path>& sources,
+                    const std::filesystem::path& directory, bool copy);
 
     const WorkbenchColors& colors_;
     ExplorerModel* model_ = nullptr;
@@ -198,6 +232,7 @@ private:
     ExplorerActions actions_;
     bool confirm_delete_ = true;
     bool trash_enabled_ = true;
+    std::function<bool(const std::filesystem::path&)> unsaved_changes_;
     std::optional<Editing> editing_;
     std::optional<NewRequest> new_request_;
     QPointer<NameEditor> editor_;

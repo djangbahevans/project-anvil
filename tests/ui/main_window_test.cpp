@@ -10358,3 +10358,124 @@ TEST_F(ExplorerOperationsWindowTest, AFailedOperationIsShownInTheStatusBar) {
     EXPECT_TRUE(std::filesystem::exists(project() / "a.txt"));
     EXPECT_TRUE(window_->status_bar().message().contains("a.txt"));
 }
+
+// Drag and drop in the explorer, as the window's documents see it.
+class ExplorerDragWindowTest : public ExplorerOperationsWindowTest {
+protected:
+    // Drags the row of `from` onto the row of `onto`, or onto the space below the rows without one.
+    void drag(ui::ExplorerView* explorer, const std::filesystem::path& from,
+              const std::optional<std::filesystem::path>& onto,
+              Qt::KeyboardModifiers modifiers = {}) {
+        QWidget* viewport = explorer->tree()->viewport();
+        const auto center = [&](const std::filesystem::path& path) {
+            const QRect rect = explorer->tree()->visualRect(explorer->model()->index_of(path));
+            return QPoint(rect.left() + 10, rect.center().y());
+        };
+        const auto send = [&](QEvent::Type type, const QPoint& position, Qt::MouseButton button,
+                              Qt::MouseButtons buttons) {
+            QMouseEvent event(type, position, viewport->mapToGlobal(position), button, buttons,
+                              modifiers);
+            QApplication::sendEvent(viewport, &event);
+        };
+        const QPoint start = center(from);
+        const QPoint end = onto ? center(*onto) : QPoint(40, viewport->height() - 3);
+        send(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseMove, start + QPoint(QApplication::startDragDistance() + 1, 0),
+             Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseMove, end, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, end, Qt::LeftButton, Qt::NoButton);
+        QApplication::processEvents();
+    }
+};
+
+TEST_F(ExplorerDragWindowTest, AMovedFileKeepsItsTabItsChangesAndItsHistory) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+
+    drag(explorer, a, project() / "src");
+    const auto moved = project() / "src" / "a.txt";
+    EXPECT_FALSE(std::filesystem::exists(a));
+    EXPECT_TRUE(std::filesystem::exists(moved));
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_TRUE(window_->tab_strip()->tab(1).tooltip.contains("src"));
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+    EXPECT_EQ(current_text(), "!alpha");
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(moved), "!alpha");
+}
+
+TEST_F(ExplorerDragWindowTest, ACopyLeavesTheDocumentsAlone) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+    drag(explorer, a, project() / "src", Qt::ControlModifier);
+    EXPECT_TRUE(std::filesystem::exists(a));
+    EXPECT_EQ(*platform::read_file(project() / "src" / "a.txt"), "alpha");
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_FALSE(window_->tab_strip()->tab(1).tooltip.contains("src"));
+    EXPECT_TRUE(window_->tab_strip()->tab(1).dirty);
+}
+
+TEST_F(ExplorerDragWindowTest, AReplacedFileClosesItsDocumentAndTheMovedOneTakesItsPlace) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    const auto target = project() / "src" / "a.txt";
+    ASSERT_TRUE(platform::write_file(target, "old").has_value());
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(target.string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    type("!");
+    ASSERT_EQ(window_->tab_strip()->count(), 3);
+
+    drag(explorer, a, project() / "src");
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(window_->tab_strip()->count(), 2);
+    EXPECT_TRUE(window_->tab_strip()->tab(1).tooltip.contains("src"));
+    EXPECT_EQ(current_text(), "!alpha");
+    window_->commands().execute("workbench.action.files.save");
+    EXPECT_EQ(*platform::read_file(target), "!alpha");
+}
+
+TEST_F(ExplorerDragWindowTest, AMoveOntoADocumentWithUnsavedChangesIsRefused) {
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    const auto target = project() / "src" / "a.txt";
+    ASSERT_TRUE(platform::write_file(target, "old").has_value());
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(target.string())));
+    type("?");
+
+    drag(explorer, a, project() / "src");
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_TRUE(std::filesystem::exists(a));
+    EXPECT_EQ(*platform::read_file(target), "old");
+    EXPECT_EQ(current_text(), "?old");
+    EXPECT_TRUE(window_->status_bar().message().contains("unsaved changes"));
+}
+
+TEST_F(ExplorerDragWindowTest, ExtensionsSeeADraggedDocumentUnderItsNewName) {
+    auto* explorer = start(true);
+    if (!explorer) {
+        return;
+    }
+    const auto a = project() / "a.txt";
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(a.string())));
+    ASSERT_TRUE(extension_has_document(core::Uri::file(a)));
+    drag(explorer, a, project() / "src");
+    const auto moved = core::Uri::file(project() / "src" / "a.txt");
+    EXPECT_TRUE(wait_until([&] { return extension_has_document(moved); }));
+    EXPECT_FALSE(extension_has_document(core::Uri::file(a)));
+}
