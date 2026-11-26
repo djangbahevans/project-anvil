@@ -3,56 +3,92 @@
 #include <QEnterEvent>
 #include <QPainter>
 #include <QSplitterHandle>
+#include <algorithm>
 
 namespace anvil::ui {
 namespace {
 
+// QSplitter lays the handles over the widgets beside them, by their contents margins, which is how
+// Qt widens the grab area of a handle of at most a pixel (QSplitterHandle::resizeEvent). Qt's
+// margins do not follow the zoom, so the handle sets its own, and its mask, which leaves the line
+// to be painted, goes while the whole grab area shows the hover color.
 class Sash : public QSplitterHandle {
 public:
     Sash(Qt::Orientation orientation, const WorkbenchColors& colors, std::string_view border,
-         QSplitter* parent)
-        : QSplitterHandle(orientation, parent), colors_(colors), border_(border) {}
+         int reach, QSplitter* parent)
+        : QSplitterHandle(orientation, parent), colors_(colors), border_(border), reach_(reach) {
+        setAttribute(Qt::WA_MouseNoMask);
+        spread();
+    }
+
+    void set_reach(int reach) {
+        reach_ = reach;
+        spread();
+    }
 
 protected:
     void enterEvent(QEnterEvent* event) override {
         QSplitterHandle::enterEvent(event);
         hovered_ = true;
-        update();
+        show_state();
     }
     void leaveEvent(QEvent* event) override {
         QSplitterHandle::leaveEvent(event);
         hovered_ = false;
-        update();
+        show_state();
     }
     void mousePressEvent(QMouseEvent* event) override {
-        QSplitterHandle::mousePressEvent(event);
+        // QSplitterHandle remembers where in its widget the press was and moves the line to the
+        // pointer less that, but the widget begins before the line, by the margin.
+        QMouseEvent from_line(event->type(), event->position() - contentsRect().topLeft(),
+                              event->globalPosition(), event->button(), event->buttons(),
+                              event->modifiers());
+        QSplitterHandle::mousePressEvent(&from_line);
         pressed_ = true;
-        update();
+        show_state();
     }
     void mouseReleaseEvent(QMouseEvent* event) override {
         QSplitterHandle::mouseReleaseEvent(event);
         pressed_ = false;
-        update();
+        show_state();
+    }
+    void resizeEvent(QResizeEvent* event) override {
+        // Not QSplitterHandle's, which would set its margins, whose change resizes again.
+        spread();
+        QWidget::resizeEvent(event);
     }
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
-        painter.fillRect(rect(), colors_.color("editor.background"));
         if (hovered_ || pressed_) {
             painter.fillRect(rect(), colors_.color("sash.hoverBorder"));
             return;
         }
-        const QColor line = colors_.color(border_);
-        const int middle = orientation() == Qt::Horizontal ? width() / 2 : height() / 2;
-        if (orientation() == Qt::Horizontal) {
-            painter.fillRect(QRect(middle, 0, 1, height()), line);
-        } else {
-            painter.fillRect(QRect(0, middle, width(), 1), line);
-        }
+        painter.fillRect(contentsRect(), colors_.color("editor.background"));
+        painter.fillRect(contentsRect(), colors_.color(border_));
     }
 
 private:
+    void spread() {
+        const QMargins margins = orientation() == Qt::Horizontal ? QMargins(reach_, 0, reach_, 0)
+                                                                 : QMargins(0, reach_, 0, reach_);
+        if (contentsMargins() != margins) {
+            setContentsMargins(margins);
+        }
+        show_state();
+    }
+
+    void show_state() {
+        if (hovered_ || pressed_) {
+            clearMask();
+        } else {
+            setMask(QRegion(contentsRect()));
+        }
+        update();
+    }
+
     const WorkbenchColors& colors_;
     std::string_view border_;
+    int reach_;
     bool hovered_ = false;
     bool pressed_ = false;
 };
@@ -62,7 +98,7 @@ private:
 Splitter::Splitter(Qt::Orientation orientation, const WorkbenchColors& colors,
                    std::string_view border, QWidget* parent)
     : QSplitter(orientation, parent), colors_(colors), border_(border) {
-    setHandleWidth(scaled_by(zoom_, sash_width));
+    setHandleWidth(line_width);
     setChildrenCollapsible(false);
 }
 
@@ -71,15 +107,24 @@ void Splitter::set_zoom(const Zoom* zoom) {
         disconnect(zoom_, &Zoom::changed, this, nullptr);
     }
     zoom_ = zoom;
+    const auto apply = [this] {
+        for (int i = 0; i < count(); ++i) {
+            static_cast<Sash*>(handle(i))->set_reach(reach());
+        }
+        refresh();
+    };
     if (zoom_) {
-        connect(zoom_, &Zoom::changed, this,
-                [this] { setHandleWidth(scaled_by(zoom_, sash_width)); });
+        connect(zoom_, &Zoom::changed, this, apply);
     }
-    setHandleWidth(scaled_by(zoom_, sash_width));
+    apply();
+}
+
+int Splitter::reach() const {
+    return std::max(2, scaled_by(zoom_, sash_width) / 2);
 }
 
 QSplitterHandle* Splitter::createHandle() {
-    return new Sash(orientation(), colors_, border_, this);
+    return new Sash(orientation(), colors_, border_, reach(), this);
 }
 
 } // namespace anvil::ui

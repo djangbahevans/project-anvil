@@ -129,7 +129,7 @@ void Workbench::set_zoom(const Zoom* zoom) {
 // What is left of the width of the window beside the activity bar and the sashes, and of the
 // height below the title bar and above the status bar.
 int Workbench::room_across() const {
-    const int sashes = zoomed(Splitter::sash_width) * (panel_is_beside_editor() ? 2 : 1);
+    const int sashes = Splitter::line_width * (panel_is_beside_editor() ? 2 : 1);
     return std::max(2, width() - (activity_bar_->isHidden() ? 0 : activity_bar_->width()) - sashes);
 }
 

@@ -4894,6 +4894,14 @@ TEST_F(MainWindowTest, TheDefaultThemeSeparatesTheActivityBarFromTheSideBar) {
     for (int y = 0; y < bar->height(); ++y) {
         ASSERT_EQ(image.pixelColor(top.x(), top.y() + y), QColor("#2A2B2C")) << y;
     }
+    // The side bar reaches the line that separates it from the editor, whose side starts after it.
+    QWidget* side = window_->workbench()->sidebar();
+    const QPoint end = side->mapTo(window_.get(), QPoint(side->width(), side->height() / 2));
+    for (int x = -4; x < 0; ++x) {
+        EXPECT_EQ(image.pixelColor(end + QPoint(x, 0)), QColor("#191A1B")) << x;
+    }
+    EXPECT_EQ(image.pixelColor(end), QColor("#2A2B2C"));
+    EXPECT_EQ(image.pixelColor(end + QPoint(1, 0)), QColor("#121314"));
     if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
         image.save(QString::fromUtf8(directory) + "/activity_bar_border.png");
     }
@@ -10325,8 +10333,8 @@ TEST_F(ZoomWholeWindowTest, TheFindBarTheSplitAreaAndTheNativeMenuBarFollowTheLe
     window_->commands().execute("workbench.action.splitEditor");
     QApplication::processEvents();
     ASSERT_NE(window_->editor_area()->root_splitter(), nullptr);
-    EXPECT_EQ(window_->editor_area()->root_splitter()->handleWidth(),
-              window_->zoom().scaled(ui::Splitter::sash_width));
+    const QSplitterHandle* sash = window_->editor_area()->root_splitter()->handle(1);
+    EXPECT_EQ(sash->width(), 1 + 2 * (window_->zoom().scaled(ui::Splitter::sash_width) / 2));
     for (auto* group : window_->editor_area()->groups()) {
         EXPECT_EQ(group->find_bar()->layout()->contentsMargins().left(), window_->zoom().scaled(6));
     }

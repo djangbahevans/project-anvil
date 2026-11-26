@@ -1,3 +1,4 @@
+#include "anvil/ui/splitter.hpp"
 #include "anvil/ui/workbench.hpp"
 
 #include <QApplication>
@@ -14,6 +15,7 @@
 #include <vector>
 
 using anvil::ui::Part;
+using anvil::ui::Splitter;
 using anvil::ui::Workbench;
 using anvil::ui::WorkbenchColors;
 
@@ -141,12 +143,12 @@ TEST_F(WorkbenchTest, ShowingAPartGivesItItsDefaultSizeAndHidingReturnsTheSpace)
     workbench_->set_visible(Part::sidebar, true);
     QApplication::processEvents();
     EXPECT_NEAR(workbench_->sidebar()->width(), Workbench::default_size, 1);
-    EXPECT_NEAR(editor_width(), width - Workbench::default_size - 4, 2);
+    EXPECT_NEAR(editor_width(), width - Workbench::default_size - Splitter::line_width, 2);
 
     workbench_->set_visible(Part::panel, true);
     QApplication::processEvents();
     EXPECT_NEAR(workbench_->panel()->height(), Workbench::default_size, 1);
-    EXPECT_NEAR(editor_height(), height - Workbench::default_size - 4, 2);
+    EXPECT_NEAR(editor_height(), height - Workbench::default_size - Splitter::line_width, 2);
 
     workbench_->set_visible(Part::sidebar, false);
     workbench_->set_visible(Part::panel, false);
@@ -357,7 +359,7 @@ TEST_F(WorkbenchTest, SashesShowTheBorderColorAndTheSashColorWhileHovered) {
     QApplication::processEvents();
 
     QSplitterHandle* sash = sashes().front();
-    EXPECT_EQ(sash->width(), 4);
+    EXPECT_EQ(sash->width(), 5);
     const auto grabbed = [&] { return sash->grab().toImage(); };
     EXPECT_EQ(grabbed().pixelColor(sash->width() / 2, 10), QColor("#00aa00"));
     EXPECT_NE(grabbed().pixelColor(0, 10), QColor("#00aa00"));
@@ -365,7 +367,7 @@ TEST_F(WorkbenchTest, SashesShowTheBorderColorAndTheSashColorWhileHovered) {
     QEnterEvent enter(sash->rect().center(), sash->rect().center(), sash->rect().center());
     QApplication::sendEvent(sash, &enter);
     EXPECT_EQ(grabbed().pixelColor(0, 10), QColor("#ff00ff"));
-    EXPECT_EQ(grabbed().pixelColor(3, 10), QColor("#ff00ff"));
+    EXPECT_EQ(grabbed().pixelColor(sash->width() - 1, 10), QColor("#ff00ff"));
 
     QEvent leave(QEvent::Leave);
     QApplication::sendEvent(sash, &leave);
@@ -512,7 +514,7 @@ TEST_F(WorkbenchTest, RestoringAfterTheWindowWasResizedWhileMaximizedGivesThePan
     workbench_->set_maximized(Part::panel, false);
     QApplication::processEvents();
     EXPECT_NEAR(workbench_->panel()->height(), 210, 1);
-    EXPECT_NEAR(editor_height(), 900 - 210 - 4, 2);
+    EXPECT_NEAR(editor_height(), 900 - 210 - Splitter::line_width, 2);
 }
 
 TEST_F(WorkbenchTest, ASizeSetWhileMaximizedAppliesWhenThePanelIsRestored) {
@@ -753,7 +755,7 @@ TEST_F(WorkbenchTest, AMaximizedPanelTakesTheWholeEditorAreaAtEveryPosition) {
         EXPECT_TRUE(workbench_->is_maximized(Part::panel));
         EXPECT_FALSE(editor_->isVisible());
         EXPECT_EQ(workbench_->panel()->width(),
-                  workbench_->width() - workbench_->sidebar()->width() - 4);
+                  workbench_->width() - workbench_->sidebar()->width() - Splitter::line_width);
         EXPECT_EQ(workbench_->panel()->height(), workbench_->height());
     }
 }
