@@ -157,7 +157,16 @@ EditorView::~EditorView() = default;
 
 void EditorView::update_metrics() {
     const QFontMetrics metrics(font());
-    line_height_ = metrics.lineSpacing();
+    // The font's line spacing is rounded down for some sizes to less than a laid out line, and
+    // some fonts draw the underscore below that line, either of which puts it on the next row.
+    QTextLayout sample(QStringLiteral("_gjpqy"), font());
+    sample.beginLayout();
+    const QTextLine line = sample.createLine();
+    sample.endLayout();
+    const qreal ink =
+        line.ascent() + QFontMetricsF(font()).tightBoundingRect(sample.text()).bottom();
+    line_height_ =
+        std::max(metrics.lineSpacing(), static_cast<int>(std::ceil(std::max(line.height(), ink))));
     char_width_ = std::max(1, metrics.horizontalAdvance(QLatin1Char('M')));
 }
 
@@ -1553,8 +1562,9 @@ void EditorView::paintEvent(QPaintEvent*) {
         }
         const int y = static_cast<int>(row) * line_height_ - scroll_y;
         painter.setPen(line == active_line ? colors.line_number_active : colors.line_number);
+        // From the top, like the text, so that numbers and text stand on one baseline.
         painter.drawText(QRect(0, y, gutter - gutter_padding_, line_height_),
-                         Qt::AlignRight | Qt::AlignVCenter, QString::number(line + 1));
+                         Qt::AlignRight | Qt::AlignTop, QString::number(line + 1));
     }
 
     if (widest != max_line_width_) {

@@ -2823,3 +2823,56 @@ TEST_F(WrapTest, EndOnTheLastRowInViewDoesNotScroll) {
     key(Qt::Key_End);
     EXPECT_EQ(view_.verticalScrollBar()->value(), 0);
 }
+
+TEST_F(LayoutCacheTest, ASelectedUnderscoreShowsOnItsOwnLine) {
+    int fonts = 0;
+    for (const char* family :
+         {"monospace", "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Ubuntu Mono"}) {
+        if (std::string(family) != "monospace" &&
+            !QFontDatabase::families().contains(QString::fromLatin1(family))) {
+            continue;
+        }
+        ++fonts;
+        for (const int size : {6, 10, 12, 13, 14, 15, 18, 24, 40}) {
+            SCOPED_TRACE(std::string(family) + " " + std::to_string(size));
+            settings_.font_family = family;
+            settings_.font_size = size;
+            view_.apply_settings(settings_);
+            open("a___b\nc");
+            set_selections({core::Selection{0, 5}});
+            const QImage with = paint();
+            const int left = view_.cursor_rect(1).left() + 1;
+            const int right = view_.cursor_rect(4).left() - 1;
+            // The pixels between these columns, which hold underscores alone, in the rows of the
+            // viewport from `top`, that are not `color`.
+            const auto others = [&](int top, const QColor& color) {
+                int count = 0;
+                for (int y = top; y < top + view_.line_height(); ++y) {
+                    for (int x = left; x < right; ++x) {
+                        count += with.pixelColor(x, y) != color ? 1 : 0;
+                    }
+                }
+                return count;
+            };
+            EXPECT_GT(others(0, view_.palette().color(QPalette::Highlight)), 0)
+                << "the underscores are on their own line";
+            EXPECT_EQ(others(view_.line_height(), view_.palette().color(QPalette::Base)), 0)
+                << "nothing of them is on the next line";
+        }
+    }
+    EXPECT_GE(fonts, 1);
+}
+
+TEST_F(LayoutCacheTest, LinesAreAsFarApartAsALaidOutLineIsHigh) {
+    for (int size = 6; size <= 48; ++size) {
+        settings_.font_size = size;
+        view_.apply_settings(settings_);
+        QTextLayout layout(QStringLiteral("Mg_"), view_.font());
+        layout.beginLayout();
+        const QTextLine line = layout.createLine();
+        layout.endLayout();
+        EXPECT_GE(view_.line_height(), line.height()) << size;
+        EXPECT_GE(view_.line_height(), QFontMetrics(view_.font()).lineSpacing()) << size;
+        EXPECT_LE(view_.line_height(), line.height() + 2) << size;
+    }
+}
