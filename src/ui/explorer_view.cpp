@@ -34,7 +34,10 @@ namespace {
 constexpr int row_height = 22;
 constexpr int indent = 8;
 constexpr int twistie_size = 16;
-constexpr int label_padding = 8;
+// From the start of a row's item to its label. A level starts one indent to the left of the item,
+// and has a column of 16 px for the twistie of a folder or the icon of a file, and 6 px, as in
+// VS Code.
+constexpr int label_padding = 14;
 constexpr int label_right_padding = 4;
 constexpr int header_padding = 20;
 constexpr int header_right_padding = 8;
@@ -155,6 +158,29 @@ public:
         apply_zoom();
     }
 
+    void set_file_language(ExplorerView::FileLanguage language) {
+        file_language_ = std::move(language);
+        viewport()->update();
+    }
+
+    std::optional<SetiGlyph> file_icon(const QModelIndex& index) const {
+        if (!index.isValid() || index.data(ExplorerModel::IsDirectoryRole).toBool() ||
+            index.data(ExplorerModel::PlaceholderRole).toBool()) {
+            return std::nullopt;
+        }
+        const std::string name = index.data().toString().toStdString();
+        std::optional<SetiIcon> icon = seti_icon_by_name(name);
+        if (!icon) {
+            // The row of a file that is being named has no name, and no path to ask about.
+            const std::string language =
+                file_language_ && !name.empty()
+                    ? file_language_(static_cast<const ExplorerModel*>(model())->path_of(index))
+                    : std::string();
+            icon = seti_file_icon(name, language);
+        }
+        return colors_.kind() == core::ThemeKind::light ? icon->light : icon->dark;
+    }
+
     // What the explorer does with a drag; the tree only follows the pointer.
     struct DragHandlers {
         std::function<std::vector<std::filesystem::path>(const QModelIndexList&)> sources;
@@ -243,11 +269,13 @@ protected:
         end_drag();
         const QPoint position = event->position().toPoint();
         const QModelIndex index = indexAt(position);
-        // Left of the label is the twistie, which a press opens and closes.
+        // Left of the label of a folder is the twistie, which a press opens and closes; the icon
+        // there of a file is part of its row.
         if (event->button() == Qt::LeftButton && index.isValid() &&
             (model()->flags(index) & Qt::ItemIsSelectable) &&
             !index.data(ExplorerModel::PendingRole).toBool() &&
-            position.x() >= visualRect(index).left()) {
+            (position.x() >= visualRect(index).left() ||
+             !index.data(ExplorerModel::IsDirectoryRole).toBool())) {
             press_ = position;
             pressed_rows_ = selectionModel()->isSelected(index) ? selectionModel()->selectedRows()
                                                                 : QModelIndexList{index};
@@ -324,6 +352,10 @@ protected:
 
     void drawBranches(QPainter* painter, const QRect& rect,
                       const QModelIndex& index) const override {
+        if (!index.data(ExplorerModel::IsDirectoryRole).toBool()) {
+            draw_file_icon(painter, rect, index);
+            return;
+        }
         if (!model()->hasChildren(index)) {
             return;
         }
@@ -346,6 +378,27 @@ protected:
 
 private:
     static constexpr int hover_expand_ms = 500;
+
+    // In the column that the twistie of a folder has, at the end of the branches.
+    void draw_file_icon(QPainter* painter, const QRect& branches, const QModelIndex& index) const {
+        const std::optional<SetiGlyph> glyph = file_icon(index);
+        const QString family = seti_font_family();
+        if (!glyph || family.isEmpty()) {
+            return;
+        }
+        painter->save();
+        QFont icon_font(family);
+        const int icon_pixels = QFontInfo(font()).pixelSize() * seti_font_percent / 100;
+        icon_font.setPixelSize(icon_pixels);
+        painter->setFont(icon_font);
+        painter->setPen(QColor::fromRgba(glyph->color));
+        const int width = scaled_by(zoom_, twistie_size);
+        const int left = branches.right() + 1 - scaled_by(zoom_, indent);
+        // Wider than the column, so that a glyph that fills its square is not cut.
+        painter->drawText(QRect(left - width / 2, branches.top(), 2 * width, branches.height()),
+                          Qt::AlignCenter, QString(QChar(glyph->code)));
+        painter->restore();
+    }
 
     bool dragging() const {
         return !sources_.empty();
@@ -453,6 +506,7 @@ private:
     std::function<void(const QModelIndex&)> activate_;
     ExplorerLabelDelegate* delegate_ = nullptr;
     const Zoom* zoom_ = nullptr;
+    ExplorerView::FileLanguage file_language_;
     QPersistentModelIndex hovered_;
     bool selection_moves_ = false;
     std::function<void(const QPoint&, const QPoint&)> context_menu_;
@@ -820,6 +874,18 @@ void ExplorerView::set_workspace(std::optional<std::filesystem::path> folder, co
 
 void ExplorerView::set_excludes(core::FileExcludes excludes) {
     model_->set_excludes(std::move(excludes));
+}
+
+void ExplorerView::set_file_language(FileLanguage language) {
+    static_cast<ExplorerTree*>(tree_)->set_file_language(std::move(language));
+}
+
+void ExplorerView::refresh_icons() {
+    tree_->viewport()->update();
+}
+
+std::optional<SetiGlyph> ExplorerView::file_icon(const QModelIndex& row) const {
+    return static_cast<const ExplorerTree*>(tree_)->file_icon(row);
 }
 
 namespace {

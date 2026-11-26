@@ -84,7 +84,7 @@ node scripts/generate-codicons.mjs
 
 ## 8. Refresh the Seti icons
 
-The Seti font, its notice and the table of the icons of the languages come from the `theme-seti` extension in the checkout, and tests fail when the font or the table differs from it. Regenerate them and review the diff. The script stops for a definition that is not a glyph with a color, and the table follows the rules by which VS Code turns the theme into a style sheet (`fileIconThemeData.ts`), so a change there is one to port.
+The Seti font, its notice and the table of the icons of the languages, file names and file extensions come from the `theme-seti` extension in the checkout, and tests fail when the font or the table differs from it. Regenerate them and review the diff. The script stops for a definition that is not a glyph, and for a key that the lookup cannot match, and the table follows the rules by which VS Code turns the theme into a style sheet (`fileIconThemeData.ts`), so a change there is one to port.
 
 ```sh
 node scripts/generate-seti-icons.mjs

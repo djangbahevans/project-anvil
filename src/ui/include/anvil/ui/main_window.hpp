@@ -355,6 +355,11 @@ private:
     void rebuild_language_comments();
     // The language id of a resource whose text starts with `first_line`.
     std::string resolve_language(const core::Uri& uri, std::string_view first_line) const;
+    // The language of a file for its icon, as VS Code takes it: that of its document when one is
+    // open and it is not plain text, else the one that the path gives.
+    std::string language_of_file(const std::filesystem::path& path);
+    // The icons of files follow their languages.
+    void refresh_file_icons();
     // Gives every document the language the registry decides, except those that an extension asked
     // for, and tells the extension host of the ones that changed.
     void refresh_document_languages();
