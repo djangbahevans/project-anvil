@@ -9580,6 +9580,12 @@ protected:
 
 TEST_F(ExplorerWindowTest, TheExplorerIsTheFirstContainerOfTheSideBarAndIsMadeWhenFirstShown) {
     open_project();
+    // A folder shows the side bar unless it was hidden there.
+    state_directory_ = scratch_ / "state";
+    std::filesystem::create_directories(state_directory_ / "workspaces");
+    ASSERT_TRUE(platform::write_file(state_directory_ / "workspaces" / (workspace_->id + ".json"),
+                                     R"({"layout.sidebar.visible": false})")
+                    .has_value());
     create_window();
     const std::vector<const ui::ViewContainer*> containers =
         window_->view_containers().containers(ui::ViewContainerLocation::sidebar);
@@ -10887,7 +10893,6 @@ protected:
 } // namespace
 
 TEST_F(WindowStateTest, AWindowOpensAsTheLastOneWasClosed) {
-    workspace_ = folder("first");
     create_window();
     EXPECT_FALSE(sidebar_shown());
     window_->setGeometry(4, 30, 790, 500);
@@ -10939,15 +10944,32 @@ TEST_F(WindowStateTest, TheEditorHasTheFocusWhenAShownSideBarIsRestored) {
     EXPECT_EQ(QApplication::focusWidget(), window_->view());
 }
 
+TEST_F(WindowStateTest, AFolderOpenedForTheFirstTimeShowsTheExplorerAndTheEditorHasTheFocus) {
+    write("first/main.cpp", "int main() {}\n");
+    workspace_ = folder("first");
+    create_window();
+    window_->activateWindow();
+    QApplication::processEvents();
+    EXPECT_TRUE(sidebar_shown());
+    EXPECT_FALSE(panel_shown());
+    EXPECT_NE(window_->sidebar()->container_widget("workbench.view.explorer"), nullptr);
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->resize(900, 360);
+        QTest::qWait(300);
+        window_->grab().save(QString::fromUtf8(directory) + "/side_bar_by_default.png");
+    }
+}
+
 TEST_F(WindowStateTest, EachFolderAndAWindowWithoutOneHaveTheirOwnLayout) {
     workspace_ = folder("first");
     create_window();
-    window_->sidebar()->activate("workbench.view.explorer");
+    window_->workbench()->set_visible(ui::Part::sidebar, false);
     close_window();
 
     workspace_ = folder("second");
     create_window();
-    EXPECT_FALSE(sidebar_shown());
+    EXPECT_TRUE(sidebar_shown());
     window_->workbench()->set_visible(ui::Part::panel, true);
     close_window();
 
@@ -10959,7 +10981,7 @@ TEST_F(WindowStateTest, EachFolderAndAWindowWithoutOneHaveTheirOwnLayout) {
 
     workspace_ = folder("first");
     create_window();
-    EXPECT_TRUE(sidebar_shown());
+    EXPECT_FALSE(sidebar_shown());
     EXPECT_FALSE(panel_shown());
 }
 

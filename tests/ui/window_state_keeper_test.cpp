@@ -148,13 +148,39 @@ protected:
 
 } // namespace
 
-TEST_F(WindowStateKeeperTest, WithNoStateTheWindowKeepsItsDefaults) {
-    const auto window = open();
+TEST_F(WindowStateKeeperTest, WithNoStateAndNoFolderTheWindowKeepsItsDefaults) {
+    const auto window = open(std::nullopt);
     EXPECT_FALSE(window->workbench->is_visible(Part::sidebar));
     EXPECT_FALSE(window->workbench->is_visible(Part::panel));
     EXPECT_EQ(window->workbench->panel_position(), PanelPosition::bottom);
     EXPECT_EQ(window->window.size(), QSize(1000, 700));
     EXPECT_TRUE(window->made.empty());
+}
+
+TEST_F(WindowStateKeeperTest, WithNoStateAFolderShowsTheSidebarAndNotThePanel) {
+    const auto window = open();
+    EXPECT_TRUE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_FALSE(window->workbench->is_visible(Part::panel));
+    EXPECT_EQ(window->sidebar->active_container(), "files");
+    EXPECT_EQ(window->made, (std::map<std::string, int>{{"files", 1}}));
+}
+
+TEST_F(WindowStateKeeperTest, TheSidebarThatShowsByDefaultHasTheSavedContainer) {
+    write_state("workspaces/1111111111111111.json",
+                R"({"layout.sidebar.activeContainer": "search"})");
+    const auto window = open();
+    EXPECT_TRUE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_EQ(window->made, (std::map<std::string, int>{{"search", 1}}));
+}
+
+TEST_F(WindowStateKeeperTest, ASavedVisibilityIsUsedInPlaceOfTheDefault) {
+    write_state("workspaces/1111111111111111.json", R"({"layout.sidebar.visible": false})");
+    write_state("no-folder.json", R"({"layout.sidebar.visible": true})");
+    const auto folder = open();
+    EXPECT_FALSE(folder->workbench->is_visible(Part::sidebar));
+    EXPECT_TRUE(folder->made.empty());
+    const auto none = open(std::nullopt);
+    EXPECT_TRUE(none->workbench->is_visible(Part::sidebar));
 }
 
 TEST_F(WindowStateKeeperTest, TheLayoutOfTheLastWindowIsRestored) {
@@ -285,7 +311,7 @@ TEST_F(WindowStateKeeperTest, ValuesThatMakeNoSenseGiveTheDefaults) {
                 R"({"layout.sidebar.visible": 1, "layout.panel.position": "middle",)"
                 R"( "layout.panel.visible": true, "layout.sidebar.activeContainer": 7})");
     const auto window = open();
-    EXPECT_FALSE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_TRUE(window->workbench->is_visible(Part::sidebar));
     EXPECT_EQ(window->workbench->size(Part::sidebar), Workbench::default_size);
     EXPECT_EQ(window->workbench->panel_position(), PanelPosition::bottom);
     EXPECT_EQ(window->workbench->panel()->height(), Workbench::default_size);
@@ -393,6 +419,7 @@ TEST_F(WindowStateKeeperTest, TheModeThatHidesThePartsIsNotWhatIsSaved) {
         }
         return WindowStateKeeper::PartsShown{.sidebar = true, .panel = false};
     });
+    window->workbench->set_visible(Part::sidebar, false);
     window->panel->activate("terminal");
     window->keeper->save();
     EXPECT_EQ(workspace_state().at("layout.sidebar.visible"), true);
@@ -414,7 +441,7 @@ TEST_F(WindowStateKeeperTest, EachWorkspaceHasItsLayoutAndTheSizesAreShared) {
         none->keeper->save();
     }
     const auto other = open("2222222222222222");
-    EXPECT_FALSE(other->workbench->is_visible(Part::sidebar));
+    EXPECT_TRUE(other->workbench->is_visible(Part::sidebar));
     EXPECT_FALSE(other->workbench->is_visible(Part::panel));
     EXPECT_EQ(other->workbench->size(Part::sidebar), 260);
 

@@ -152,9 +152,9 @@ void WindowStateKeeper::restore_layout() {
     if (const auto id = store_.string(StateScope::workspace, panel_container_key)) {
         panel_.set_active_container(*id);
     }
-    if (const auto shown = store_.boolean(StateScope::workspace, sidebar_visible_key)) {
-        workbench_.set_visible(Part::sidebar, *shown);
-    }
+    // As in VS Code, a folder shows the sidebar until it is hidden there.
+    workbench_.set_visible(Part::sidebar, store_.boolean(StateScope::workspace, sidebar_visible_key)
+                                              .value_or(store_.has_workspace()));
     if (const auto shown = store_.boolean(StateScope::workspace, panel_visible_key)) {
         workbench_.set_visible(Part::panel, *shown);
     }

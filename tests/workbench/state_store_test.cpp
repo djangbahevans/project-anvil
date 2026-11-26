@@ -118,6 +118,18 @@ TEST_F(StateStoreTest, ChangingTheWorkspaceWritesTheOneLeftAndReadsTheNewOne) {
     EXPECT_EQ(read_json(workspace_file("1111111111111111")), nlohmann::json({{"key", 10}}));
 }
 
+TEST_F(StateStoreTest, TheStoreTellsWhetherItHasTheStateOfAFolder) {
+    StateStore state = store();
+    EXPECT_TRUE(state.has_workspace());
+    state.set_workspace(std::nullopt);
+    EXPECT_FALSE(state.has_workspace());
+    state.set_workspace("2222222222222222");
+    EXPECT_TRUE(state.has_workspace());
+    EXPECT_FALSE(store(std::nullopt).has_workspace());
+    // Also with the state in memory only.
+    EXPECT_TRUE(StateStore({}, "1111111111111111", logger_).has_workspace());
+}
+
 TEST_F(StateStoreTest, TwoStoresKeepWhatTheOtherWrote) {
     write_text(global_file(), R"({"unknown.key": [1, 2]})");
     StateStore first = store();

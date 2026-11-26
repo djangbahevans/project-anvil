@@ -55,7 +55,8 @@ public:
     void schedule();
 
     // Applies the saved state, which has to happen before the window is first shown, and saves
-    // changes from then on.
+    // changes from then on. With no saved visibility, the sidebar shows for a folder and is hidden
+    // without one, and the panel is hidden.
     void restore();
     // Writes what the window shows.
     void save();

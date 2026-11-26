@@ -143,7 +143,7 @@ A key is one to four steps (`ctrl+k ctrl+c`), a `when` is VS Code's context key 
 
 ## Window state
 
-The window opens with the size, position and layout it had when it was last closed: the sidebar and the panel, their sizes and the views they show. The visibility, the views and the expanded folders of the Explorer are remembered for each folder. The editor keeps this in the `state` directory next to `settings.json`; deleting it restores the defaults.
+The window opens with the size, position and layout it had when it was last closed: the sidebar and the panel, their sizes and the views they show. The visibility, the views and the expanded folders of the Explorer are remembered for each folder. A folder shows the sidebar with the Explorer until it is hidden there; a window without a folder starts with it hidden, and the panel starts hidden in both. The editor keeps this in the `state` directory next to `settings.json`; deleting it restores the defaults.
 
 ## Extension host tests
 

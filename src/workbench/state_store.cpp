@@ -12,7 +12,8 @@ namespace anvil::workbench {
 StateStore::StateStore(std::filesystem::path directory,
                        const std::optional<std::string>& workspace_id,
                        std::shared_ptr<core::Logger> logger)
-    : directory_(std::move(directory)), logger_(std::move(logger)) {
+    : directory_(std::move(directory)), logger_(std::move(logger)),
+      has_workspace_(workspace_id.has_value()) {
     if (!directory_.empty()) {
         global_.path = directory_ / "global.json";
     }
@@ -155,6 +156,7 @@ std::expected<void, Error> StateStore::flush() {
 void StateStore::set_workspace(const std::optional<std::string>& workspace_id) {
     // A failure has been logged, and the values cannot wait: they belong to another file.
     static_cast<void>(flush());
+    has_workspace_ = workspace_id.has_value();
     workspace_.path = workspace_file(workspace_id);
     load(workspace_);
 }
