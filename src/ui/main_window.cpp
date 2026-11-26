@@ -30,8 +30,10 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QTimer>
+#include <QTreeView>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <algorithm>
@@ -1445,6 +1447,20 @@ void MainWindow::register_commands() {
         [this] { QTimer::singleShot(0, this, [this] { open_folder_dialog(); }); });
     add("workbench.action.closeFolder", tr("Close Folder"),
         [this] { QTimer::singleShot(0, this, [this] { close_folder(); }); });
+    add("workbench.view.explorer", tr("View: Show Explorer"), [this] {
+        // As VS Code does for a view container: a second use goes back to the editor.
+        const QWidget* focus = focusWidget();
+        if (explorer_ && explorer_->isVisible() && focus && explorer_->isAncestorOf(focus)) {
+            focus_current_editor();
+            return;
+        }
+        if (ExplorerView* explorer = show_explorer()) {
+            QWidget* target = options_.workspace
+                                  ? static_cast<QWidget*>(explorer->tree())
+                                  : static_cast<QWidget*>(explorer->open_folder_button());
+            target->setFocus(Qt::ShortcutFocusReason);
+        }
+    });
     add("explorer.newFile", tr("New File..."), [this] {
         if (ExplorerView* explorer = show_explorer()) {
             explorer->new_file();
