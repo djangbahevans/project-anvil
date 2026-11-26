@@ -18,7 +18,7 @@ Anvil includes the following material from other projects. Each keeps its own li
 
 ## Seti file icons
 
-- **What:** the icon font `resources/seti/seti.woff`, copied unchanged and embedded in the editor, and the table of the glyph and colors of each language in `src/ui/seti_icon_table.hpp`, which is generated from the file icon theme `vs-seti-icon-theme.json`.
+- **What:** the icon font `resources/seti/seti.woff`, copied unchanged and embedded in the editor, and the table of the glyph and colors of each language, file name and file extension in `src/ui/seti_icon_table.hpp`, which is generated from the file icon theme `vs-seti-icon-theme.json`.
 - **From:** Seti UI (https://github.com/jesseweed/seti-ui), as shipped in the `theme-seti` extension of Visual Studio Code (https://github.com/microsoft/vscode, `extensions/theme-seti`) at the release pinned in `scripts/fetch-vscode.sh`.
 - **Copyright:** Copyright (c) 2014 Jesse Weed.
 - **License:** MIT. The notice and the full text are in `resources/seti/LICENSE-seti.txt` and are installed with the editor's documentation. The font is not modified.
