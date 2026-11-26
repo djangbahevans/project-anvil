@@ -184,7 +184,7 @@ std::optional<core::Rgba> registry_default(std::string_view key, const core::Col
             return core::Rgba{.red = 0, .green = 0, .blue = 0, .alpha = 0x29};
         }
     }
-    if (key == "toolbar.hoverBackground") {
+    if (key == "toolbar.hoverBackground" || key == "inputOption.hoverBackground") {
         if (kind == core::ThemeKind::dark) {
             return core::Rgba{.red = 0x5a, .green = 0x5d, .blue = 0x5e, .alpha = 0x50};
         }
