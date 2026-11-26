@@ -9988,6 +9988,7 @@ TEST_F(ZoomWholeWindowTest, TheCommandPaletteAndAMenuHaveItemsOfTheScaledHeightA
     EXPECT_EQ(file->font().pixelSize(),
               window_->zoom().scaled(QFontInfo(QApplication::font("QMenu")).pixelSize()));
     file->close();
+}
 
 // The file operations of the explorer, with the trash and the question replaced.
 class ExplorerOperationsWindowTest : public ExplorerWindowTest {

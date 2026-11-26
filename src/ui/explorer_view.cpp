@@ -5,9 +5,9 @@
 #include "anvil/ui/codicons.hpp"
 
 #include <QApplication>
-#include <QFontInfo>
 #include <QContextMenuEvent>
 #include <QFile>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QLabel>
@@ -105,7 +105,7 @@ public:
     void setModelData(QWidget*, QAbstractItemModel*, const QModelIndex&) const override {}
     void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
                               const QModelIndex&) const override {
-        editor->setGeometry(option.rect.adjusted(label_padding - 4, 1, -2, -1));
+        editor->setGeometry(option.rect.adjusted(scaled_by(zoom_, label_padding - 4), 1, -2, -1));
     }
 
 private:
@@ -402,7 +402,7 @@ private:
         if (!problem_->isVisible()) {
             return;
         }
-        const int width = std::max(width_hint(), 120);
+        const int width = std::max(width_hint(), this->width());
         problem_->setFixedWidth(width);
         problem_->setFixedHeight(problem_->heightForWidth(width));
         problem_->move(x(), y() + height() + 1);
