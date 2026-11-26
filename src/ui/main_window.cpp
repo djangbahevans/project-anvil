@@ -157,6 +157,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         if (quick_open_->is_open()) {
             return;
         }
+        if (quick_access_ == QuickAccess::line) {
+            finish_go_to_line(true);
+            return;
+        }
         pick_highlighted_ = nullptr;
         pick_dismissed_ = nullptr;
         if (pick_action_) {
@@ -172,6 +176,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         }
     });
     connect(palette_, &QuickPick::cancelled, this, [this] {
+        finish_go_to_line(false);
         pick_action_ = nullptr;
         pick_highlighted_ = nullptr;
         if (const auto dismissed = std::exchange(pick_dismissed_, nullptr)) {
@@ -184,15 +189,6 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     connect(quick_open_.get(), &QuickOpen::chosen, this, &MainWindow::open_chosen);
     connect(quick_open_.get(), &QuickOpen::failed, this,
             [this](const QString& message) { status_bar_->show_message(message, 15000); });
-    go_to_line_ = new QuickPick(this, colors_);
-    go_to_line_->set_zoom(&zoom_);
-    go_to_line_->set_ignored_prefix(":");
-    go_to_line_->set_placeholder(tr("Type a line number, then : and a column"));
-    go_to_line_->set_filtering(false);
-    connect(go_to_line_->filter_field(), &QLineEdit::textChanged, this,
-            [this] { preview_go_to_line(); });
-    connect(go_to_line_, &QuickPick::accepted, this, [this] { finish_go_to_line(true); });
-    connect(go_to_line_, &QuickPick::cancelled, this, [this] { finish_go_to_line(false); });
     area_ = new EditorArea(
         layout_, colors_, [this](const core::Uri& uri) { return tab_info(uri); },
         [this](const core::Uri& uri) {
@@ -448,10 +444,6 @@ MainWindow::~MainWindow() {
     palette_->disconnect(this);
     // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
     disconnect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
-    // The widgets are deleted after the members, and the quick pick reports a cancellation when
-    // it loses the focus.
-    go_to_line_->disconnect(this);
-    go_to_line_->filter_field()->disconnect(this);
     // The area observes the layout, which is destroyed before the child widgets are.
     delete area_;
 }
@@ -995,6 +987,7 @@ std::vector<QuickOpenEntry> MainWindow::recent_entries(bool open_only) const {
 }
 
 void MainWindow::dismiss_pick() {
+    finish_go_to_line(false);
     pick_action_ = nullptr;
     pick_highlighted_ = nullptr;
     if (const auto dismissed = std::exchange(pick_dismissed_, nullptr);
@@ -1005,13 +998,21 @@ void MainWindow::dismiss_pick() {
 
 void MainWindow::follow_quick_access_text(const QString& text) {
     // A popup that is being opened gets its text before it shows.
-    if (!palette_->isVisible()) {
+    if (!palette_->isVisible() || quick_access_ == QuickAccess::other) {
         return;
     }
-    const bool commands = text.startsWith(QLatin1Char('>'));
-    if (quick_access_ == QuickAccess::files && commands) {
+    const QuickAccess wanted = text.startsWith(QLatin1Char('>'))   ? QuickAccess::commands
+                               : text.startsWith(QLatin1Char(':')) ? QuickAccess::line
+                                                                   : QuickAccess::files;
+    if (wanted == quick_access_) {
+        if (wanted == QuickAccess::line) {
+            preview_go_to_line();
+        }
+    } else if (wanted == QuickAccess::commands) {
         show_command_palette(text);
-    } else if (quick_access_ == QuickAccess::commands && !commands) {
+    } else if (wanted == QuickAccess::line) {
+        show_go_to_line(text);
+    } else {
         show_files(text);
     }
 }
@@ -2806,26 +2807,38 @@ void MainWindow::show_command_palette(const QString& text) {
     palette_->open(text);
 }
 
-void MainWindow::show_go_to_line() {
-    const core::Uri* current = current_uri_ptr();
-    if (!current || go_to_line_state_.document) {
+void MainWindow::show_go_to_line(const QString& text) {
+    // Run again while it is in use, it leaves the popup and what was typed as they are.
+    if (QApplication::activeModalWidget() ||
+        (quick_access_ == QuickAccess::line && palette_->isVisible())) {
         return;
     }
-    go_to_line_state_ = {documents_.at(*current), view()->document()->selections(),
-                         view()->horizontalScrollBar()->value(),
-                         view()->verticalScrollBar()->value()};
-    go_to_line_->set_top_offset(has_custom_title_bar() ? title_bar_->height()
-                                                       : menu_bar_->height());
-    go_to_line_->open(":");
+    quick_open_->end();
+    dismiss_pick();
+    quick_access_ = QuickAccess::line;
+    if (const core::Uri* current = current_uri_ptr()) {
+        go_to_line_state_ = {documents_.at(*current), view()->document()->selections(),
+                             view()->horizontalScrollBar()->value(),
+                             view()->verticalScrollBar()->value()};
+    }
+    palette_->set_filtering(false);
+    palette_->set_ignored_prefix(":");
+    palette_->set_placeholder(tr("Type a line number, then : and a column"));
+    palette_->set_top_offset(has_custom_title_bar() ? title_bar_->height() : menu_bar_->height());
+    palette_->open(text);
     preview_go_to_line();
 }
 
 void MainWindow::preview_go_to_line() {
     const auto& document = go_to_line_state_.document;
-    if (!document || view()->document() != document) {
+    if (!document) {
+        palette_->set_items({{tr("Open a text editor first to go to a line."), {}, {}, {}, true}});
         return;
     }
-    QString input = go_to_line_->filter_field()->text();
+    if (view()->document() != document) {
+        return;
+    }
+    QString input = palette_->filter_field()->text();
     if (input.startsWith(QLatin1Char(':'))) {
         input.remove(0, 1);
     }
@@ -2848,7 +2861,7 @@ void MainWindow::preview_go_to_line() {
                     .arg(parsed.line + 1)
                     .arg(parsed.column);
     }
-    go_to_line_->set_items({{label, {}, {}, {}, !parsed.has_line}});
+    palette_->set_items({{label, {}, {}, {}, !parsed.has_line}});
 
     if (parsed.has_line) {
         view()->select_range(core::Selection::caret(document->text().offset_at(parsed.target)));

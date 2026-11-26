@@ -7235,7 +7235,7 @@ protected:
     }
 
     ui::QuickPick* pick() {
-        return window_->go_to_line_pick();
+        return window_->command_palette();
     }
     QString label() {
         return pick()->list()->model()->index(0, 0).data().toString();
@@ -10143,11 +10143,11 @@ TEST_F(ZoomWholeWindowTest, TheExplorerAndThePicksOfTheWindowFollowTheLevel) {
     EXPECT_EQ(explorer->tree()->indentation(), window_->zoom().scaled(8));
     EXPECT_EQ(window_->command_palette()->row_size(),
               window_->zoom().scaled(ui::QuickPick::row_height));
-    EXPECT_EQ(window_->go_to_line_pick()->row_size(),
+    EXPECT_EQ(window_->command_palette()->row_size(),
               window_->zoom().scaled(ui::QuickPick::row_height));
     window_->commands().execute("workbench.action.zoomReset");
     EXPECT_EQ(explorer->tree()->indentation(), 8);
-    EXPECT_EQ(window_->go_to_line_pick()->row_size(), ui::QuickPick::row_height);
+    EXPECT_EQ(window_->command_palette()->row_size(), ui::QuickPick::row_height);
 }
 
 TEST_F(ZoomWholeWindowTest, TheFindBarTheSplitAreaAndTheNativeMenuBarFollowTheLevel) {
@@ -11390,7 +11390,8 @@ TEST_F(QuickAccessTest, TheCommandPaletteWithItsArrowRemovedSearchesFilesAndRuns
     // Back to the commands, one of which runs as a command and opens no file.
     QTest::keyClicks(field(), ">go to line");
     enter();
-    EXPECT_TRUE(window_->go_to_line_pick()->isVisible());
+    EXPECT_TRUE(pick()->isVisible());
+    EXPECT_EQ(field()->text(), ":");
     EXPECT_EQ(shown_path(), window_->workspace()->folder / "a.txt");
 }
 
@@ -11410,7 +11411,7 @@ TEST_F(QuickAccessTest, ChoosingAFileRunsNoCommandThatThePaletteListedBefore) {
     EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "main.cpp");
     EXPECT_EQ(window_->tab_strip()->count(), tabs + 1);
     EXPECT_EQ(window_->workbench()->is_visible(ui::Part::sidebar), sidebar);
-    EXPECT_FALSE(window_->go_to_line_pick()->isVisible());
+    EXPECT_FALSE(window_->command_palette()->isVisible());
     EXPECT_FALSE(pick()->isVisible());
 }
 
@@ -11472,4 +11473,154 @@ TEST_F(QuickAccessTest, AListThatIsReplacedIsDismissedSoThatAPreviewIsUndone) {
     keys(Qt::Key_P, Qt::ControlModifier);
     EXPECT_TRUE(quick_open().is_open());
     EXPECT_EQ(window_->colors().color("editor.background"), before);
+}
+
+namespace {
+
+// Go to Line in the popup of quick access, over a document of numbered lines.
+class QuickAccessLineTest : public QuickAccessTest {
+protected:
+    void SetUp() override {
+        QuickAccessTest::SetUp();
+        std::string text;
+        for (int i = 0; i < 200; ++i) {
+            text += "line " + std::to_string(i) + "\n";
+        }
+        ASSERT_TRUE(platform::write_file(project() / "lines.txt", text).has_value());
+        ASSERT_TRUE(open("lines.txt"));
+        window_->view()->setFocus();
+        QApplication::processEvents();
+    }
+    // The line of the caret, counting from 1.
+    std::size_t line() {
+        const core::Document& document = *window_->current_document();
+        return document.text().position_at(document.selections().primary().active).line + 1;
+    }
+    int scroll() {
+        return window_->view()->verticalScrollBar()->value();
+    }
+    std::string item() {
+        return pick()->items().empty() ? std::string() : pick()->items()[0].label.toStdString();
+    }
+    bool goes_to_line() {
+        return field()->placeholderText() == "Type a line number, then : and a column";
+    }
+    std::size_t places() {
+        return window_->navigation_history().selections().entries().size();
+    }
+};
+
+} // namespace
+
+TEST_F(QuickAccessLineTest, TheColonTurnsTheFilesIntoGoToLineAndRemovingItTurnsBack) {
+    keys(Qt::Key_P, Qt::ControlModifier);
+    QTest::keyClicks(field(), ":150");
+    EXPECT_FALSE(quick_open().is_open());
+    ASSERT_TRUE(goes_to_line());
+    EXPECT_EQ(line(), 150U);
+    EXPECT_EQ(item(), "Press 'Enter' to go to line 150 or enter colon : to add a column number.");
+
+    field()->setCursorPosition(1);
+    keys(Qt::Key_Backspace);
+    EXPECT_EQ(field()->text(), "150");
+    EXPECT_EQ(field()->cursorPosition(), 0);
+    EXPECT_TRUE(quick_open().is_open());
+    EXPECT_FALSE(goes_to_line());
+    EXPECT_EQ(line(), 1U);
+}
+
+TEST_F(QuickAccessLineTest, TheColonInPlaceOfTheArrowTurnsTheCommandsIntoGoToLine) {
+    keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    field()->setText(":7");
+    ASSERT_TRUE(goes_to_line());
+    EXPECT_EQ(line(), 7U);
+    field()->setText(">");
+    EXPECT_TRUE(shows_commands());
+    EXPECT_EQ(line(), 1U);
+}
+
+TEST_F(QuickAccessLineTest, GoToLineOpensThePopupWithTheColonAndAgainLeavesItAlone) {
+    const std::size_t before = places();
+    keys(Qt::Key_G, Qt::ControlModifier);
+    ASSERT_TRUE(pick()->isVisible());
+    EXPECT_EQ(field()->text(), ":");
+    ASSERT_TRUE(goes_to_line());
+    QTest::keyClicks(field(), "42");
+    keys(Qt::Key_G, Qt::ControlModifier);
+    EXPECT_EQ(field()->text(), ":42");
+    EXPECT_EQ(line(), 42U);
+    enter();
+    EXPECT_FALSE(pick()->isVisible());
+    EXPECT_EQ(line(), 42U);
+    EXPECT_EQ(places(), before + 1);
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+}
+
+TEST_F(QuickAccessLineTest, EnterKeepsThePlaceAlsoAfterASwitch) {
+    const std::size_t before = places();
+    keys(Qt::Key_P, Qt::ControlModifier);
+    QTest::keyClicks(field(), ":90");
+    enter();
+    EXPECT_EQ(line(), 90U);
+    EXPECT_EQ(places(), before + 1);
+    // The popup is the files' again the next time, and a file chosen then moves no caret.
+    keys(Qt::Key_P, Qt::ControlModifier);
+    EXPECT_TRUE(quick_open().is_open());
+    keys(Qt::Key_Escape);
+    EXPECT_EQ(line(), 90U);
+}
+
+TEST_F(QuickAccessLineTest, TurningIntoAnotherUsePutsTheCaretAndTheScrollBack) {
+    const std::vector<std::function<void()>> leave = {
+        [&] { field()->setText(""); },
+        [&] { field()->setText(">"); },
+        [&] { keys(Qt::Key_P, Qt::ControlModifier); },
+        [&] { keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier); },
+        [&] { window_->commands().execute("workbench.action.editor.changeLanguageMode"); },
+        [&] { keys(Qt::Key_Escape); },
+        [&] {
+            // The focus leaving the popup.
+            window_->view()->setFocus();
+        },
+    };
+    for (std::size_t i = 0; i < leave.size(); ++i) {
+        window_->view()->setFocus();
+        const std::size_t places_before = places();
+        keys(Qt::Key_G, Qt::ControlModifier);
+        QTest::keyClicks(field(), "180");
+        QApplication::processEvents();
+        ASSERT_EQ(line(), 180U) << i;
+        ASSERT_NE(scroll(), 0) << i;
+        leave[i]();
+        QApplication::processEvents();
+        EXPECT_EQ(line(), 1U) << i;
+        EXPECT_EQ(scroll(), 0) << i;
+        EXPECT_EQ(places(), places_before) << i;
+        keys(Qt::Key_Escape);
+        ASSERT_FALSE(pick()->isVisible()) << i;
+    }
+}
+
+TEST_F(QuickAccessLineTest, WithNoDocumentTheItemSaysSoAndEnterDoesNothing) {
+    ASSERT_TRUE(window_->commands().execute("workbench.action.splitEditorRight"));
+    keys(Qt::Key_G, Qt::ControlModifier);
+    ASSERT_TRUE(pick()->isVisible());
+    EXPECT_EQ(item(), "Open a text editor first to go to a line.");
+    QTest::keyClicks(field(), "5");
+    EXPECT_EQ(item(), "Open a text editor first to go to a line.");
+    enter();
+    EXPECT_TRUE(pick()->isVisible());
+    field()->setText("");
+    EXPECT_TRUE(quick_open().is_open());
+    field()->setText(":");
+    EXPECT_EQ(item(), "Open a text editor first to go to a line.");
+}
+
+TEST_F(QuickAccessLineTest, AnotherListStaysWhatItIsWhenAColonIsTyped) {
+    ASSERT_TRUE(window_->commands().execute("workbench.action.editor.changeLanguageMode"));
+    const QString placeholder = field()->placeholderText();
+    field()->setText(":3");
+    EXPECT_EQ(field()->placeholderText(), placeholder);
+    EXPECT_FALSE(goes_to_line());
+    EXPECT_EQ(line(), 1U);
 }
