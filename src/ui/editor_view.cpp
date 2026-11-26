@@ -155,6 +155,7 @@ EditorView::EditorView(QWidget* parent) : QAbstractScrollArea(parent) {
     setHorizontalScrollBar(
         new ScrollBar(Qt::Horizontal, ScrollBar::editor_horizontal_height, "editor.background"));
     setCornerWidget(new Corner(*this));
+    animator_ = std::make_unique<ScrollAnimator>(*this);
     apply_settings(core::EditorSettings{});
 
     viewport()->setCursor(Qt::IBeamCursor);
@@ -198,6 +199,7 @@ void EditorView::update_metrics() {
 void EditorView::apply_settings(const core::EditorSettings& settings) {
     // Scroll positions are in pixels, so they are converted to places in the text and back to keep
     // the same text in view when the metrics or the rows change.
+    animator_->finish();
     const int vertical = verticalScrollBar()->value();
     const int horizontal = horizontalScrollBar()->value();
     const TextPlace place = top_place();
@@ -220,6 +222,7 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     wheel_ = settings.wheel;
     scroll_beyond_last_line_ = settings.scroll_beyond_last_line;
     scroll_beyond_last_column_ = settings.scroll_beyond_last_column;
+    smooth_scrolling_ = settings.smooth_scrolling;
     text_padding_ = core::scale_for_zoom(text_padding_px, settings.zoom_level);
     shadow_height_ = core::scale_for_zoom(shadow_height_px, settings.zoom_level);
     gutter_padding_ = core::scale_for_zoom(gutter_padding_px, settings.zoom_level);
@@ -260,6 +263,7 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     highlights_.clear();
     clear_layouts();
     rows_.reset();
+    animator_->stop();
     verticalScrollBar()->setValue(0);
     horizontalScrollBar()->setValue(0);
     update_scroll_bars();
@@ -272,6 +276,7 @@ void EditorView::set_wrapping(Wrapping wrapping, std::size_t column) {
     if (wrapping == wrapping_ && column == wrap_column_) {
         return;
     }
+    animator_->finish();
     const TextPlace place = top_place();
     set_wrap_mode(wrapping, column);
     horizontalScrollBar()->setValue(0);
@@ -342,6 +347,7 @@ void EditorView::rewrap() {
     if (rows_ ? wanted == rows_->options() : !wanted) {
         return;
     }
+    animator_->finish();
     reflow(top_place(), verticalScrollBar()->value() % line_height_);
 }
 
@@ -767,11 +773,12 @@ void EditorView::ensure_cursor_visible() {
     const auto layout = layout_line(position.line);
     const std::size_t part = caret_part(*layout, position.column, active);
     const int top = static_cast<int>(first_row(position.line) + part) * line_height_;
-    QScrollBar* vertical = verticalScrollBar();
-    if (top < vertical->value()) {
-        vertical->setValue(top);
-    } else if (top + line_height_ > vertical->value() + viewport()->height()) {
-        vertical->setValue(top + line_height_ - viewport()->height());
+    // Against where the view is going, so that movements asked for in quick succession add up.
+    QPoint wanted = animator_->target();
+    if (top < wanted.y()) {
+        wanted.setY(top);
+    } else if (top + line_height_ > wanted.y() + viewport()->height()) {
+        wanted.setY(top + line_height_ - viewport()->height());
     }
 
     const int available = text_width();
@@ -785,12 +792,45 @@ void EditorView::ensure_cursor_visible() {
     const int x = static_cast<int>(left + row.x_of(column));
     max_line_width_ = std::max(max_line_width_, scroll_width(left + row.width()));
     update_scroll_bars();
-    QScrollBar* horizontal = horizontalScrollBar();
-    if (x < horizontal->value()) {
-        horizontal->setValue(x);
-    } else if (x + caret_width > horizontal->value() + available) {
-        horizontal->setValue(x + caret_width - available);
+    if (x < wanted.x()) {
+        wanted.setX(x);
+    } else if (x + caret_width > wanted.x() + available) {
+        wanted.setX(x + caret_width - available);
     }
+    reveal(wanted);
+}
+
+void EditorView::reveal(QPoint position) {
+    if (position == animator_->target()) {
+        return;
+    }
+    // A drag follows the pointer, so what it uncovers shows at once.
+    if (!smooth_scrolling_ || mouse_drag_ != MouseDrag::none) {
+        animator_->scroll_to(position, false);
+        return;
+    }
+    // VS Code moves a line or less up or down at once, so that typing and the arrow keys do not
+    // lag; sideways it moves over time.
+    if (std::abs(position.y() - verticalScrollBar()->value()) <= line_height_) {
+        animator_->scroll_to({horizontalScrollBar()->value(), position.y()}, false);
+    }
+    animator_->scroll_to(position, true);
+}
+
+QPoint EditorView::scroll_target() const {
+    return animator_->target();
+}
+
+void EditorView::scroll_to(QPoint position) {
+    animator_->scroll_to(position, false);
+}
+
+bool EditorView::scrolling() const {
+    return animator_->moving();
+}
+
+void EditorView::set_scroll_clock(std::function<std::int64_t()> now) {
+    animator_->set_clock(std::move(now));
 }
 
 void EditorView::restart_caret_blink() {
@@ -811,7 +851,9 @@ void EditorView::apply(const core::EditOutcome& outcome) {
         rewrap();
         update_scroll_bars();
     }
-    ensure_cursor_visible();
+    if (!hold_reveal_) {
+        ensure_cursor_visible();
+    }
     restart_caret_blink();
     viewport()->update();
     if (outcome.change) {
@@ -846,8 +888,18 @@ void EditorView::move_by_page(bool down, bool extend) {
         return;
     }
     const int lines = std::max(1, viewport()->height() / line_height_ - 1);
+    // The page is one movement of the view, to where its last line leaves the caret.
+    hold_reveal_ = true;
+    bool moved = false;
     for (int i = 0; i < lines; ++i) {
-        apply(controller_->move(down ? core::Motion::down : core::Motion::up, extend));
+        const core::EditOutcome outcome =
+            controller_->move(down ? core::Motion::down : core::Motion::up, extend);
+        moved = moved || outcome.changed_anything();
+        apply(outcome);
+    }
+    hold_reveal_ = false;
+    if (moved) {
+        ensure_cursor_visible();
     }
 }
 
@@ -1334,19 +1386,29 @@ void EditorView::wheelEvent(QWheelEvent* event) {
 #else
     constexpr bool macos = false;
 #endif
+    const core::WheelTurn turn = wheel_turn(*event, QGuiApplication::platformName());
     const core::ScrollDistance distance =
-        core::wheel_scroll(wheel_turn(*event, QGuiApplication::platformName()),
+        core::wheel_scroll(turn,
                            {.alt = event->modifiers().testFlag(Qt::AltModifier),
                             .shift = event->modifiers().testFlag(Qt::ShiftModifier)},
                            macos, wheel_);
-    const auto scroll = [](QScrollBar* bar, int pixels) {
-        if (pixels != 0) {
-            bar->setValue(static_cast<int>(std::clamp<std::int64_t>(
-                std::int64_t{bar->value()} + pixels, bar->minimum(), bar->maximum())));
-        }
+    if (turn.x != 0 || turn.y != 0) {
+        wheel_classifier_.accept(turn);
+    }
+    const auto moved = [](const QScrollBar* bar, int from, int pixels) {
+        return static_cast<int>(
+            std::clamp<std::int64_t>(std::int64_t{from} + pixels, bar->minimum(), bar->maximum()));
     };
-    scroll(horizontalScrollBar(), distance.x);
-    scroll(verticalScrollBar(), distance.y);
+    const QPoint from = animator_->target();
+    const QPoint to(moved(horizontalScrollBar(), from.x(), distance.x),
+                    moved(verticalScrollBar(), from.y(), distance.y));
+    if (to != from) {
+        // A touchpad gives pixels or the phases of a gesture, except where the platform plugin
+        // gives neither, and its movements already follow the finger.
+        const bool wheel = event->pixelDelta().isNull() && event->phase() == Qt::NoScrollPhase &&
+                           wheel_classifier_.is_mouse_wheel();
+        animator_->scroll_to(to, smooth_scrolling_ && wheel);
+    }
     // The wheel over the editor never scrolls what is around it.
     event->accept();
 }

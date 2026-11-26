@@ -39,6 +39,7 @@
 #include "anvil/workbench/navigation_history.hpp"
 
 #include <QMainWindow>
+#include <QPoint>
 #include <QPointer>
 #include <QTimer>
 #include <filesystem>
@@ -590,8 +591,7 @@ private:
     struct GoToLineState {
         std::shared_ptr<core::Document> document;
         core::SelectionSet selections;
-        int scroll_x = 0;
-        int scroll_y = 0;
+        QPoint scroll;
     } go_to_line_state_;
     // The commands shown in the palette, by position in its list.
     std::vector<std::string> palette_ids_;

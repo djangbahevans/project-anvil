@@ -19,6 +19,49 @@ int distance(double notches) {
 
 } // namespace
 
+void WheelClassifier::accept(WheelTurn turn) {
+    const auto whole = [](double value) { return std::abs(std::round(value) - value) < 0.01; };
+    double score = 0.5;
+    if (turn.x != 0 && turn.y != 0) {
+        score = 1;
+    } else {
+        if (!whole(turn.x) || !whole(turn.y)) {
+            score += 0.25;
+        }
+        if (count_ > 0) {
+            const WheelTurn before = turns_[count_ - 1].turn;
+            const auto multiple = [](double a, double b) {
+                const double smaller = std::max(std::min(std::abs(a), std::abs(b)), 1.0);
+                return std::fmod(std::max(std::abs(a), std::abs(b)), smaller) == 0;
+            };
+            if (multiple(turn.x, before.x) && multiple(turn.y, before.y)) {
+                score -= 0.5;
+            }
+        }
+    }
+    if (count_ == remembered) {
+        std::shift_left(turns_.begin(), turns_.end(), 1);
+        --count_;
+    }
+    turns_[count_++] = {turn, std::clamp(score, 0.0, 1.0)};
+}
+
+bool WheelClassifier::is_mouse_wheel() const {
+    if (count_ == 0) {
+        return false;
+    }
+    // Half for the newest turn, a quarter for the one before, and so on; the oldest takes what is
+    // left.
+    double left = 1;
+    double score = 0;
+    for (std::size_t age = 0; age < count_; ++age) {
+        const double weight = age + 1 == count_ ? left : std::pow(0.5, age + 1);
+        left -= weight;
+        score += turns_[count_ - 1 - age].score * weight;
+    }
+    return score <= 0.5;
+}
+
 ScrollDistance wheel_scroll(WheelTurn turn, WheelKeys keys, bool macos,
                             const WheelSettings& settings) {
     double x = turn.x * settings.sensitivity;

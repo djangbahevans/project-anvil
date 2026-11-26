@@ -379,6 +379,7 @@ TEST(EditorSettings, ScrollingDefaultsToVsCodes) {
     EXPECT_TRUE(result->wheel.predominant_axis);
     EXPECT_TRUE(result->scroll_beyond_last_line);
     EXPECT_EQ(result->scroll_beyond_last_column, 4);
+    EXPECT_FALSE(result->smooth_scrolling);
 }
 
 TEST(EditorSettings, ReadsTheScrollingSettings) {
@@ -387,7 +388,8 @@ TEST(EditorSettings, ReadsTheScrollingSettings) {
         "editor.fastScrollSensitivity": 8,
         "editor.scrollPredominantAxis": false,
         "editor.scrollBeyondLastLine": false,
-        "editor.scrollBeyondLastColumn": 12
+        "editor.scrollBeyondLastColumn": 12,
+        "editor.smoothScrolling": true
     })j");
     ASSERT_TRUE(result.has_value()) << result.error().message;
     EXPECT_EQ(result->wheel.sensitivity, 2.5);
@@ -395,6 +397,7 @@ TEST(EditorSettings, ReadsTheScrollingSettings) {
     EXPECT_FALSE(result->wheel.predominant_axis);
     EXPECT_FALSE(result->scroll_beyond_last_line);
     EXPECT_EQ(result->scroll_beyond_last_column, 12);
+    EXPECT_TRUE(result->smooth_scrolling);
 }
 
 TEST(EditorSettings, ScrollingNumbersAreCoercedAsVsCodeDoes) {
@@ -410,9 +413,10 @@ TEST(EditorSettings, ScrollingNumbersAreCoercedAsVsCodeDoes) {
 }
 
 TEST(EditorSettings, AScrollingSettingOfTheWrongTypeIsReported) {
-    for (const std::string key : {"editor.mouseWheelScrollSensitivity",
-                                  "editor.fastScrollSensitivity", "editor.scrollPredominantAxis",
-                                  "editor.scrollBeyondLastLine", "editor.scrollBeyondLastColumn"}) {
+    for (const std::string key :
+         {"editor.mouseWheelScrollSensitivity", "editor.fastScrollSensitivity",
+          "editor.scrollPredominantAxis", "editor.scrollBeyondLastLine",
+          "editor.scrollBeyondLastColumn", "editor.smoothScrolling"}) {
         const auto result = read("{\"" + key + "\": \"x\"}");
         ASSERT_FALSE(result.has_value()) << key;
         EXPECT_NE(result.error().message.find(key), std::string::npos) << result.error().message;

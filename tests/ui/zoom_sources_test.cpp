@@ -142,6 +142,7 @@ const std::map<std::string, std::string> not_sizes = {
     {"editor_area.cpp:scale", "a ratio of the width of the area, not a size in pixels"},
     {"editor_view.cpp:caret_width", "the text caret, which is as thin at every zoom"},
     {"explorer_model.cpp:poll_interval_ms", "a time"},
+    {"scroll_animator.cpp:frame_ms", "a time"},
     {"explorer_view.cpp:hover_expand_ms", "a time"},
     {"include/anvil/ui/editor_area.hpp:centered_margin_ratio", "a ratio of the width of the area"},
     {"include/anvil/ui/explorer_model.hpp:batch_size", "a count of entries"},

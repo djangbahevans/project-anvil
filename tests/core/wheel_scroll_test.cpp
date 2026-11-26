@@ -3,9 +3,11 @@
 #include <cmath>
 #include <gtest/gtest.h>
 #include <random>
+#include <vector>
 
 using anvil::core::ScrollDistance;
 using anvil::core::wheel_scroll;
+using anvil::core::WheelClassifier;
 using anvil::core::WheelKeys;
 using anvil::core::WheelSettings;
 using anvil::core::WheelTurn;
@@ -101,6 +103,89 @@ TEST(WheelScroll, AgreesWithAPlainReference) {
         const ScrollDistance result = wheel_scroll(turn, keys, macos, settings);
         ASSERT_EQ(result.x, pixels(x)) << "run " << run;
         ASSERT_EQ(result.y, pixels(y)) << "run " << run;
+    }
+}
+
+bool wheel_after(std::initializer_list<WheelTurn> turns) {
+    WheelClassifier classifier;
+    for (const WheelTurn& turn : turns) {
+        classifier.accept(turn);
+    }
+    return classifier.is_mouse_wheel();
+}
+
+TEST(WheelClassifier, TellsNotchesFromTheMovementsOfATouchpad) {
+    EXPECT_FALSE(wheel_after({})) << "nothing has turned";
+    EXPECT_TRUE(wheel_after({{0, -1}}));
+    EXPECT_TRUE(wheel_after({{0, -1}, {0, -1}, {0, 1}}));
+    EXPECT_TRUE(wheel_after({{0, -1}, {0, -3}, {0, -2}})) << "an accelerated wheel";
+    EXPECT_TRUE(wheel_after({{-1, 0}, {-1, 0}})) << "a wheel that tilts";
+    EXPECT_FALSE(wheel_after({{0, -0.125}}));
+    EXPECT_FALSE(wheel_after({{0, -0.125}, {0, -0.125}, {0, -0.125}}));
+    EXPECT_FALSE(wheel_after({{0.5, -1}})) << "both axes at once";
+    EXPECT_FALSE(wheel_after({{0, -1.3}, {0, -2.45}}));
+}
+
+TEST(WheelClassifier, TheLaterTurnsWeighMore) {
+    EXPECT_TRUE(wheel_after({{0, -0.125}, {0, -1}, {0, -1}}));
+    EXPECT_FALSE(wheel_after({{0, -1}, {0, -1}, {0, -0.125}, {0, -0.25}, {0, -0.125}}));
+    // A touchpad's turn is forgotten once five others have come.
+    EXPECT_TRUE(wheel_after({{1, 1}, {0, -1}, {0, -1}, {0, -1}, {0, -1}, {0, -1}}));
+}
+
+// The classifier of `scrollableElement.ts`, over the whole history.
+bool classified_as_wheel(const std::vector<WheelTurn>& turns) {
+    std::vector<double> scores;
+    for (std::size_t i = 0; i < turns.size(); ++i) {
+        const double x = turns[i].x;
+        const double y = turns[i].y;
+        if (std::abs(x) > 0 && std::abs(y) > 0) {
+            scores.push_back(1);
+            continue;
+        }
+        double score = 0.5;
+        const auto almost_whole = [](double v) { return std::abs(std::round(v) - v) < 0.01; };
+        if (!almost_whole(x) || !almost_whole(y)) {
+            score += 0.25;
+        }
+        if (i > 0) {
+            const double px = std::abs(turns[i - 1].x);
+            const double py = std::abs(turns[i - 1].y);
+            const double min_x = std::max(std::min(std::abs(x), px), 1.0);
+            const double min_y = std::max(std::min(std::abs(y), py), 1.0);
+            if (std::fmod(std::max(std::abs(x), px), min_x) == 0 &&
+                std::fmod(std::max(std::abs(y), py), min_y) == 0) {
+                score -= 0.5;
+            }
+        }
+        scores.push_back(std::min(std::max(score, 0.0), 1.0));
+    }
+    const std::size_t oldest = scores.size() > 5 ? scores.size() - 5 : 0;
+    double left = 1;
+    double score = 0;
+    int iteration = 1;
+    for (std::size_t i = scores.size(); i-- > oldest; ++iteration) {
+        const double influence = i == oldest ? left : std::pow(2, -iteration);
+        left -= influence;
+        score += scores[i] * influence;
+    }
+    return score <= 0.5;
+}
+
+TEST(WheelClassifier, AgreesWithAPlainReference) {
+    std::mt19937 random(2430);
+    // Whole notches, parts of them, and none.
+    const double values[] = {0, 0, 0, 1, -1, 2, -3, 0.125, -0.5, 1.5, 2.995, 15.0 / 120};
+    std::uniform_int_distribution<std::size_t> pick(0, std::size(values) - 1);
+    for (int run = 0; run < 2000; ++run) {
+        WheelClassifier classifier;
+        std::vector<WheelTurn> turns;
+        for (int step = 0; step < 12; ++step) {
+            turns.push_back({values[pick(random)], values[pick(random)]});
+            classifier.accept(turns.back());
+            ASSERT_EQ(classifier.is_mouse_wheel(), classified_as_wheel(turns))
+                << "run " << run << " step " << step;
+        }
     }
 }
 

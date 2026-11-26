@@ -6,7 +6,9 @@
 #include "anvil/core/highlighter.hpp"
 #include "anvil/core/row_map.hpp"
 #include "anvil/core/search.hpp"
+#include "anvil/core/wheel_scroll.hpp"
 #include "anvil/core/whitespace.hpp"
+#include "anvil/ui/scroll_animator.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 
 #include <QAbstractScrollArea>
@@ -14,6 +16,7 @@
 #include <QString>
 #include <QTextLayout>
 #include <QTimer>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -163,6 +166,16 @@ public:
     // left alone.
     void refresh_highlighting();
 
+    // The scroll position that the view is at or, during a smooth movement, going to: the values of
+    // the horizontal and the vertical scroll bar.
+    QPoint scroll_target() const;
+    // Goes to a scroll position at once, ending a smooth movement.
+    void scroll_to(QPoint position);
+    // Whether a smooth movement of the scroll position is under way.
+    bool scrolling() const;
+    // The clock of the smooth movements, in milliseconds, which a test sets.
+    void set_scroll_clock(std::function<std::int64_t()> now);
+
     // The caret rectangle of byte `offset`, in viewport coordinates.
     QRect cursor_rect(std::size_t offset) const;
     // The byte offset nearest to a point in viewport coordinates.
@@ -304,6 +317,8 @@ private:
     void update_metrics();
     void update_scroll_bars();
     void ensure_cursor_visible();
+    // Goes where the caret shows, over time with smooth scrolling.
+    void reveal(QPoint position);
     void restart_caret_blink();
     void insert_tab();
 
@@ -342,6 +357,11 @@ private:
     bool render_control_characters_ = true;
     int max_line_width_ = 0;
     core::WheelSettings wheel_;
+    core::WheelClassifier wheel_classifier_;
+    bool smooth_scrolling_ = false;
+    std::unique_ptr<ScrollAnimator> animator_;
+    // While set, an edit or a caret movement does not scroll to the caret: the caller does it once.
+    bool hold_reveal_ = false;
     bool scroll_beyond_last_line_ = true;
     int scroll_beyond_last_column_ = 4;
     bool caret_visible_ = true;
