@@ -785,7 +785,6 @@ protected:
 
 TEST_F(ExplorerZoomTest, TheRowsTheIndentationTheScrollBarAndTheFontAreScaled) {
     const int base_font = QFontInfo(view_->font()).pixelSize();
-    const int bar = view_->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
     ASSERT_TRUE(QTest::qWaitFor([&] { return view_->tree()->model()->rowCount() == 3; }));
     for (const double level : levels) {
         zoom_.set_level(level);
@@ -794,7 +793,8 @@ TEST_F(ExplorerZoomTest, TheRowsTheIndentationTheScrollBarAndTheFontAreScaled) {
         const QModelIndex first = view_->tree()->model()->index(0, 0);
         EXPECT_EQ(view_->tree()->visualRect(first).height(), zoom_.scaled(22));
         EXPECT_EQ(view_->tree()->indentation(), zoom_.scaled(8));
-        EXPECT_EQ(view_->tree()->verticalScrollBar()->width(), zoom_.scaled(bar));
+        EXPECT_EQ(view_->tree()->verticalScrollBar()->width(),
+                  zoom_.scaled(anvil::ui::ScrollBar::list_width));
         EXPECT_EQ(view_->font().pixelSize(), zoom_.scaled(base_font));
         EXPECT_EQ(view_->open_folder_button()->font().pixelSize(), zoom_.scaled(base_font));
         EXPECT_EQ(view_->message()->font().pixelSize(), zoom_.scaled(base_font));

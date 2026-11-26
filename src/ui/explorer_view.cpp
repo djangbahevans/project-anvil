@@ -4,6 +4,7 @@
 #include "anvil/platform/file.hpp"
 #include "anvil/platform/file_system.hpp"
 #include "anvil/ui/codicons.hpp"
+#include "anvil/ui/scroll_bar.hpp"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -142,6 +143,9 @@ public:
         });
         setFrameShape(NoFrame);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        auto* bar = new ScrollBar(Qt::Vertical, ScrollBar::list_width, "sideBar.background");
+        bar->set_colors(&colors);
+        setVerticalScrollBar(bar);
         setVerticalScrollMode(ScrollPerPixel);
         setMouseTracking(true);
         setTextElideMode(Qt::ElideRight);
@@ -472,7 +476,7 @@ private:
 
     void apply_zoom() {
         setIndentation(scaled_by(zoom_, indent));
-        scale_scroll_bars(*this, zoom_ ? zoom_->level() : 0);
+        static_cast<ScrollBar*>(verticalScrollBar())->set_zoom_level(zoom_ ? zoom_->level() : 0);
         doItemsLayout();
         viewport()->update();
     }

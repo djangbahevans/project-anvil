@@ -2,8 +2,6 @@
 
 #include <QObject>
 
-class QAbstractScrollArea;
-
 namespace anvil::ui {
 
 // The zoom of the window: every size of a part that is in pixels goes through `scaled`, so that
@@ -36,10 +34,6 @@ private:
     double level_ = 0;
     double factor_ = 1;
 };
-
-// Gives the scroll bars of `area` the width that the style gives them at zoom level 0 times the
-// factor of `level`.
-void scale_scroll_bars(QAbstractScrollArea& area, double level);
 
 // A size read through the zoom that a part was given, or as it is for a part that has none.
 inline int scaled_by(const Zoom* zoom, int size) {
