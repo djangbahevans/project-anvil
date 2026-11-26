@@ -2,7 +2,7 @@
 // computer, with the default break characters and `wrappingIndent: "same"`) as
 // tests/core/data/line_break_cases.json. tests/core/line_breaks_test.cpp checks that Anvil breaks
 // the same lines at the same places. Offsets are UTF-16 code units, where each row after the first
-// begins.
+// begins, and columns are those of the line at the offsets.
 //   node scripts/generate-line-break-cases.mjs [--check]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,8 +28,12 @@ const breaksOf = (line, tabSize, column, fullWidth) => {
     computer.addRequest(1, null);
     const data = computer.finalize()[0];
     return data === null
-        ? { starts: [], indent: 0 }
-        : { starts: data.breakOffsets.slice(0, -1), indent: data.wrappedTextIndentLength };
+        ? { starts: [], columns: [], indent: 0 }
+        : {
+              starts: data.breakOffsets.slice(0, -1),
+              columns: data.breakOffsetsVisibleColumn.slice(0, -1),
+              indent: data.wrappedTextIndentLength,
+          };
 };
 
 const cases = [];
