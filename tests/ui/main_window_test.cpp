@@ -10119,7 +10119,7 @@ TEST_F(ExplorerOperationsWindowTest, NewFileFromTheCommandShowsTheExplorerCreate
         window_->sidebar()->container_widget("workbench.view.explorer"));
     ASSERT_NE(explorer, nullptr);
     EXPECT_TRUE(window_->workbench()->is_visible(ui::Part::sidebar));
-    ASSERT_TRUE(explorer->is_editing());
+    ASSERT_TRUE(wait_until([&] { return explorer->is_editing(); }));
     name(explorer, "fresh.txt");
     EXPECT_TRUE(std::filesystem::exists(project() / "fresh.txt"));
     EXPECT_EQ(window_->windowTitle().left(9), "fresh.txt");
