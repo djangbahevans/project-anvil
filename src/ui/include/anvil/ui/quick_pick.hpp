@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <QString>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,10 @@ struct QuickPickItem {
     // right end of its row. It is never shown as a row of its own, is never chosen, and is left
     // out while a filter is typed, which ranks the items of every group together.
     bool separator = false;
+    // The matched parts of the label and of the description, in UTF-16 code units, for a list that
+    // the caller filters itself: they are drawn while the popup does not filter.
+    std::vector<core::MatchRange> label_match{};
+    std::vector<core::MatchRange> description_match{};
 };
 
 // A popup list with a filter field, over the top center of a window: VS Code's quick pick, used
@@ -83,6 +88,14 @@ public:
     // Makes the item, by its position in the list that was set, the chosen row, when the filter
     // shows it and it is not a divider.
     void set_active_item(std::size_t item);
+    // The item of the chosen row, by its position in the list that was set.
+    std::optional<std::size_t> active_item() const;
+    // Moves the chosen row down, and from the last to the first, as Down does.
+    void select_next();
+    // Says that the shown items do not answer the filter text yet: Enter is then held back until
+    // this is turned off, and chooses what is chosen at that time. Typing drops a held Enter. A
+    // click chooses what was clicked.
+    void set_awaiting_items(bool awaiting);
     // Closes the popup without a choice.
     void cancel();
 
@@ -160,6 +173,8 @@ private:
     int top_offset_ = 0;
     bool has_detail_ = false;
     bool filtering_ = true;
+    bool awaiting_items_ = false;
+    bool enter_held_ = false;
     QPointer<QWidget> previous_focus_;
 };
 
