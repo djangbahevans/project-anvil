@@ -1,5 +1,6 @@
 #pragma once
 
+#include "anvil/core/color_theme.hpp"
 #include "anvil/core/token_theme.hpp"
 
 #include <QColor>
@@ -68,9 +69,12 @@ public:
         return token_theme_;
     }
     void set_token_theme(std::shared_ptr<const core::TokenTheme> theme);
-    // Replaces the colors and the token theme together: `changed` is emitted once, and not at all
-    // when neither differs.
-    void set_theme(const Colors& theme, std::shared_ptr<const core::TokenTheme> token_theme);
+    // The kind of the theme; without one, light or dark as the base color of the palette is.
+    core::ThemeKind kind() const;
+    // Replaces the colors, the token theme and the kind together: `changed` is emitted once, and
+    // not at all when none differs.
+    void set_theme(const Colors& theme, std::shared_ptr<const core::TokenTheme> token_theme,
+                   core::ThemeKind kind);
 
 signals:
     void changed();
@@ -83,6 +87,7 @@ private:
     // Parallel to the table.
     std::vector<std::optional<QColor>> themed_;
     std::shared_ptr<const core::TokenTheme> token_theme_;
+    std::optional<core::ThemeKind> kind_;
 };
 
 } // namespace anvil::ui

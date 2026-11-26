@@ -306,14 +306,24 @@ void WorkbenchColors::set_colors(const Colors& theme) {
     emit changed();
 }
 
+core::ThemeKind WorkbenchColors::kind() const {
+    if (kind_) {
+        return *kind_;
+    }
+    return palette_.color(QPalette::Base).lightness() > 127 ? core::ThemeKind::light
+                                                            : core::ThemeKind::dark;
+}
+
 void WorkbenchColors::set_theme(const Colors& theme,
-                                std::shared_ptr<const core::TokenTheme> token_theme) {
+                                std::shared_ptr<const core::TokenTheme> token_theme,
+                                core::ThemeKind kind) {
     auto values = themed_values(theme);
-    if (values == themed_ && token_theme == token_theme_) {
+    if (values == themed_ && token_theme == token_theme_ && kind_ == kind) {
         return;
     }
     themed_ = std::move(values);
     token_theme_ = std::move(token_theme);
+    kind_ = kind;
     emit changed();
 }
 

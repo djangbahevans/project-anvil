@@ -1,9 +1,11 @@
 #include "../timing.hpp"
 #include "anvil/core/log.hpp"
+#include "anvil/ui/codicons.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/resources.hpp"
 #include "anvil/ui/scroll_bar.hpp"
 #include "anvil/ui/theme_store.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QAbstractItemModel>
 #include <QApplication>
@@ -695,4 +697,98 @@ TEST_F(QuickPickTest, TheListHasASlimScrollBarOnTheColorOfThePopup) {
             host_->grab().save(QString::fromUtf8(directory) + "/scroll_bar_pick_" + theme + ".png");
         }
     }
+}
+
+namespace {
+
+// A list whose first item has a solid icon, red on a dark theme and blue on a light one, and whose
+// second has none, with green text on black.
+class QuickPickIconTest : public QuickPickTest {
+protected:
+    void SetUp() override {
+        QuickPickTest::SetUp();
+        theme(anvil::core::ThemeKind::dark);
+        std::vector<QuickPickItem> items = items_of({"HHHH", "HHHH"});
+        items[0].icon = anvil::ui::QuickPickIcon{
+            .font_family = anvil::ui::codicon_font_family(),
+            .dark = {*anvil::ui::codicon("circle-filled"), QColor(255, 0, 0)},
+            .light = {*anvil::ui::codicon("circle-filled"), QColor(0, 0, 255)},
+        };
+        pick_->set_items(std::move(items));
+        pick_->open();
+    }
+
+    void theme(anvil::core::ThemeKind kind) {
+        anvil::ui::WorkbenchColors::Colors colors;
+        for (const char* key : {"quickInput.background", "quickInputList.focusBackground"}) {
+            colors[key] = QColor(0, 0, 0);
+        }
+        for (const char* key : {"quickInput.foreground", "quickInputList.focusForeground"}) {
+            colors[key] = QColor(0, 255, 0);
+        }
+        colors_.set_theme(colors, nullptr, kind);
+    }
+
+    // The leftmost column of the row with a pixel of the color of one channel, or -1.
+    int leftmost(int row, int channel) const {
+        QCoreApplication::processEvents();
+        const QImage image = pick_->list()->viewport()->grab().toImage();
+        const QRect rect = pick_->list()->visualRect(pick_->list()->model()->index(row, 0));
+        const qreal ratio = image.devicePixelRatio();
+        for (int x = 0; x < image.width(); ++x) {
+            for (int y = static_cast<int>(rect.top() * ratio);
+                 y < static_cast<int>(rect.bottom() * ratio) && y < image.height(); ++y) {
+                const QColor color = image.pixelColor(x, y);
+                const int channels[] = {color.red(), color.green(), color.blue()};
+                const int others = channels[0] + channels[1] + channels[2] - channels[channel];
+                if (channels[channel] > 150 && others < 80) {
+                    return static_cast<int>(x / ratio);
+                }
+            }
+        }
+        return -1;
+    }
+    static constexpr int red = 0;
+    static constexpr int green = 1;
+    static constexpr int blue = 2;
+};
+
+} // namespace
+
+TEST_F(QuickPickIconTest, TheIconIsInFrontOfTheLabelInItsColor) {
+    const int icon = leftmost(0, red);
+    ASSERT_GE(icon, 0);
+    EXPECT_LT(icon, leftmost(0, green));
+    EXPECT_EQ(leftmost(0, blue), -1);
+    EXPECT_EQ(leftmost(1, red), -1);
+}
+
+TEST_F(QuickPickIconTest, OnlyTheLabelOfAnItemWithAnIconMakesRoomForIt) {
+    const int with_icon = leftmost(0, green);
+    const int without_icon = leftmost(1, green);
+    ASSERT_GE(without_icon, 0);
+    EXPECT_EQ(with_icon - without_icon, 22);
+
+    pick_->set_items(items_of({"HHHH"}));
+    EXPECT_EQ(leftmost(0, green), without_icon);
+}
+
+TEST_F(QuickPickIconTest, TheIconFollowsAChangeOfTheKindOfTheTheme) {
+    ASSERT_GE(leftmost(0, red), 0);
+    theme(anvil::core::ThemeKind::light);
+    EXPECT_GE(leftmost(0, blue), 0);
+    EXPECT_EQ(leftmost(0, red), -1);
+    // A high contrast light theme shows the dark icon, as VS Code does.
+    theme(anvil::core::ThemeKind::high_contrast_light);
+    EXPECT_GE(leftmost(0, red), 0);
+    EXPECT_EQ(leftmost(0, blue), -1);
+}
+
+TEST_F(QuickPickIconTest, TheRoomForAnIconGrowsWithTheZoom) {
+    anvil::ui::Zoom zoom;
+    zoom.set_level(4);
+    pick_->set_zoom(&zoom);
+    // The column at level 0 scaled, to a pixel or so of rounding.
+    EXPECT_NEAR(leftmost(0, green) - leftmost(1, green), 22 * zoom.factor(), 1.5);
+    pick_->set_zoom(nullptr);
 }

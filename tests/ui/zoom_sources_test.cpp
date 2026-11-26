@@ -102,6 +102,8 @@ const std::set<std::string> level_zero_sizes = {
     "quick_pick.cpp:header_bottom_padding_px",
     "quick_pick.cpp:header_padding_px",
     "quick_pick.cpp:highlight_radius_px",
+    "quick_pick.cpp:icon_gap_px",
+    "quick_pick.cpp:icon_width_px",
     "quick_pick.cpp:input_horizontal_padding_px",
     "quick_pick.cpp:input_radius_px",
     "quick_pick.cpp:input_vertical_padding_px",
@@ -153,6 +155,7 @@ const std::map<std::string, std::string> not_sizes = {
     {"panel.cpp:action_pen_width", "the width of a stroke, in units of the level 0 size, "
                                    "multiplied by the factor where it is drawn"},
     {"quick_pick.cpp:detail_row_lines", "a count of lines"},
+    {"quick_pick.cpp:icon_font_percent", "a share of the size of the text"},
     {"tab_strip.cpp:cross_pen_width", "the width of a stroke, in units of the level 0 size, "
                                       "multiplied by the factor where it is drawn"},
     {"workbench_colors.cpp:max_chain", "a count of links"},
@@ -209,6 +212,8 @@ const std::vector<Exempt> exempt_calls = {
     {"find_bar.cpp", "fontMetrics", "the width of a text in the font of the bar, which is scaled"},
     {"menu_style.cpp", "setPixelSize(size)", "the callers pass the glyph size scaled"},
     {"quick_pick.cpp", "setFixedHeight(list_height)", "made of rows that are scaled"},
+    {"quick_pick.cpp", "setPixelSize(icon_pixels)",
+     "made of the size of the row's font, which is scaled"},
     {"workbench.cpp", "setMinimumWidth(sidebar_minimum())", "sidebar_minimum() scales it"},
     {"workbench.cpp", "panel_minimum()", "panel_minimum() scales it"},
     {"quick_pick.cpp", "setFixedWidth(std::max(0, width))", "made of a width that is scaled"},

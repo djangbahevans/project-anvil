@@ -44,6 +44,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/quick_pick.hpp
   include/anvil/ui/resources.hpp
   include/anvil/ui/scroll_bar.hpp
+  include/anvil/ui/seti_icons.hpp
   include/anvil/ui/settings_store.hpp
   include/anvil/ui/sidebar.hpp
   include/anvil/ui/splitter.hpp
@@ -66,6 +67,8 @@ add_library(anvil_ui STATIC
   quick_pick.cpp
   resources.cpp
   scroll_bar.cpp
+  seti_icon_table.hpp
+  seti_icons.cpp
   settings_store.cpp
   sidebar.cpp
   splitter.cpp
@@ -90,6 +93,10 @@ qt_add_resources(anvil_ui anvil_codicons
   PREFIX /anvil/codicons
   BASE ${CMAKE_SOURCE_DIR}/resources/codicons
   FILES ${CMAKE_SOURCE_DIR}/resources/codicons/codicon.ttf)
+qt_add_resources(anvil_ui anvil_seti
+  PREFIX /anvil/seti
+  BASE ${CMAKE_SOURCE_DIR}/resources/seti
+  FILES ${CMAKE_SOURCE_DIR}/resources/seti/seti.woff)
 target_include_directories(anvil_ui PUBLIC include)
 target_compile_definitions(anvil_ui PRIVATE ANVIL_VERSION="${PROJECT_VERSION}")
 target_link_libraries(anvil_ui

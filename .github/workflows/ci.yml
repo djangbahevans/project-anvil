@@ -93,6 +93,9 @@ jobs:
       - name: Check the Codicons font and its table
         run: node scripts/generate-codicons.mjs --check
 
+      - name: Check the Seti font and its table
+        run: node scripts/generate-seti-icons.mjs --check
+
       - name: Check the key table and the recorded key binding cases
         run: |
           node scripts/generate-key-table.mjs --check

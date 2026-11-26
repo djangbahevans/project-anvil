@@ -16,6 +16,13 @@ Anvil includes the following material from other projects. Each keeps its own li
 - **Copyright:** Copyright (c) Microsoft Corporation.
 - **License:** Creative Commons Attribution 4.0 International (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/). The full text is in `resources/codicons/LICENSE-codicons.txt` and is installed with the editor's documentation. The font is not modified.
 
+## Seti file icons
+
+- **What:** the icon font `resources/seti/seti.woff`, copied unchanged and embedded in the editor, and the table of the glyph and colors of each language in `src/ui/seti_icon_table.hpp`, which is generated from the file icon theme `vs-seti-icon-theme.json`.
+- **From:** Seti UI (https://github.com/jesseweed/seti-ui), as shipped in the `theme-seti` extension of Visual Studio Code (https://github.com/microsoft/vscode, `extensions/theme-seti`) at the release pinned in `scripts/fetch-vscode.sh`.
+- **Copyright:** Copyright (c) 2014 Jesse Weed.
+- **License:** MIT. The notice and the full text are in `resources/seti/LICENSE-seti.txt` and are installed with the editor's documentation. The font is not modified.
+
 ## Visual Studio Code menus
 
 - **What:** the titles, mnemonics, order, grouping and `when` clauses of the menu bar in `src/workbench/include/anvil/workbench/menu_table.hpp`, which is generated from the menus that Visual Studio Code registers.
