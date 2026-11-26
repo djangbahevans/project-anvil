@@ -11684,3 +11684,16 @@ TEST_F(WorkspaceContainsWindowTest, TheSearchSettingsApplyFromTheStartAndAfterAn
     ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
     EXPECT_TRUE(wait_until([&] { return active(); }));
 }
+
+TEST_F(WorkspaceContainsWindowTest, AHostStartedAgainSearchesWithTheSettingsAsTheyAreThen) {
+    if (!start(R"({"search.exclude": {"**/dist": true}})")) {
+        GTEST_SKIP() << "needs ripgrep, Node.js and the VS Code checkout";
+    }
+    ASSERT_TRUE(wait_until([&] { return settled(); }));
+    // The match of the other folder is in `sub`, which only the new setting leaves out.
+    window_->change_setting("search.exclude", nlohmann::json{{"**/sub", true}});
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    ASSERT_TRUE(wait_until([&] { return settled(); }));
+    QTest::qWait(500);
+    EXPECT_FALSE(active());
+}
