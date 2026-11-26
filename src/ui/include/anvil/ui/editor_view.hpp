@@ -13,6 +13,7 @@
 #include <QString>
 #include <QTextLayout>
 #include <QTimer>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,14 +28,12 @@ namespace anvil::ui {
 // core::EditController; the view translates events into controller commands and paints the result.
 //
 // Only the visible lines are laid out, so documents of any size scroll smoothly, and the layouts
-// of the most recently used lines are kept until the line, the font or the highlighting changes.
-// Lines longer than `max_line_characters` are shown cut off.
+// of the most recently used lines are kept until the line, the font or the highlighting changes. A
+// long line is laid out a part at a time (ChunkedLine).
 class EditorView : public QAbstractScrollArea {
     Q_OBJECT
 
 public:
-    static constexpr int max_line_characters = 5000;
-
     explicit EditorView(QWidget* parent = nullptr);
     ~EditorView() override;
 
@@ -166,8 +165,9 @@ public:
     int char_width() const {
         return char_width_;
     }
-    // How many line layouts the view has built since it was created, which tells a test whether a
-    // paint, a hit test or an edit reused the cached layouts.
+    // How many QTextLayouts the view has made since it was created, one for a line and one for each
+    // part of a long line, which tells a test whether a paint, a hit test or an edit reused the
+    // cached ones.
     std::size_t layouts_built() const {
         return layouts_built_;
     }
@@ -213,13 +213,14 @@ private:
     // The format of each span of the highlighter on `line`, whose text has `size` UTF-16 units.
     QList<QTextLayout::FormatRange> syntax_formats(const core::TokenTheme& token_theme,
                                                    std::size_t line, qsizetype size) const;
-    void draw_whitespace(QPainter& painter, const LineLayout& layout,
-                         std::span<const core::ColumnRange> selected, int origin_x, int y,
+    void draw_whitespace(QPainter& painter, LineLayout& layout,
+                         std::span<const core::ColumnRange> selected,
+                         std::pair<std::size_t, std::size_t> shown, int origin_x, int y,
                          const QColor& color) const;
 
     // The layout of `line`, from the cache when it is there.
-    std::shared_ptr<const LineLayout> layout_line(std::size_t line) const;
-    std::shared_ptr<const LineLayout> build_layout(std::size_t line) const;
+    std::shared_ptr<LineLayout> layout_line(std::size_t line) const;
+    std::shared_ptr<LineLayout> build_layout(std::size_t line) const;
     // Drops every cached layout.
     void clear_layouts();
     // Brings the cache to the text after `change`: layouts of the replaced lines are dropped and
@@ -285,8 +286,12 @@ private:
     std::shared_ptr<const core::Highlighter> highlighter_;
     std::uint64_t painted_highlighter_version_ = 0;
     struct CachedLayout {
-        std::shared_ptr<const LineLayout> layout;
+        std::shared_ptr<LineLayout> layout;
         std::uint64_t used = 0;
+        // A stale layout of a long line is made again, and only passes its widths before column
+        // `unchanged` to the new one.
+        bool stale = false;
+        std::size_t unchanged = std::numeric_limits<std::size_t>::max();
     };
     // The layouts of lines by line number, valid for the document at `layout_version_`.
     mutable std::unordered_map<std::size_t, CachedLayout> layouts_;

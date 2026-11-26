@@ -1,12 +1,14 @@
 #include "anvil/ui/editor_view.hpp"
 
 #include "anvil/core/zoom.hpp"
+#include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/zoom.hpp"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QFontDatabase>
 #include <QFontMetrics>
+#include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QJsonArray>
@@ -127,27 +129,11 @@ std::vector<std::string> copied_pieces(const QMimeData* data) {
 } // namespace
 
 struct EditorView::LineLayout {
-    QString text;
-    QTextLayout layout;
+    ChunkedLine text;
     // The UTF-16 columns of the control characters, which `text` shows as symbols.
     std::vector<int> control_columns;
     // The digest of the highlighter's spans that the formats were made from, when there are any.
     std::optional<std::size_t> spans;
-
-    // The number of UTF-16 code units shown.
-    std::size_t size() const {
-        return static_cast<std::size_t>(text.size());
-    }
-    // The x coordinate of a UTF-16 column, relative to the start of the line.
-    qreal x_of(std::size_t column) const {
-        const QTextLine line = layout.lineAt(0);
-        return line.isValid() ? line.cursorToX(static_cast<int>(std::min(column, size()))) : 0;
-    }
-    // The UTF-16 column nearest to an x coordinate.
-    std::size_t column_at(qreal x) const {
-        const QTextLine line = layout.lineAt(0);
-        return line.isValid() ? static_cast<std::size_t>(std::max(0, line.xToCursor(x))) : 0;
-    }
 };
 
 EditorView::EditorView(QWidget* parent) : QAbstractScrollArea(parent) {
@@ -291,15 +277,21 @@ void EditorView::refresh_highlighting() {
     // Only the lines in view are asked for spans; a layout made from spans elsewhere is dropped
     // and made again when it comes into view.
     for (auto layout = layouts_.begin(); layout != layouts_.end();) {
-        const auto& [line, cached] = *layout;
+        auto& [line, cached] = *layout;
         const bool in_view = line >= first && line < last;
-        if (cached.layout->spans && (!in_view || *cached.layout->spans != span_digest(line))) {
-            if (in_view) {
-                repaint(line);
-            }
-            layout = layouts_.erase(layout);
-        } else {
+        if (cached.stale || !cached.layout->spans ||
+            (in_view && *cached.layout->spans == span_digest(line))) {
             ++layout;
+            continue;
+        }
+        if (in_view) {
+            repaint(line);
+        }
+        if (cached.layout->text.chunk_count() > 1) {
+            cached.stale = true;
+            ++layout;
+        } else {
+            layout = layouts_.erase(layout);
         }
     }
     if (!changed.isEmpty()) {
@@ -367,17 +359,22 @@ QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenThem
     return formats;
 }
 
-std::shared_ptr<const EditorView::LineLayout> EditorView::layout_line(std::size_t line) const {
+std::shared_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line) const {
     if (layout_version_ != document_->version()) {
         layouts_.clear();
         layout_version_ = document_->version();
     }
     const auto found = layouts_.find(line);
-    if (found != layouts_.end()) {
+    if (found != layouts_.end() && !found->second.stale) {
         found->second.used = ++layout_clock_;
         return found->second.layout;
     }
     auto layout = build_layout(line);
+    if (found != layouts_.end()) {
+        layout->text.keep_widths(found->second.layout->text, found->second.unchanged);
+        found->second = {layout, ++layout_clock_};
+        return layout;
+    }
     const std::size_t capacity = layout_capacity();
     if (layouts_.size() >= capacity) {
         std::vector<std::uint64_t> stamps;
@@ -413,8 +410,16 @@ void EditorView::update_layouts(const core::DocumentChange& change) {
         const std::size_t first = edit.range.start.line;
         const std::size_t last = edit.range.end.line;
         const std::size_t inserted = static_cast<std::size_t>(std::ranges::count(edit.text, '\n'));
+        // A long line keeps the widths before the edit, so that the text there does not move.
+        const auto edited = layouts_.find(first);
+        if (edited != layouts_.end() && edited->second.layout->text.chunk_count() > 1) {
+            edited->second.stale = true;
+            edited->second.unchanged = std::min(edited->second.unchanged, edit.range.start.column);
+        } else {
+            layouts_.erase(first);
+        }
         std::erase_if(layouts_, [&](const auto& entry) {
-            return entry.first >= first && entry.first <= last;
+            return entry.first > first && entry.first <= last;
         });
         if (inserted == last - first) {
             continue;
@@ -433,44 +438,33 @@ void EditorView::update_layouts(const core::DocumentChange& change) {
     }
 }
 
-std::shared_ptr<const EditorView::LineLayout> EditorView::build_layout(std::size_t line) const {
-    ++layouts_built_;
-    auto result = std::make_shared<LineLayout>();
-    result->text = to_qstring(document_->text().line(line));
-    if (result->text.size() > max_line_characters) {
-        result->text.truncate(max_line_characters);
-    }
+std::shared_ptr<EditorView::LineLayout> EditorView::build_layout(std::size_t line) const {
+    QString text = to_qstring(document_->text().line(line));
+    std::vector<int> control_columns;
     if (render_control_characters_) {
-        for (int i = 0; i < result->text.size(); ++i) {
-            const char16_t c = result->text[i].unicode();
+        // Through a pointer: the line can be long, and each access by index is checked.
+        QChar* const units = text.data();
+        for (int i = 0; i < text.size(); ++i) {
+            const char16_t c = units[i].unicode();
             if ((c < 0x20 && c != u'\t') || c == 0x7f) {
                 // The Control Pictures block has one symbol for each, as many columns as the
                 // character.
-                result->text[i] = QChar(c == 0x7f ? 0x2421 : 0x2400 + c);
-                result->control_columns.push_back(i);
+                units[i] = QChar(c == 0x7f ? 0x2421 : 0x2400 + c);
+                control_columns.push_back(i);
             }
         }
     }
-    QTextOption option;
-    option.setWrapMode(QTextOption::NoWrap);
-    option.setTabStopDistance(char_width_ * static_cast<qreal>(tab_size_));
-    result->layout.setText(result->text);
-    result->layout.setFont(font());
-    result->layout.setTextOption(option);
+    QList<QTextLayout::FormatRange> formats;
+    std::optional<std::size_t> spans;
     if (highlighter_ && colors_ && colors_->token_theme()) {
-        // Set before the layout, since only then do font styles such as bold and italic apply.
-        result->layout.setFormats(
-            syntax_formats(*colors_->token_theme(), line, result->text.size()));
-        result->spans = span_digest(line);
+        formats = syntax_formats(*colors_->token_theme(), line, text.size());
+        spans = span_digest(line);
     }
-    result->layout.beginLayout();
-    QTextLine text_line = result->layout.createLine();
-    if (text_line.isValid()) {
-        text_line.setLineWidth(1 << 24);
-        text_line.setPosition(QPointF(0, 0));
-    }
-    result->layout.endLayout();
-    return result;
+    const ChunkedLine::Style style{font(), char_width_ * static_cast<qreal>(tab_size_),
+                                   QFontMetricsF(font()).horizontalAdvance(QLatin1Char('M'))};
+    return std::make_shared<LineLayout>(
+        LineLayout{ChunkedLine(std::move(text), std::move(formats), style, &layouts_built_),
+                   std::move(control_columns), spans});
 }
 
 QRect EditorView::cursor_rect(std::size_t offset) const {
@@ -480,7 +474,7 @@ QRect EditorView::cursor_rect(std::size_t offset) const {
     const core::Text& text = document_->text();
     const core::Position position = text.position_at(offset);
     const auto layout = layout_line(position.line);
-    const int x = text_origin_x() + static_cast<int>(layout->x_of(position.column));
+    const int x = text_origin_x() + static_cast<int>(layout->text.x_of(position.column));
     const int y = static_cast<int>(position.line) * line_height_ - verticalScrollBar()->value();
     return QRect(x, y, 2, line_height_);
 }
@@ -494,7 +488,7 @@ std::size_t EditorView::offset_at(const QPoint& point) const {
     const std::size_t line =
         std::min<std::size_t>(static_cast<std::size_t>(y / line_height_), text.line_count() - 1);
     const auto layout = layout_line(line);
-    const std::size_t column = layout->column_at(point.x() - text_origin_x());
+    const std::size_t column = layout->text.column_at(point.x() - text_origin_x());
     return text.offset_at({line, column});
 }
 
@@ -523,8 +517,15 @@ void EditorView::ensure_cursor_visible() {
     }
 
     const auto layout = layout_line(position.line);
-    const int x = static_cast<int>(layout->x_of(position.column));
     const int available = viewport()->width() - gutter_width() - 2 * text_padding_;
+    // The parts of the line that are going to be on screen are laid out first, since their measured
+    // widths can move the caret.
+    const qreal estimate = layout->text.x_of(position.column);
+    layout->text.columns_between(estimate - available, estimate + available);
+    const int x = static_cast<int>(layout->text.x_of(position.column));
+    max_line_width_ =
+        std::max(max_line_width_, static_cast<int>(layout->text.width()) + char_width_);
+    update_scroll_bars();
     QScrollBar* horizontal = horizontalScrollBar();
     if (x < horizontal->value()) {
         horizontal->setValue(x);
@@ -953,8 +954,8 @@ void EditorView::select_column_to(const QPoint& viewport_point) {
     std::vector<core::Selection> ranges;
     for (std::size_t line = std::min(from, to); line <= std::max(from, to); ++line) {
         const auto layout = layout_line(line);
-        ranges.push_back({text.offset_at({line, layout->column_at(drag_origin_.x())}),
-                          text.offset_at({line, layout->column_at(point.x())})});
+        ranges.push_back({text.offset_at({line, layout->text.column_at(drag_origin_.x())}),
+                          text.offset_at({line, layout->text.column_at(point.x())})});
     }
     apply(controller_->select_ranges(std::move(ranges), to - std::min(from, to)));
 }
@@ -1150,25 +1151,24 @@ EditorView::Colors EditorView::current_colors() const {
             colors_->color("editorWhitespace.foreground")};
 }
 
-void EditorView::draw_whitespace(QPainter& painter, const LineLayout& layout,
-                                 std::span<const core::ColumnRange> selected, int origin_x, int y,
+void EditorView::draw_whitespace(QPainter& painter, LineLayout& layout,
+                                 std::span<const core::ColumnRange> selected,
+                                 std::pair<std::size_t, std::size_t> shown, int origin_x, int y,
                                  const QColor& color) const {
-    const std::u16string_view line(reinterpret_cast<const char16_t*>(layout.text.utf16()),
-                                   static_cast<std::size_t>(layout.text.size()));
+    const QString& text = layout.text.text();
+    const std::u16string_view line(reinterpret_cast<const char16_t*>(text.utf16()),
+                                   static_cast<std::size_t>(text.size()));
     const std::vector<std::size_t> columns =
-        core::whitespace_columns(line, render_whitespace_, selected);
-    // The columns are in the order of their x, so the first visible one is found by bisection. The
-    // marks of the whole line are found first and Qt takes time in proportion to the column to give
-    // its x, so the paint of a very long line costs time in proportion to the line, not to the part
-    // that is shown.
+        core::whitespace_columns(line, render_whitespace_, selected, shown.first, shown.second);
+    // The columns are in the order of their x, so the first visible one is found by bisection.
     const int left = gutter_width();
     const auto first =
         std::lower_bound(columns.begin(), columns.end(), left, [&](std::size_t column, int edge) {
-            return origin_x + static_cast<int>(layout.x_of(column + 1)) <= edge;
+            return origin_x + static_cast<int>(layout.text.x_of(column + 1)) <= edge;
         });
     painter.setPen(color);
     for (auto column = first; column != columns.end(); ++column) {
-        const int x = origin_x + static_cast<int>(layout.x_of(*column));
+        const int x = origin_x + static_cast<int>(layout.text.x_of(*column));
         if (x >= viewport()->width()) {
             break;
         }
@@ -1211,21 +1211,31 @@ void EditorView::paintEvent(QPaintEvent*) {
         const std::size_t line_begin = text.line_start(line);
         const std::size_t line_end = text.line_end(line);
         const std::size_t line_units = text.utf16_offset(line_begin);
+        // The part of the line that is on screen, which is all that formats are made for.
+        const qreal from_x = -origin_x;
+        const qreal to_x = viewport()->width() - origin_x;
+        const auto shown = layout->text.columns_between(from_x, to_x);
+        const std::size_t shown_begin = text.offset_at({line, shown.first});
+        const std::size_t shown_end = text.offset_at({line, shown.second});
 
         QList<QTextLayout::FormatRange> formats;
-        for (const int column : layout->control_columns) {
+        for (auto column =
+                 std::ranges::lower_bound(layout->control_columns, static_cast<int>(shown.first));
+             column != layout->control_columns.end() &&
+             static_cast<std::size_t>(*column) < shown.second;
+             ++column) {
             QTextCharFormat format;
             format.setBackground(control_background);
             format.setForeground(Qt::white);
-            formats.push_back({column, 1, format});
+            formats.push_back({*column, 1, format});
         }
         // Highlights go first so that a selection over a highlighted match is drawn on top.
         auto highlight = std::lower_bound(
-            highlights_.begin(), highlights_.end(), line_begin,
+            highlights_.begin(), highlights_.end(), shown_begin,
             [](const core::Match& match, std::size_t offset) { return match.end <= offset; });
-        for (; highlight != highlights_.end() && highlight->begin <= line_end; ++highlight) {
-            const std::size_t from = std::max(highlight->begin, line_begin);
-            const std::size_t to = std::min(highlight->end, line_end);
+        for (; highlight != highlights_.end() && highlight->begin <= shown_end; ++highlight) {
+            const std::size_t from = std::max(highlight->begin, shown_begin);
+            const std::size_t to = std::min(highlight->end, shown_end);
             if (from < to) {
                 QTextCharFormat format;
                 // The match the selection is on is the current one.
@@ -1234,15 +1244,12 @@ void EditorView::paintEvent(QPaintEvent*) {
                 format.setBackground(current ? colors.find_match : colors.find_highlight);
                 const int start_column = static_cast<int>(text.utf16_offset(from) - line_units);
                 const int end_column = static_cast<int>(text.utf16_offset(to) - line_units);
-                formats.push_back(
-                    {start_column,
-                     std::min(end_column, static_cast<int>(layout->size())) - start_column,
-                     format});
+                formats.push_back({start_column, end_column - start_column, format});
             }
         }
         for (const core::Selection& selection : selections) {
-            const std::size_t from = std::max(selection.start(), line_begin);
-            const std::size_t to = std::min(selection.end(), line_end);
+            const std::size_t from = std::max(selection.start(), shown_begin);
+            const std::size_t to = std::min(selection.end(), shown_end);
             if (from < to) {
                 QTextCharFormat format;
                 format.setBackground(selection_background);
@@ -1251,22 +1258,19 @@ void EditorView::paintEvent(QPaintEvent*) {
                 }
                 const int start_column = static_cast<int>(text.utf16_offset(from) - line_units);
                 const int end_column = static_cast<int>(text.utf16_offset(to) - line_units);
-                formats.push_back(
-                    {start_column,
-                     std::min(end_column, static_cast<int>(layout->size())) - start_column,
-                     format});
+                formats.push_back({start_column, end_column - start_column, format});
             }
             // A selection that continues past the line break shows a small block after the text.
             if (selection.start() <= line_end && selection.end() > line_end &&
                 line + 1 < text.line_count()) {
-                const int x = origin_x + static_cast<int>(layout->x_of(layout->size()));
+                const int x = origin_x + static_cast<int>(layout->text.width());
                 painter.fillRect(QRect(x, y, char_width_ / 2 + 2, line_height_),
                                  selection_background);
             }
         }
 
         painter.setPen(colors.foreground);
-        layout->layout.draw(&painter, QPointF(origin_x, y), formats);
+        layout->text.draw(painter, QPointF(origin_x, y), formats, from_x, to_x);
         if (render_whitespace_ != core::RenderWhitespace::none) {
             std::vector<core::ColumnRange> selected;
             if (render_whitespace_ == core::RenderWhitespace::selection) {
@@ -1279,9 +1283,9 @@ void EditorView::paintEvent(QPaintEvent*) {
                     }
                 }
             }
-            draw_whitespace(painter, *layout, selected, origin_x, y, colors.whitespace);
+            draw_whitespace(painter, *layout, selected, shown, origin_x, y, colors.whitespace);
         }
-        widest = std::max(widest, static_cast<int>(layout->x_of(layout->size())) + char_width_);
+        widest = std::max(widest, static_cast<int>(layout->text.width()) + char_width_);
 
         if (caret_visible_ && hasFocus()) {
             for (const core::Selection& selection : selections) {
@@ -1289,7 +1293,11 @@ void EditorView::paintEvent(QPaintEvent*) {
                     continue;
                 }
                 const std::size_t column = text.utf16_offset(selection.active) - line_units;
-                const int x = origin_x + static_cast<int>(layout->x_of(column));
+                // A caret off screen would only have the part it is in laid out for nothing.
+                if (column < shown.first || column > shown.second) {
+                    continue;
+                }
+                const int x = origin_x + static_cast<int>(layout->text.x_of(column));
                 painter.fillRect(QRect(x, y, 2, line_height_), colors.cursor);
                 if (!preedit_.isEmpty() &&
                     selection.active == document_->selections().primary().active) {

@@ -1,8 +1,10 @@
+#include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
@@ -1966,4 +1968,232 @@ TEST_F(LayoutCacheTest, AnEditAfterAnEditThroughAnotherViewIsShown) {
     caret_at(offset_of_line(10, 2));
     type("z");
     EXPECT_EQ(paint(), painted_afresh());
+}
+
+namespace {
+
+class LongLineTest : public LayoutCacheTest {
+protected:
+    // Words, tabs and wide characters, well past the length that one layout would be made for.
+    static std::string mixed_line(std::size_t words) {
+        std::string line;
+        for (std::size_t word = 0; word < words; ++word) {
+            line += word % 7 == 3 ? "\xe4\xb8\xad\xe6\x96\x87\t" : "word ";
+        }
+        return line;
+    }
+    // `e` with a combining accent, `pairs` times: two code units each, one glyph wide, so that the
+    // text measures half of what is estimated for it, whatever the fonts of the machine are.
+    static std::string narrow_line(std::size_t pairs) {
+        std::string line;
+        for (std::size_t pair = 0; pair < pairs; ++pair) {
+            line += "e\xcc\x81";
+        }
+        return line;
+    }
+
+    void caret_to(std::size_t offset) {
+        view_.select_range(core::Selection::caret(offset));
+    }
+    bool shows(std::size_t offset) {
+        const QRect rect = view_.cursor_rect(offset);
+        return rect.left() >= 0 && rect.right() <= view_.viewport()->width();
+    }
+    // The pixels that differ between two images in the cells of the columns [from, to) of the first
+    // line.
+    int changed_in(const QImage& before, const QImage& after, std::size_t from, std::size_t to) {
+        const int left = std::max(view_.cursor_rect(from).left(), 0);
+        const int right = std::min(view_.cursor_rect(to).left(), after.width());
+        int changed = 0;
+        for (int y = 0; y < view_.line_height(); ++y) {
+            for (int x = left; x < right; ++x) {
+                changed += before.pixel(x, y) != after.pixel(x, y) ? 1 : 0;
+            }
+        }
+        return changed;
+    }
+    // Paints the line from its start to `offset`, so that every part up to there is measured.
+    void paint_up_to(std::size_t offset) {
+        for (std::size_t column = 0; column < offset; column += 20) {
+            caret_to(column);
+            paint();
+        }
+        caret_to(offset);
+        paint();
+    }
+};
+
+} // namespace
+
+TEST_F(LongLineTest, ALineOfAMillionCharactersScrollsToItsEnd) {
+    constexpr std::size_t length = 1'000'000;
+    open(std::string(length, 'a'));
+    key(Qt::Key_End);
+    EXPECT_EQ(primary(), core::Selection::caret(length));
+    EXPECT_TRUE(shows(length));
+    paint();
+    const double expected = static_cast<double>(length) *
+                            QFontMetricsF(view_.font()).horizontalAdvance(QLatin1Char('a'));
+    EXPECT_NEAR(view_.horizontalScrollBar()->maximum(), expected, 0.001 * expected);
+
+    key(Qt::Key_Home);
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+    EXPECT_EQ(view_.horizontalScrollBar()->value(), 0);
+    key(Qt::Key_End, Qt::ShiftModifier);
+    EXPECT_EQ(primary(), (core::Selection{0, length}));
+    EXPECT_TRUE(shows(length));
+}
+
+TEST_F(LongLineTest, TypingMovingAndScrollingInALongLineLayOutAFewParts) {
+    open(std::string(1'000'000, 'a'));
+    caret_to(500'000);
+    paint();
+
+    EXPECT_LE(built_by([&] {
+                  type("x");
+                  paint();
+              }),
+              2U);
+    EXPECT_EQ(built_by([&] {
+                  key(Qt::Key_Right);
+                  paint();
+              }),
+              0U);
+    EXPECT_LE(built_by([&] {
+                  view_.horizontalScrollBar()->setValue(view_.horizontalScrollBar()->value() + 300);
+                  paint();
+              }),
+              1U);
+    EXPECT_LE(built_by([&] {
+                  view_.horizontalScrollBar()->setValue(view_.horizontalScrollBar()->maximum() / 4);
+                  paint();
+              }),
+              2U);
+}
+
+TEST_F(LongLineTest, ClickingFarAlongALinePutsTheCaretWhereClicked) {
+    open(mixed_line(4000));
+    for (const std::size_t column : {2047U, 2048U, 2049U, 4096U, 6000U, 12000U, 19000U}) {
+        // A column inside a surrogate pair or a character is not a place for a caret.
+        const std::size_t offset = offset_of_line(0, column);
+        caret_to(offset);
+        paint();
+        ASSERT_TRUE(shows(offset)) << column;
+        caret_to(offset > 40 ? offset_of_line(0, column - 5) : 0);
+        paint();
+        const QRect rect = view_.cursor_rect(offset);
+        mouse(QEvent::MouseButtonPress, QPoint(rect.left() + 1, rect.center().y()));
+        mouse(QEvent::MouseButtonRelease, QPoint(rect.left() + 1, rect.center().y()));
+        EXPECT_EQ(primary(), core::Selection::caret(offset)) << column;
+    }
+}
+
+TEST_F(LongLineTest, AJumpToTheEndOfALongLineThatWasNeverPaintedShowsTheCaret) {
+    std::string text;
+    for (int line = 0; line < 100; ++line) {
+        text += "short\n";
+    }
+    text += std::string(50'000, 'a');
+    open(text);
+    paint();
+    const std::size_t end = document_->text().size();
+    caret_to(end);
+    EXPECT_TRUE(shows(end));
+}
+
+TEST_F(LongLineTest, ALineNarrowerThanEstimatedKeepsTheCaretInViewAtItsEnd) {
+    open(narrow_line(10'000));
+    key(Qt::Key_End);
+    paint();
+    EXPECT_TRUE(shows(document_->text().size()));
+}
+
+TEST_F(LongLineTest, ACaretJustPastTheEndOfAPartStaysInViewWhenThePartBeforeItIsMeasured) {
+    open(narrow_line(4'000));
+    // The jump lands past two parts that nothing has measured, with one of them left of the caret.
+    const std::size_t offset = offset_of_line(0, 2 * anvil::ui::ChunkedLine::chunk_length + 6);
+    caret_to(offset);
+    paint();
+    EXPECT_TRUE(shows(offset));
+}
+
+TEST_F(LongLineTest, TypingInALineNarrowerThanEstimatedDoesNotMoveTheTextBeforeTheCaret) {
+    open(narrow_line(3'000));
+    const std::size_t offset = offset_of_line(0, 5'000);
+    paint_up_to(offset);
+    const QRect before = view_.cursor_rect(offset);
+    const int scrolled = view_.horizontalScrollBar()->value();
+
+    type("a");
+    paint();
+    // The view can scroll to keep the caret in view; the text stays where it was in the line.
+    EXPECT_EQ(view_.cursor_rect(offset).left() + view_.horizontalScrollBar()->value(),
+              before.left() + scrolled);
+}
+
+TEST_F(LongLineTest, SelectionsHighlightsAndMarksPaintFarAlongALine) {
+    std::string line(10'000, 'a');
+    line[6'000] = ' ';
+    line[6'010] = '\x01';
+    open(line);
+    settings_.render_whitespace = core::RenderWhitespace::all;
+    view_.apply_settings(settings_);
+
+    // A selection across the end of a part.
+    caret_to(4'096);
+    const QImage plain = paint();
+    set_selections({core::Selection{4'090, 4'102}});
+    const QImage selected = paint();
+    EXPECT_GT(changed_in(plain, selected, 4'090, 4'096), 50);
+    EXPECT_GT(changed_in(plain, selected, 4'096, 4'102), 50);
+
+    caret_to(8'192);
+    const QImage unmarked = paint();
+    view_.set_highlights({{8'186, 8'198}});
+    const QImage marked = paint();
+    EXPECT_GT(changed_in(unmarked, marked, 8'186, 8'192), 50);
+    EXPECT_GT(changed_in(unmarked, marked, 8'192, 8'198), 50);
+    view_.set_highlights({});
+
+    // Scrolling back to the caret puts it at the left edge, with the marks to its right.
+    caret_to(5'990);
+    const QImage with_marks = paint();
+    settings_.render_whitespace = core::RenderWhitespace::none;
+    settings_.render_control_characters = false;
+    view_.apply_settings(settings_);
+    const QImage without = paint();
+    EXPECT_GT(changed_in(without, with_marks, 6'000, 6'001), 0) << "the mark of the space";
+    EXPECT_GT(changed_in(without, with_marks, 6'010, 6'011), 20) << "the control character";
+}
+
+TEST_F(SyntaxHighlightingTest, ATokenAcrossTheEndOfAPartOfALongLineIsColoredOnBothSides) {
+    open(std::string(4'094, 'a') + "let" + std::string(3'000, 'a'));
+    highlight({{"let", "keyword.control.fake"}});
+    view_.select_range(core::Selection::caret(4'096));
+    const QImage image = painted();
+    EXPECT_GT(count_in(image, 4'094, 4'096, is_red), 5);
+    EXPECT_GT(count_in(image, 4'096, 4'097, is_red), 3);
+    EXPECT_EQ(count_in(image, 4'080, 4'094, is_red), 0);
+}
+
+TEST_F(SyntaxHighlightingTest, NewSpansKeepTheTextOfALongLineInPlace) {
+    // The pairs of `e` and a combining accent measure half of what is estimated for them.
+    std::string line = "let ";
+    for (int pair = 0; pair < 3'000; ++pair) {
+        line += "e\xcc\x81";
+    }
+    open(line);
+    highlight({{"let", "keyword.control.fake"}});
+    for (std::size_t column = 0; column < 5'000; column += 20) {
+        view_.select_range(core::Selection::caret(document_->text().offset_at({0, column})));
+        painted();
+    }
+    const std::size_t offset = document_->text().offset_at({0, 4'990});
+    const QRect before = view_.cursor_rect(offset);
+
+    highlighter_->set_scopes({{"let", "string.quoted.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    painted();
+    EXPECT_EQ(view_.cursor_rect(offset), before);
 }

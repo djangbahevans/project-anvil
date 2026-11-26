@@ -144,6 +144,7 @@ if(TARGET anvil_ui)
     ui/command_registry_test.cpp
     ui/default_keybindings_test.cpp
     ui/editor_area_test.cpp
+    ui/chunked_line_test.cpp
     ui/editor_view_test.cpp
     ui/explorer_view_test.cpp
     ui/find_bar_test.cpp
