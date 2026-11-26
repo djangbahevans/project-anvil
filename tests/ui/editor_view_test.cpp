@@ -1982,10 +1982,12 @@ protected:
         }
         return line;
     }
-    static std::string wide_line(std::size_t characters) {
+    // `e` with a combining accent, `pairs` times: two code units each, one glyph wide, so that the
+    // text measures half of what is estimated for it, whatever the fonts of the machine are.
+    static std::string narrow_line(std::size_t pairs) {
         std::string line;
-        for (std::size_t character = 0; character < characters; ++character) {
-            line += "\xe4\xb8\xad";
+        for (std::size_t pair = 0; pair < pairs; ++pair) {
+            line += "e\xcc\x81";
         }
         return line;
     }
@@ -2099,24 +2101,24 @@ TEST_F(LongLineTest, AJumpToTheEndOfALongLineThatWasNeverPaintedShowsTheCaret) {
     EXPECT_TRUE(shows(end));
 }
 
-TEST_F(LongLineTest, AWideCharacterLineKeepsTheCaretInViewAtItsEnd) {
-    open(wide_line(20'000));
+TEST_F(LongLineTest, ALineNarrowerThanEstimatedKeepsTheCaretInViewAtItsEnd) {
+    open(narrow_line(10'000));
     key(Qt::Key_End);
     paint();
     EXPECT_TRUE(shows(document_->text().size()));
 }
 
 TEST_F(LongLineTest, ACaretJustPastTheEndOfAPartStaysInViewWhenThePartBeforeItIsMeasured) {
-    open(wide_line(8'000));
+    open(narrow_line(4'000));
     // The jump lands past two parts that nothing has measured, with one of them left of the caret.
-    const std::size_t offset = offset_of_line(0, 2 * anvil::ui::ChunkedLine::chunk_length + 5);
+    const std::size_t offset = offset_of_line(0, 2 * anvil::ui::ChunkedLine::chunk_length + 6);
     caret_to(offset);
     paint();
     EXPECT_TRUE(shows(offset));
 }
 
-TEST_F(LongLineTest, TypingInAWideCharacterLineDoesNotMoveTheTextBeforeTheCaret) {
-    open(wide_line(6'000));
+TEST_F(LongLineTest, TypingInALineNarrowerThanEstimatedDoesNotMoveTheTextBeforeTheCaret) {
+    open(narrow_line(3'000));
     const std::size_t offset = offset_of_line(0, 5'000);
     paint_up_to(offset);
     const QRect before = view_.cursor_rect(offset);
@@ -2174,10 +2176,11 @@ TEST_F(SyntaxHighlightingTest, ATokenAcrossTheEndOfAPartOfALongLineIsColoredOnBo
     EXPECT_EQ(count_in(image, 4'080, 4'094, is_red), 0);
 }
 
-TEST_F(SyntaxHighlightingTest, NewSpansKeepTheTextOfALongWideLineInPlace) {
+TEST_F(SyntaxHighlightingTest, NewSpansKeepTheTextOfALongLineInPlace) {
+    // The pairs of `e` and a combining accent measure half of what is estimated for them.
     std::string line = "let ";
-    for (int character = 0; character < 6'000; ++character) {
-        line += "\xe4\xb8\xad";
+    for (int pair = 0; pair < 3'000; ++pair) {
+        line += "e\xcc\x81";
     }
     open(line);
     highlight({{"let", "keyword.control.fake"}});

@@ -22,6 +22,14 @@ ChunkedLine::Style style(const QString& family = QStringLiteral("monospace")) {
             metrics.horizontalAdvance(u'M')};
 }
 
+// A style whose estimates are half of what the characters measure, which does not depend on the
+// fonts of the machine as characters that are wider than others do.
+ChunkedLine::Style underestimating() {
+    ChunkedLine::Style result = style();
+    result.advance /= 2;
+    return result;
+}
+
 // The line laid out in one piece, which the chunks have to agree with.
 class WholeLine {
 public:
@@ -140,21 +148,20 @@ TEST(ChunkedLineTest, AMonospaceLineWithoutWideCharactersIsPlacedBeforeItIsLaidO
 }
 
 TEST(ChunkedLineTest, TheWidthOfALineOfOneChunkIsMeasured) {
-    const QString text(40, QChar(0x4E2D));
-    ChunkedLine line(text, {}, style());
+    const QString text(40, u'a');
+    ChunkedLine line(text, {}, underestimating());
     EXPECT_NEAR(line.width(), WholeLine(text, style()).width(), 0.5);
 }
 
 TEST(ChunkedLineTest, APointInALineThatIsWiderThanEstimatedFindsItsColumn) {
-    const QString text(200, QChar(0x4E2D));
+    const QString text(200, u'a');
     const WholeLine whole(text, style());
-    ASSERT_GT(whole.width(), 1.3 * 200 * style().advance);
-    ChunkedLine line(text, {}, style(), nullptr, 10);
+    ChunkedLine line(text, {}, underestimating(), nullptr, 10);
     line.columns_between(0, everything);
     EXPECT_EQ(line.column_at(whole.x_of(150) + 1), 150U);
 
     // Nothing is laid out here, so the point is beyond the estimate of the chunk it starts in.
-    ChunkedLine fresh(text, {}, style(), nullptr, 10);
+    ChunkedLine fresh(text, {}, underestimating(), nullptr, 10);
     const qreal x = fresh.x_of(20) + 1;
     EXPECT_EQ(fresh.column_at(x), 20U);
 }
@@ -227,28 +234,28 @@ TEST(ChunkedLineTest, TheLayoutsOfALineAreBounded) {
 }
 
 TEST(ChunkedLineTest, TheWidthsBeforeAnEditAreKept) {
-    const QString text(300, QChar(0x4E2D));
-    ChunkedLine earlier(text, {}, style(), nullptr, 20);
+    const QString text(300, u'a');
+    ChunkedLine earlier(text, {}, underestimating(), nullptr, 20);
     earlier.columns_between(0, everything);
     const qreal before_edit = earlier.x_of(100);
-    const qreal estimate = ChunkedLine(text, {}, style(), nullptr, 20).x_of(100);
+    const qreal estimate = ChunkedLine(text, {}, underestimating(), nullptr, 20).x_of(100);
     ASSERT_GT(before_edit, estimate * 1.3);
 
     QString edited = text;
     edited.insert(205, u'x');
-    ChunkedLine kept(edited, {}, style(), nullptr, 20);
+    ChunkedLine kept(edited, {}, underestimating(), nullptr, 20);
     kept.keep_widths(earlier, 205);
     EXPECT_NEAR(kept.x_of(100), before_edit, 0.5);
 
-    ChunkedLine none(edited, {}, style(), nullptr, 20);
+    ChunkedLine none(edited, {}, underestimating(), nullptr, 20);
     none.keep_widths(earlier, 0);
     EXPECT_NEAR(none.x_of(100), estimate, 0.5);
 
     // The chunk that the edit is in is not the earlier one.
-    ChunkedLine partly(edited, {}, style(), nullptr, 20);
+    ChunkedLine partly(edited, {}, underestimating(), nullptr, 20);
     partly.keep_widths(earlier, 90);
     EXPECT_NEAR(partly.x_of(100) - partly.x_of(80),
-                ChunkedLine(text, {}, style(), nullptr, 20).x_of(20), 0.5);
+                ChunkedLine(text, {}, underestimating(), nullptr, 20).x_of(20), 0.5);
 }
 
 TEST(ChunkedLineTest, DrawsWhatASingleLayoutDraws) {
