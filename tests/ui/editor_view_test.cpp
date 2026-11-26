@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <functional>
 #include <gtest/gtest.h>
 #include <limits>
 #include <map>
@@ -1488,6 +1489,7 @@ TEST_F(SyntaxHighlightingTest,
         open(text);
         highlight({{"let", "keyword.control.fake"}});
         highlighter_->clear_asked();
+        view_.set_highlighter(highlighter_); // drops the layouts, so the paint asks for the spans
         view_.viewport()->grab();
         std::map<std::size_t, int> times;
         for (const std::size_t line : highlighter_->asked_) {
@@ -1515,6 +1517,42 @@ TEST_F(SyntaxHighlightingTest,
     const auto long_line = asked_while_painting(one_long_line);
     EXPECT_EQ(long_line.size(), 1U);
     EXPECT_LE(long_line.at(0), 2);
+}
+
+TEST_F(SyntaxHighlightingTest, SpansThatChangeOnOneLineLayThatLineOutAgain) {
+    open("let a\nlet b\nlet c");
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    const std::size_t before = view_.layouts_built();
+
+    highlighter_->set_scopes({{"let", "keyword.control.fake"}, {"b", "string.quoted.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    const QImage image = painted();
+
+    EXPECT_EQ(view_.layouts_built() - before, 1U);
+    const std::size_t b = document_->text().offset_at({1, 4});
+    const QRect cell = view_.cursor_rect(b);
+    int green = 0;
+    for (int y = cell.y(); y < cell.y() + view_.line_height(); ++y) {
+        for (int x = cell.x(); x < cell.x() + view_.char_width(); ++x) {
+            green += is_green(image.pixelColor(x, y)) ? 1 : 0;
+        }
+    }
+    EXPECT_GT(green, 3);
+}
+
+TEST_F(SyntaxHighlightingTest, ANewTokenThemeColorsTheCachedLayoutsAgain) {
+    open("let name = 'hi';");
+    highlight({{"let", "keyword.control.fake"}});
+    EXPECT_GT(count_in(painted(), 0, 3, is_red), 10);
+
+    colors_.set_token_theme(token_theme_of(R"j([
+        {"settings": {"foreground": "#d4d4d4"}},
+        {"scope": "keyword.control", "settings": {"foreground": "#00ff00"}}])j"));
+    const QImage image = painted();
+    EXPECT_GT(count_in(image, 0, 3, is_green), 10);
+    EXPECT_EQ(count_in(image, 0, 3, is_red), 0);
 }
 
 namespace {
@@ -1647,3 +1685,199 @@ TEST_F(MouseSelectionTest, WithoutColumnSelectionAPlainDragSelectsAStreamOfText)
 }
 
 } // namespace
+
+namespace {
+
+class LayoutCacheTest : public EditorViewTest {
+protected:
+    void SetUp() override {
+        flash_time_ = QApplication::cursorFlashTime();
+        QApplication::setCursorFlashTime(0);
+    }
+    void TearDown() override {
+        QApplication::setCursorFlashTime(flash_time_);
+    }
+
+    static std::string numbered(int count) {
+        std::string text;
+        for (int line = 0; line < count; ++line) {
+            text += std::to_string(line) + "\tend of the line\n";
+        }
+        return text;
+    }
+
+    QImage paint() {
+        return view_.viewport()->grab().toImage();
+    }
+    // The view painted with nothing cached.
+    QImage painted_afresh() {
+        view_.document_changed_elsewhere();
+        return paint();
+    }
+    std::size_t built_by(const std::function<void()>& action) {
+        const std::size_t before = view_.layouts_built();
+        action();
+        return view_.layouts_built() - before;
+    }
+    std::size_t offset_of_line(std::size_t line, std::size_t column = 0) {
+        return document_->text().offset_at({line, column});
+    }
+    void caret_at(std::size_t offset) {
+        set_selections({core::Selection::caret(offset)});
+    }
+    std::size_t lines_in_view() {
+        return static_cast<std::size_t>(view_.viewport()->height() / view_.line_height()) + 1;
+    }
+
+    int flash_time_ = 0;
+};
+
+} // namespace
+
+TEST_F(LayoutCacheTest, TheFirstPaintLaysOutTheLinesInViewAndAnotherPaintNoMore) {
+    open(numbered(1000));
+    EXPECT_GE(view_.layouts_built(), lines_in_view() - 1);
+    EXPECT_LE(view_.layouts_built(), lines_in_view() + 1);
+    EXPECT_EQ(built_by([&] { paint(); }), 0U);
+}
+
+TEST_F(LayoutCacheTest, TheCaretAndTheMouseUseTheLayoutsOfThePaintedLines) {
+    open(numbered(1000));
+    paint();
+    EXPECT_EQ(built_by([&] {
+                  view_.cursor_rect(offset_of_line(3, 5));
+                  click(offset_of_line(5, 2));
+                  view_.offset_at(QPoint(60, 3 * view_.line_height()));
+              }),
+              0U);
+}
+
+TEST_F(LayoutCacheTest, ScrollingByOneLineLaysOutOneLine) {
+    open(numbered(1000));
+    paint();
+    EXPECT_EQ(built_by([&] {
+                  view_.verticalScrollBar()->setValue(view_.line_height());
+                  paint();
+              }),
+              1U);
+}
+
+TEST_F(LayoutCacheTest, TypingLaysOutTheLineTypedOnAndNoOther) {
+    open(numbered(100));
+    caret_at(offset_of_line(10, 4));
+    paint();
+    EXPECT_EQ(built_by([&] {
+                  type("x");
+                  paint();
+              }),
+              1U);
+}
+
+TEST_F(LayoutCacheTest, ALineBreakAndAJoinMoveTheLayoutsBelowTheEdit) {
+    open(numbered(100));
+    caret_at(offset_of_line(10, 4));
+    paint();
+
+    EXPECT_EQ(built_by([&] {
+                  key(Qt::Key_Return);
+                  paint();
+              }),
+              2U);
+    EXPECT_EQ(paint(), painted_afresh());
+
+    // The joined line, and the line that comes into view at the bottom.
+    EXPECT_EQ(built_by([&] {
+                  key(Qt::Key_Backspace);
+                  paint();
+              }),
+              2U);
+    EXPECT_EQ(paint(), painted_afresh());
+}
+
+TEST_F(LayoutCacheTest, CachedLayoutsPaintWhatNewOnesWould) {
+    open(numbered(100));
+    paint();
+    const auto expect_same = [&](const char* what) {
+        EXPECT_EQ(paint(), painted_afresh()) << what;
+    };
+
+    set_selections({core::Selection::caret(offset_of_line(2, 3)),
+                    core::Selection::caret(offset_of_line(5, 3)),
+                    core::Selection::caret(offset_of_line(9, 3))});
+    paint();
+    type("ab");
+    expect_same("typing with several carets");
+
+    view_.replace_ranges({{offset_of_line(4, 2), offset_of_line(4, 2), "one\ntwo\nthree"}});
+    expect_same("a replacement that adds lines");
+
+    view_.replace_ranges({{offset_of_line(1, 2), offset_of_line(6, 2), ""}});
+    expect_same("a replacement that joins lines");
+
+    view_.replace_ranges({{offset_of_line(8, 1), offset_of_line(9, 1), "x"},
+                          {offset_of_line(2, 0), offset_of_line(2, 0), "a\nb\n"}});
+    expect_same("two replacements");
+
+    view_.undo();
+    expect_same("undo");
+    view_.undo();
+    expect_same("undo again");
+    view_.redo();
+    expect_same("redo");
+}
+
+TEST_F(LayoutCacheTest, AnEditThroughAnotherViewOfTheDocumentIsShown) {
+    open(numbered(100));
+    paint();
+    EditorView other;
+    other.resize(640, 320);
+    other.set_document(document_);
+    other.replace_ranges({{offset_of_line(3, 0), offset_of_line(3, 0), "inserted\n"}});
+
+    EXPECT_EQ(paint(), painted_afresh());
+}
+
+TEST_F(LayoutCacheTest, TheLayoutsAreMadeAgainWhenTheTabSizeOrTheFontChanges) {
+    open(numbered(100));
+    core::EditorSettings settings;
+    settings.font_family = "monospace";
+    settings.font_size = 12;
+    view_.apply_settings(settings);
+    const QImage narrow = paint();
+
+    settings.tab_size = 8;
+    view_.apply_settings(settings);
+    EXPECT_NE(paint(), narrow);
+    EXPECT_EQ(paint(), painted_afresh());
+
+    settings.font_size = 16;
+    view_.apply_settings(settings);
+    EXPECT_EQ(paint(), painted_afresh());
+    EXPECT_GT(built_by([&] {
+                  view_.setFont(QFont("monospace", 9));
+                  paint();
+              }),
+              0U);
+}
+
+TEST_F(LayoutCacheTest, TheControlCharacterSettingLaysTheLinesOutAgain) {
+    open("a\x01"
+         "b\nsecond");
+    core::EditorSettings settings;
+    settings.render_control_characters = true;
+    view_.apply_settings(settings);
+    const QImage shown = paint();
+    settings.render_control_characters = false;
+    view_.apply_settings(settings);
+    EXPECT_NE(paint(), shown);
+}
+
+TEST_F(LayoutCacheTest, OnlyTheMostRecentlyUsedLayoutsAreKept) {
+    open(numbered(3000));
+    paint();
+    for (std::size_t line = 0; line < 3000; ++line) {
+        view_.cursor_rect(offset_of_line(line));
+    }
+    EXPECT_EQ(built_by([&] { view_.cursor_rect(offset_of_line(2999)); }), 0U);
+    EXPECT_EQ(built_by([&] { view_.cursor_rect(offset_of_line(0)); }), 1U);
+}

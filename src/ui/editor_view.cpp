@@ -131,6 +131,8 @@ struct EditorView::LineLayout {
     QTextLayout layout;
     // The UTF-16 columns of the control characters, which `text` shows as symbols.
     std::vector<int> control_columns;
+    // The digest of the highlighter's spans that the formats were made from, when there are any.
+    std::optional<std::size_t> spans;
 
     // The number of UTF-16 code units shown.
     std::size_t size() const {
@@ -183,6 +185,7 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     // the same text in view when the metrics change.
     const int vertical = verticalScrollBar()->value();
     const int horizontal = horizontalScrollBar()->value();
+    clear_layouts();
     const int first_line = vertical / line_height_;
     const int first_column = horizontal / char_width_;
     const int previous_line_height = line_height_;
@@ -223,7 +226,7 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     controller_ = document_ ? std::make_unique<core::EditController>(*document_) : nullptr;
     max_line_width_ = 0;
     highlights_.clear();
-    laid_out_spans_.clear();
+    clear_layouts();
     verticalScrollBar()->setValue(0);
     horizontalScrollBar()->setValue(0);
     update_scroll_bars();
@@ -232,6 +235,7 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
 }
 
 void EditorView::document_changed_elsewhere() {
+    clear_layouts();
     update_scroll_bars();
     viewport()->update();
     emit content_changed();
@@ -260,7 +264,7 @@ void EditorView::replace_ranges(std::vector<core::Edit> edits,
 
 void EditorView::set_highlighter(std::shared_ptr<const core::Highlighter> highlighter) {
     highlighter_ = std::move(highlighter);
-    laid_out_spans_.clear();
+    clear_layouts();
     painted_highlighter_version_ = highlighter_ ? highlighter_->version() : 0;
     viewport()->update();
 }
@@ -280,15 +284,28 @@ void EditorView::refresh_highlighting() {
         line_count, static_cast<std::size_t>((verticalScrollBar()->value() + viewport()->height()) /
                                              line_height_) +
                         1);
-    std::erase_if(laid_out_spans_, [&](const auto& entry) {
-        return entry.first + 1 < first || entry.first > last + 1;
-    });
     QRegion changed;
+    const auto repaint = [&](std::size_t line) {
+        const int y = static_cast<int>(line) * line_height_ - verticalScrollBar()->value();
+        changed += QRect(0, y, viewport()->width(), line_height_);
+    };
+    // Only the lines in view are asked for spans; a layout made from spans elsewhere is dropped
+    // and made again when it comes into view.
+    for (auto layout = layouts_.begin(); layout != layouts_.end();) {
+        const auto& [line, cached] = *layout;
+        const bool in_view = line >= first && line < last;
+        if (cached.layout->spans && (!in_view || *cached.layout->spans != span_digest(line))) {
+            if (in_view) {
+                repaint(line);
+            }
+            layout = layouts_.erase(layout);
+        } else {
+            ++layout;
+        }
+    }
     for (std::size_t line = first; line < last; ++line) {
-        const auto known = laid_out_spans_.find(line);
-        if (known == laid_out_spans_.end() || known->second != span_digest(line)) {
-            const int y = static_cast<int>(line) * line_height_ - verticalScrollBar()->value();
-            changed += QRect(0, y, viewport()->width(), line_height_);
+        if (!layouts_.contains(line)) {
+            repaint(line);
         }
     }
     if (!changed.isEmpty()) {
@@ -327,7 +344,6 @@ QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenThem
                                                            std::size_t line, qsizetype size) const {
     QList<QTextLayout::FormatRange> formats;
     const std::string_view root = highlighter_->root_scope();
-    laid_out_spans_[line] = span_digest(line);
     for (const core::HighlightSpan& span : highlighter_->spans(line)) {
         const qsizetype begin = static_cast<qsizetype>(span.begin);
         const qsizetype end = std::min(static_cast<qsizetype>(span.end), size);
@@ -357,8 +373,75 @@ QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenThem
     return formats;
 }
 
-std::unique_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line) const {
-    auto result = std::make_unique<LineLayout>();
+std::shared_ptr<const EditorView::LineLayout> EditorView::layout_line(std::size_t line) const {
+    if (layout_version_ != document_->version()) {
+        layouts_.clear();
+        layout_version_ = document_->version();
+    }
+    const auto found = layouts_.find(line);
+    if (found != layouts_.end()) {
+        found->second.used = ++layout_clock_;
+        return found->second.layout;
+    }
+    auto layout = build_layout(line);
+    const std::size_t capacity = layout_capacity();
+    if (layouts_.size() >= capacity) {
+        std::vector<std::uint64_t> stamps;
+        stamps.reserve(layouts_.size());
+        for (const auto& entry : layouts_) {
+            stamps.push_back(entry.second.used);
+        }
+        const auto quarter = stamps.begin() + static_cast<std::ptrdiff_t>(stamps.size() / 4);
+        std::nth_element(stamps.begin(), quarter, stamps.end());
+        std::erase_if(layouts_, [&](const auto& entry) { return entry.second.used < *quarter; });
+    }
+    layouts_[line] = {layout, ++layout_clock_};
+    return layout;
+}
+
+std::size_t EditorView::layout_capacity() const {
+    const std::size_t in_view = static_cast<std::size_t>(viewport()->height() / line_height_ + 2);
+    return std::max<std::size_t>(256, 2 * in_view);
+}
+
+void EditorView::clear_layouts() {
+    layouts_.clear();
+}
+
+void EditorView::update_layouts(const core::DocumentChange& change) {
+    if (layout_version_ + 1 != change.version) {
+        layouts_.clear();
+        layout_version_ = change.version;
+        return;
+    }
+    layout_version_ = change.version;
+    for (const core::TextChange& edit : change.changes) {
+        const std::size_t first = edit.range.start.line;
+        const std::size_t last = edit.range.end.line;
+        const std::size_t inserted = static_cast<std::size_t>(std::ranges::count(edit.text, '\n'));
+        std::erase_if(layouts_, [&](const auto& entry) {
+            return entry.first >= first && entry.first <= last;
+        });
+        if (inserted == last - first) {
+            continue;
+        }
+        std::vector<std::pair<std::size_t, CachedLayout>> moved;
+        for (auto it = layouts_.begin(); it != layouts_.end();) {
+            if (it->first > last) {
+                moved.emplace_back(it->first - last + first + inserted, std::move(it->second));
+                it = layouts_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        layouts_.insert(std::make_move_iterator(moved.begin()),
+                        std::make_move_iterator(moved.end()));
+    }
+}
+
+std::shared_ptr<const EditorView::LineLayout> EditorView::build_layout(std::size_t line) const {
+    ++layouts_built_;
+    auto result = std::make_shared<LineLayout>();
     result->text = to_qstring(document_->text().line(line));
     if (result->text.size() > max_line_characters) {
         result->text.truncate(max_line_characters);
@@ -384,6 +467,7 @@ std::unique_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line
         // Set before the layout, since only then do font styles such as bold and italic apply.
         result->layout.setFormats(
             syntax_formats(*colors_->token_theme(), line, result->text.size()));
+        result->spans = span_digest(line);
     }
     result->layout.beginLayout();
     QTextLine text_line = result->layout.createLine();
@@ -467,6 +551,7 @@ void EditorView::apply(const core::EditOutcome& outcome) {
         return;
     }
     if (outcome.change) {
+        update_layouts(*outcome.change);
         update_scroll_bars();
     }
     ensure_cursor_visible();
@@ -1002,6 +1087,7 @@ void EditorView::focusOutEvent(QFocusEvent* event) {
 void EditorView::changeEvent(QEvent* event) {
     QAbstractScrollArea::changeEvent(event);
     if (event->type() == QEvent::FontChange) {
+        clear_layouts();
         update_metrics();
         verticalScrollBar()->setSingleStep(line_height_);
         horizontalScrollBar()->setSingleStep(char_width_ * 4);
@@ -1028,9 +1114,12 @@ void EditorView::set_colors(const WorkbenchColors* colors) {
     QObject::disconnect(colors_connection_);
     colors_ = colors;
     if (colors_) {
-        colors_connection_ =
-            connect(colors_, &WorkbenchColors::changed, this, [this] { viewport()->update(); });
+        colors_connection_ = connect(colors_, &WorkbenchColors::changed, this, [this] {
+            clear_layouts();
+            viewport()->update();
+        });
     }
+    clear_layouts();
     viewport()->update();
 }
 
