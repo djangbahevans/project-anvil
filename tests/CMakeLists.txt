@@ -45,6 +45,8 @@ add_executable(anvil_core_tests
   core/when_expression_test.cpp
   core/whitespace_test.cpp
   core/visible_column_test.cpp
+  core/line_breaks_test.cpp
+  core/row_map_test.cpp
   core/workspace_test.cpp
 )
 target_link_libraries(anvil_core_tests PRIVATE anvil::core GTest::gtest_main anvil_compile_options)

@@ -37,6 +37,13 @@ Anvil includes the following material from other projects. Each keeps its own li
 - **Copyright:** Copyright (c) Microsoft Corporation.
 - **License:** MIT. The text is in `resources/themes/LICENSE-vscode.txt`.
 
+## Visual Studio Code line breaking
+
+- **What:** the rules of `src/core/line_breaks.cpp` and its two lists of break characters, ported from `src/vs/editor/common/viewModel/monospaceLineBreaksComputer.ts` and the defaults in `editorOptions.ts`, and the cases in `tests/core/data/line_break_cases.json` that record where it breaks lines.
+- **From:** Visual Studio Code (https://github.com/microsoft/vscode), at the release pinned in `scripts/fetch-vscode.sh`.
+- **Copyright:** Copyright (c) Microsoft Corporation.
+- **License:** MIT. The text is in `resources/themes/LICENSE-vscode.txt`.
+
 ## tree-sitter
 
 - **What:** the runtime library (`lib/src`, `lib/include`), compiled into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository. The runtime includes a few headers of ICU in `lib/src/unicode`, (Copyright (c) 1991-2019 Unicode, Inc.) under the Unicode license that the `LICENSE` file next to them holds.

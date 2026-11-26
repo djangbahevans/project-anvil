@@ -13,6 +13,11 @@ CharClass classify(char32_t c) {
     return CharClass::punctuation;
 }
 
+bool is_full_width(char32_t c) {
+    return (c >= 0x2E80 && c <= 0xD7AF) || (c >= 0xF900 && c <= 0xFAFF) ||
+           (c >= 0xFF01 && c <= 0xFF5E) || (c >= 0xFFE0 && c <= 0xFFE6);
+}
+
 char32_t decode_code_point(std::string_view utf8, std::size_t offset) {
     const auto lead = static_cast<unsigned char>(utf8[offset]);
     if (lead < 0x80) {
