@@ -45,6 +45,9 @@ public:
     // A value that the store has already is not a change: it is not written, and so does not
     // replace what another process wrote.
     void set(StateScope scope, std::string_view key, nlohmann::json value);
+    // As `set`, but written even when the store has the value: for one that says what this
+    // process did last, which another process may have replaced since it was read.
+    void overwrite(StateScope scope, std::string_view key, nlohmann::json value);
 
     // Writes the values that were set. Those of a file that cannot be written stay for the next
     // write, and a file that cannot be read is not replaced.

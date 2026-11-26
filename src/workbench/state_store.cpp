@@ -80,6 +80,11 @@ void StateStore::set(StateScope scope, std::string_view key, nlohmann::json valu
     if (found != file.values.end() && *found == value) {
         return;
     }
+    overwrite(scope, key, std::move(value));
+}
+
+void StateStore::overwrite(StateScope scope, std::string_view key, nlohmann::json value) {
+    File& file = scope == StateScope::global ? global_ : workspace_;
     file.values[std::string(key)] = std::move(value);
     file.pending.emplace(key);
 }
