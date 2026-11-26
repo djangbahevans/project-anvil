@@ -98,6 +98,18 @@ QString display_name(const core::Uri& uri) {
     return QString::fromStdString(uri.path);
 }
 
+std::optional<QuickPickIcon> quick_pick_icon(const SetiIcon& icon) {
+    const QString family = seti_font_family();
+    if (family.isEmpty()) {
+        return std::nullopt;
+    }
+    return QuickPickIcon{
+        .font_family = family,
+        .dark = {icon.dark.code, QColor::fromRgba(icon.dark.color)},
+        .light = {icon.light.code, QColor::fromRgba(icon.light.color)},
+    };
+}
+
 } // namespace
 
 // A close operation, which the closed editors of one operation, such as Close Others, are batched
@@ -189,6 +201,8 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     connect(palette_->filter_field(), &QLineEdit::textChanged, this,
             &MainWindow::follow_quick_access_text);
     quick_open_ = std::make_unique<QuickOpen>(*palette_);
+    quick_open_->set_icon_source(
+        [this](const core::Uri& uri) { return quick_pick_icon(file_icon_of(uri)); });
     connect(quick_open_.get(), &QuickOpen::chosen, this, &MainWindow::open_chosen);
     connect(quick_open_.get(), &QuickOpen::failed, this,
             [this](const QString& message) { status_bar_->show_message(message, 15000); });
@@ -528,8 +542,9 @@ void MainWindow::register_explorer() {
         connect(view, &ExplorerView::watch_problem, this,
                 [this](const QString& message) { status_bar_->show_message(message, 15000); });
         view->set_zoom(&zoom_);
-        view->set_file_language(
-            [this](const std::filesystem::path& path) { return language_of_file(path); });
+        view->set_file_language([this](const std::filesystem::path& path) {
+            return language_for_icon(core::Uri::file(path));
+        });
         view->set_unsaved_changes_check(
             [this](const std::filesystem::path& path) { return has_unsaved_changes_within(path); });
         view->set_excludes(file_excludes_);
@@ -951,7 +966,7 @@ void MainWindow::remember_shown(const core::Uri& uri) {
     }
 }
 
-QuickOpenEntry MainWindow::quick_open_entry(const core::Uri& uri) const {
+QuickOpenEntry MainWindow::quick_open_entry(const core::Uri& uri) {
     QuickOpenEntry entry{.uri = uri};
     const auto path = uri.file_path();
     if (!path) {
@@ -971,7 +986,7 @@ QuickOpenEntry MainWindow::quick_open_entry(const core::Uri& uri) const {
     return entry;
 }
 
-std::vector<QuickOpenEntry> MainWindow::recent_entries(bool open_only) const {
+std::vector<QuickOpenEntry> MainWindow::recent_entries(bool open_only) {
     std::vector<QuickOpenEntry> entries;
     std::set<core::Uri> listed;
     for (const core::Uri& uri : recent_documents_) {
@@ -1094,8 +1109,7 @@ std::string MainWindow::resolve_language(const core::Uri& uri, std::string_view 
     return languages_.language_for(file ? file->generic_string() : uri.path, first_line);
 }
 
-std::string MainWindow::language_of_file(const std::filesystem::path& path) {
-    const core::Uri uri = core::Uri::file(path);
+std::string MainWindow::language_for_icon(const core::Uri& uri) {
     if (documents_.contains(uri)) {
         if (const std::string& id = language_of_document(uri).id;
             id != core::LanguageRegistry::plaintext_id) {
@@ -1103,6 +1117,15 @@ std::string MainWindow::language_of_file(const std::filesystem::path& path) {
         }
     }
     return resolve_language(uri, {});
+}
+
+SetiIcon MainWindow::file_icon_of(const core::Uri& uri) {
+    const auto path = uri.file_path();
+    const std::string name = path ? path->filename().string() : uri.path;
+    if (const std::optional<SetiIcon> icon = seti_icon_by_name(name)) {
+        return *icon;
+    }
+    return seti_file_icon(name, language_for_icon(uri));
 }
 
 void MainWindow::refresh_file_icons() {
@@ -1143,6 +1166,9 @@ void MainWindow::refresh_document_languages() {
         const std::string id = resolve_language(uri, document->text().line(0));
         bridge_.language_changed(uri, id);
         document_languages_.emplace(uri, describe_language(id));
+    }
+    for (const auto& [uri, document] : documents_) {
+        update_document(uri);
     }
     area_->refresh_highlighters();
     update_status();
@@ -1277,7 +1303,6 @@ std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current
     });
     std::vector<QuickPickItem> items;
     ids.clear();
-    const QString icon_font = seti_font_family();
     for (Named& language : languages) {
         const QString id = QString::fromStdString(language.id);
         items.push_back({language.name,
@@ -1286,14 +1311,7 @@ std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current
                          {},
                          {},
                          false});
-        if (!icon_font.isEmpty()) {
-            const SetiIcon icon = seti_icon(language.id);
-            items.back().icon = QuickPickIcon{
-                .font_family = icon_font,
-                .dark = {icon.dark.code, QColor::fromRgba(icon.dark.color)},
-                .light = {icon.light.code, QColor::fromRgba(icon.light.color)},
-            };
-        }
+        items.back().icon = quick_pick_icon(seti_icon(language.id));
         ids.push_back(std::move(language.id));
     }
     return items;
@@ -1307,6 +1325,7 @@ void MainWindow::choose_language(const core::Uri& uri, const std::string& id) {
     document_languages_.insert_or_assign(uri, describe_language(id));
     bridge_.language_changed(uri, id);
     area_->refresh_highlighters();
+    update_document(uri);
     refresh_file_icons();
     update_status();
 }
@@ -1321,6 +1340,7 @@ void MainWindow::auto_detect_language(const core::Uri& uri) {
     document_languages_.insert_or_assign(uri, describe_language(id));
     bridge_.language_changed(uri, id);
     area_->refresh_highlighters();
+    update_document(uri);
     refresh_file_icons();
     update_status();
 }
@@ -2074,13 +2094,26 @@ std::optional<core::Uri> MainWindow::uri_of(const std::shared_ptr<core::Document
     return std::nullopt;
 }
 
-TabStrip::Tab MainWindow::tab_info(const core::Uri& uri) const {
+SetiIcon MainWindow::tab_icon(const core::Uri& uri) {
+    if (!documents_.contains(uri)) {
+        return file_icon_of(uri);
+    }
+    language_of_document(uri);
+    DocumentLanguage& language = document_languages_.find(uri)->second;
+    if (!language.icon) {
+        language.icon = file_icon_of(uri);
+    }
+    return *language.icon;
+}
+
+TabStrip::Tab MainWindow::tab_info(const core::Uri& uri) {
     const auto path = uri.file_path();
     const auto found = documents_.find(uri);
     return {.title = display_name(uri),
             .tooltip = QString::fromStdString(path ? path->string() : uri.to_string()),
             .dirty = found != documents_.end() && found->second->is_dirty(),
-            .has_path = path.has_value()};
+            .has_path = path.has_value(),
+            .icon = tab_icon(uri)};
 }
 
 void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group, core::Text text) {

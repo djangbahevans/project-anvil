@@ -11994,3 +11994,139 @@ TEST_F(ExplorerIconWindowTest, AChangeOfTheFileAssociationsPaintsTheIconsAgain) 
     EXPECT_TRUE(wait_until([&] { return paints.count > 0; }));
     explorer_->tree()->viewport()->removeEventFilter(&paints);
 }
+
+namespace {
+
+class FileIconWindowTest : public QuickOpenWindowTest {
+protected:
+    void SetUp() override {
+        QuickOpenWindowTest::SetUp();
+        for (const char* name : {"main.py", "readme", "data.zzz"}) {
+            EXPECT_TRUE(platform::write_file(project() / name, "x").has_value());
+        }
+        files_ = {"main.py", "readme", "data.zzz", "src/main.cpp"};
+        settings_file_ = write("settings.json", "{}");
+    }
+    // The icon of the tab with the title.
+    std::optional<ui::SetiIcon> tab_icon(const char* title) {
+        const ui::TabStrip* tabs = window_->tab_strip();
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->tab(i).title == QLatin1String(title)) {
+                return tabs->tab(i).icon;
+            }
+        }
+        ADD_FAILURE() << "no tab " << title;
+        return std::nullopt;
+    }
+    ui::ExplorerView* explorer_view() {
+        window_->sidebar()->activate("workbench.view.explorer");
+        QApplication::processEvents();
+        return qobject_cast<ui::ExplorerView*>(
+            window_->sidebar()->container_widget("workbench.view.explorer"));
+    }
+    void change_language(const char* id) {
+        ASSERT_TRUE(window_->commands().execute("workbench.action.editor.changeLanguageMode"));
+        QTest::keyClicks(window_->command_palette()->filter_field(), id);
+        QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
+        QApplication::processEvents();
+    }
+    // The dark glyph of the icon of each row that shows, by its label.
+    std::map<std::string, char16_t> row_icons() {
+        std::map<std::string, char16_t> icons;
+        for (const std::size_t item : pick()->shown_items()) {
+            const ui::QuickPickItem& row = pick()->items()[item];
+            EXPECT_TRUE(row.icon) << row.label.toStdString();
+            if (row.icon) {
+                EXPECT_EQ(row.icon->font_family, ui::seti_font_family());
+                icons[row.label.toStdString()] = row.icon->dark.code;
+            }
+        }
+        return icons;
+    }
+};
+
+} // namespace
+
+TEST_F(FileIconWindowTest, EachTabHasTheIconOfItsFileAlsoAnUntitledOne) {
+    create_active_window();
+    EXPECT_EQ(tab_icon("Untitled-1"), ui::seti_default_icon());
+    ASSERT_TRUE(open("main.py"));
+    ASSERT_TRUE(open("readme"));
+    ASSERT_TRUE(open("data.zzz"));
+    EXPECT_EQ(tab_icon("main.py"), ui::seti_icon("python"));
+    EXPECT_EQ(tab_icon("readme"), ui::seti_file_icon("readme", ""));
+    EXPECT_EQ(tab_icon("data.zzz"), ui::seti_default_icon());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        ASSERT_TRUE(open("src/main.cpp"));
+        window_->resize(900, 360);
+        ASSERT_NE(explorer_view(), nullptr);
+        QTest::qWait(300);
+        window_->grab().save(QString::fromUtf8(directory) + "/tab_icons.png");
+        go_to_file();
+        filter("a");
+        window_->grab().save(QString::fromUtf8(directory) + "/go_to_file_icons.png");
+    }
+}
+
+TEST_F(FileIconWindowTest, TheIconOfATabFollowsItsLanguage) {
+    create_active_window();
+    ASSERT_TRUE(window_->commands().execute("workbench.action.files.newUntitledFile"));
+    const std::string untitled =
+        window_->tab_strip()->tab(window_->tab_strip()->current_index()).title.toStdString();
+    change_language("python");
+    EXPECT_EQ(tab_icon(untitled.c_str()), ui::seti_icon("python"));
+    change_language("typescript");
+    EXPECT_EQ(tab_icon(untitled.c_str()), ui::seti_icon("typescript"));
+
+    ASSERT_TRUE(open("data.zzz"));
+    write("settings.json", R"({"files.associations": {"*.zzz": "python"}})");
+    EXPECT_TRUE(wait_until([&] { return tab_icon("data.zzz") == ui::seti_icon("python"); }));
+    // The language that was chosen stays, and so does its icon.
+    EXPECT_EQ(tab_icon(untitled.c_str()), ui::seti_icon("typescript"));
+}
+
+TEST_F(FileIconWindowTest, AutoDetectGivesTheTabTheIconOfThePathAgain) {
+    create_active_window();
+    ASSERT_TRUE(open("main.py"));
+    change_language("typescript");
+    ASSERT_EQ(tab_icon("main.py"), ui::seti_icon("typescript"));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.editor.changeLanguageMode"));
+    // The first entry is Auto Detect.
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Return);
+    QApplication::processEvents();
+    EXPECT_EQ(tab_icon("main.py"), ui::seti_icon("python"));
+}
+
+TEST_F(FileIconWindowTest, ARenamedFileHasTheIconOfItsNewNameInItsTab) {
+    create_active_window();
+    ASSERT_TRUE(open("data.zzz"));
+    ui::ExplorerView* explorer = explorer_view();
+    ASSERT_NE(explorer, nullptr);
+    ASSERT_TRUE(wait_until([&] {
+        return explorer->model()->index_of(window_->workspace()->folder / "data.zzz").isValid();
+    }));
+    explorer->tree()->setCurrentIndex(
+        explorer->model()->index_of(window_->workspace()->folder / "data.zzz"));
+    explorer->rename_selected();
+    ASSERT_TRUE(explorer->is_editing());
+    explorer->name_editor()->setText("data.py");
+    QTest::keyClick(explorer->name_editor(), Qt::Key_Return);
+    QApplication::processEvents();
+    EXPECT_EQ(tab_icon("data.py"), ui::seti_icon("python"));
+}
+
+TEST_F(FileIconWindowTest, EachFileOfGoToFileHasItsIcon) {
+    create_active_window();
+    ASSERT_TRUE(open("main.py"));
+    ASSERT_TRUE(open("readme"));
+    go_to_file();
+    // With no filter, the files that were shown.
+    EXPECT_EQ(row_icons(), (std::map<std::string, char16_t>{
+                               {"main.py", ui::seti_icon("python").dark.code},
+                               {"readme", ui::seti_file_icon("readme", "").dark.code},
+                           }));
+    filter("a");
+    const std::map<std::string, char16_t> found = row_icons();
+    EXPECT_EQ(found.at("data.zzz"), ui::seti_default_icon().dark.code);
+    EXPECT_EQ(found.at("main.cpp"), ui::seti_icon("cpp").dark.code);
+}

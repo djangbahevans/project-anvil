@@ -68,9 +68,17 @@ public:
         FileSourceFactory source;
     };
 
+    // The icon of a file or document, for the row that offers it. It is asked on the thread of
+    // the popup, for the rows that the popup is given.
+    using IconSource = std::function<std::optional<QuickPickIcon>(const core::Uri&)>;
+
     // The popup must outlive this object.
     explicit QuickOpen(QuickPick& pick, QObject* parent = nullptr);
     ~QuickOpen() override;
+
+    void set_icon_source(IconSource source) {
+        icon_source_ = std::move(source);
+    }
 
     QuickPick* pick() const {
         return pick_;
@@ -103,9 +111,13 @@ private:
     class Search;
 
     void apply(const Results& results);
+    std::optional<QuickPickIcon> icon_of(const core::Uri& uri) const {
+        return icon_source_ ? icon_source_(uri) : std::nullopt;
+    }
     void set_filter(const QString& text);
 
     QPointer<QuickPick> pick_;
+    IconSource icon_source_;
     // To the popup, while it is ours.
     std::vector<QMetaObject::Connection> connections_;
     std::unique_ptr<Search> search_;
