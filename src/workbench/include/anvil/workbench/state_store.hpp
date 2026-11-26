@@ -31,6 +31,11 @@ public:
     StateStore(std::filesystem::path directory, const std::optional<std::string>& workspace_id,
                std::shared_ptr<core::Logger> logger);
 
+    // Whether the workspace scope belongs to a folder, not to a window without one.
+    bool has_workspace() const {
+        return has_workspace_;
+    }
+
     // The value of the key; none when there is no value or it is of another type.
     std::optional<bool> boolean(StateScope scope, std::string_view key) const;
     std::optional<std::int64_t> integer(StateScope scope, std::string_view key) const;
@@ -67,6 +72,7 @@ private:
 
     std::filesystem::path directory_;
     std::shared_ptr<core::Logger> logger_;
+    bool has_workspace_ = false;
     File global_;
     File workspace_;
     std::set<std::filesystem::path> reported_damaged_;
