@@ -10661,3 +10661,152 @@ TEST_F(WindowStateTest, ASavedSizeThatIsTheDefaultIsNotScaledByTheZoomOfTheSetti
     create_window();
     EXPECT_EQ(window_->workbench()->size(ui::Part::sidebar), 300);
 }
+
+namespace {
+
+class ExpandedFoldersTest : public WindowStateTest {
+protected:
+    void SetUp() override {
+        WindowStateTest::SetUp();
+        for (const char* name : {"first", "second"}) {
+            std::filesystem::create_directories(scratch_ / name / "src" / "util");
+            std::filesystem::create_directories(scratch_ / name / "docs");
+        }
+    }
+
+    ui::ExplorerView* explorer() const {
+        return qobject_cast<ui::ExplorerView*>(
+            window_->sidebar()->container_widget("workbench.view.explorer"));
+    }
+    // Shows the explorer of the window's folder and waits until its folder has been read.
+    ui::ExplorerView* show_explorer() {
+        window_->sidebar()->activate("workbench.view.explorer");
+        ui::ExplorerView* view = explorer();
+        EXPECT_TRUE(wait_until([&] { return !view->model()->loading(); }));
+        return view;
+    }
+    void expand(const std::string& folder, const std::string& path) {
+        ui::ExplorerView* view = explorer();
+        const QModelIndex index = view->model()->index_of(window_->workspace()->folder / path);
+        ASSERT_TRUE(index.isValid()) << folder << "/" << path;
+        view->tree()->expand(index);
+        ASSERT_TRUE(wait_until([&] { return !view->model()->loading(); }));
+    }
+    bool wait_expanded(const std::vector<std::string>& folders) {
+        return wait_until([&] {
+            return explorer() && !explorer()->model()->loading() &&
+                   explorer()->expanded_folders() == folders;
+        });
+    }
+    nlohmann::json saved_folders(const std::string& name) const {
+        return workspace_state(name).value("explorer.expandedFolders", nlohmann::json());
+    }
+};
+
+} // namespace
+
+TEST_F(ExpandedFoldersTest, AFolderOpensWithTheFoldersThatWereExpandedInIt) {
+    workspace_ = folder("first");
+    create_window();
+    show_explorer();
+    expand("first", "src");
+    expand("first", "src/util");
+    close_window();
+    EXPECT_EQ(saved_folders("first"), nlohmann::json({"src", "src/util"}));
+
+    workspace_ = folder("second");
+    create_window();
+    show_explorer();
+    EXPECT_TRUE(explorer()->expanded_folders().empty());
+    expand("second", "docs");
+    close_window();
+    EXPECT_EQ(saved_folders("first"), nlohmann::json({"src", "src/util"}));
+    EXPECT_EQ(saved_folders("second"), nlohmann::json({"docs"}));
+
+    workspace_ = folder("first");
+    create_window();
+    ASSERT_TRUE(wait_expanded({"src", "src/util"}));
+    const QModelIndex util =
+        explorer()->model()->index_of(window_->workspace()->folder / "src" / "util");
+    ASSERT_TRUE(util.isValid());
+    EXPECT_TRUE(explorer()->tree()->isExpanded(util));
+}
+
+TEST_F(ExpandedFoldersTest, AFolderDeletedInTheMeantimeIsDropped) {
+    workspace_ = folder("first");
+    create_window();
+    show_explorer();
+    expand("first", "src");
+    expand("first", "docs");
+    close_window();
+    std::filesystem::remove_all(scratch_ / "first" / "docs");
+
+    create_window();
+    ASSERT_TRUE(wait_expanded({"src"}));
+    close_window();
+    EXPECT_EQ(saved_folders("first"), nlohmann::json({"src"}));
+}
+
+TEST_F(ExpandedFoldersTest, OpeningAnotherFolderSavesTheOneLeftAndRestoresTheNewOne) {
+    std::filesystem::create_directories(state_directory_ / "workspaces");
+    ASSERT_TRUE(
+        platform::write_file(state_directory_ / "workspaces" / (folder("second").id + ".json"),
+                             R"({"explorer.expandedFolders": ["docs"]})")
+            .has_value());
+    workspace_ = folder("first");
+    create_window();
+    show_explorer();
+    expand("first", "src");
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    EXPECT_EQ(saved_folders("first"), nlohmann::json({"src"}));
+    EXPECT_TRUE(wait_expanded({"docs"}));
+    ASSERT_TRUE(window_->open_folder(scratch_ / "first"));
+    EXPECT_TRUE(wait_expanded({"src"}));
+    close_window();
+    EXPECT_EQ(saved_folders("first"), nlohmann::json({"src"}));
+    EXPECT_EQ(saved_folders("second"), nlohmann::json({"docs"}));
+}
+
+TEST_F(ExpandedFoldersTest, AnExplorerThatIsNeverShownKeepsWhatWasSaved) {
+    workspace_ = folder("first");
+    create_window();
+    show_explorer();
+    expand("first", "src");
+    window_->workbench()->set_visible(ui::Part::sidebar, false);
+    close_window();
+
+    create_window();
+    ASSERT_EQ(explorer(), nullptr);
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    close_window();
+    EXPECT_EQ(saved_folders("first"), nlohmann::json({"src"}));
+
+    create_window();
+    window_->workbench()->set_visible(ui::Part::sidebar, true);
+    EXPECT_TRUE(wait_expanded({"src"}));
+}
+
+TEST_F(ExpandedFoldersTest, AnExpandedFolderIsWrittenShortlyAfterwards) {
+    workspace_ = folder("first");
+    create_window();
+    show_explorer();
+    // The layout has been written, so that only the folder can lead to the next write.
+    ASSERT_TRUE(wait_until([&] { return saved_folders("first") == nlohmann::json::array(); }));
+    expand("first", "src");
+    EXPECT_TRUE(wait_until([&] { return saved_folders("first") == nlohmann::json({"src"}); }));
+    explorer()->tree()->collapse(
+        explorer()->model()->index_of(window_->workspace()->folder / "src"));
+    EXPECT_TRUE(wait_until([&] { return saved_folders("first") == nlohmann::json::array(); }));
+}
+
+TEST_F(ExpandedFoldersTest, ASavedValueThatIsNoListGivesACollapsedTree) {
+    std::filesystem::create_directories(state_directory_ / "workspaces");
+    ASSERT_TRUE(platform::write_file(
+                    state_directory_ / "workspaces" / (folder("first").id + ".json"),
+                    R"({"explorer.expandedFolders": "src", "layout.sidebar.visible": true})")
+                    .has_value());
+    workspace_ = folder("first");
+    create_window();
+    ASSERT_NE(explorer(), nullptr);
+    EXPECT_TRUE(wait_expanded({}));
+}

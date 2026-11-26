@@ -27,7 +27,8 @@ QRect fit_to_screens(const QRect& saved, const std::vector<QRect>& screens);
 
 // Keeps the layout of a window, and its size and position, in the state store (ADR 0019): the
 // visibility and sizes of the sidebar and the panel, the position of the panel, whether it is
-// maximized and the active view containers.
+// maximized and the active view containers. What the views show is added by a capture of the
+// window's own.
 class WindowStateKeeper : public QObject {
     Q_OBJECT
 
@@ -47,6 +48,11 @@ public:
     // While `outside_mode` returns a value, it is saved in place of what shows, so that a mode that
     // hides the parts for a while, such as Zen Mode, is not what the next window starts with.
     void set_parts_outside_mode(std::function<std::optional<PartsShown>()> outside_mode);
+
+    // Called before each write, to put into the store what is not the layout.
+    void set_content_capture(std::function<void(workbench::StateStore&)> capture);
+    // Writes after the delay, as after a change of the layout.
+    void schedule();
 
     // Applies the saved state, which has to happen before the window is first shown, and saves
     // changes from then on.
@@ -73,6 +79,7 @@ private:
     Panel& panel_;
     QTimer timer_;
     std::function<std::optional<PartsShown>()> parts_outside_mode_;
+    std::function<void(workbench::StateStore&)> content_capture_;
 };
 
 } // namespace anvil::ui
