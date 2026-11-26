@@ -11767,3 +11767,39 @@ TEST_F(WorkspaceContainsWindowTest, AHostStartedAgainSearchesWithTheSettingsAsTh
     QTest::qWait(500);
     EXPECT_FALSE(active());
 }
+
+namespace {
+
+class LanguageActivationTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        extension_dirs_ = {ANVIL_ACTIVATION_LANGUAGE_EXTENSION,
+                           ANVIL_ACTIVATION_LANGUAGE_CONTRIBUTION_EXTENSION};
+    }
+    bool active(const std::string& name) {
+        return window_->bridge().host()->commands().extension_commands().contains(
+            "anvil.activation." + name);
+    }
+    bool open(const std::string& name) {
+        return window_->open_file(QString::fromStdString(write(name, "x").string()));
+    }
+};
+
+} // namespace
+
+TEST_F(LanguageActivationTest, OpeningAFileOfTheLanguageStartsTheExtensionsThatWaitForIt) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(open("notes.txt"));
+    QTest::qWait(500);
+    EXPECT_FALSE(active("activation-language"));
+    EXPECT_FALSE(active("activation-language-contribution"));
+
+    ASSERT_TRUE(open("a.fixture"));
+    EXPECT_TRUE(wait_until([&] {
+        return active("activation-language") && active("activation-language-contribution");
+    }));
+}

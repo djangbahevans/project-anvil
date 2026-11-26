@@ -74,7 +74,9 @@ HandlerResult boolean(bool value) {
 
 } // namespace
 
-DocumentsService::DocumentsService(Session& session, RequestRouter& router) : session_(session) {
+DocumentsService::DocumentsService(Session& session, RequestRouter& router,
+                                   ActivationService& activation)
+    : session_(session), activation_(activation) {
     using Args = const json&;
     auto on = [&](ProxyId service, const char* method,
                   std::optional<HandlerResult> (DocumentsService::*handler)(Args)) {
@@ -110,6 +112,14 @@ std::shared_ptr<core::Document> DocumentsService::find(const core::Uri& uri) con
 
 void DocumentsService::send(ProxyId target, const char* method, const json& args) {
     session_.call(target, method, args.dump(), [](CallResult) {});
+}
+
+void DocumentsService::activate_language(const std::string& language_id) {
+    if (!activated_languages_.insert(language_id).second) {
+        return;
+    }
+    activation_.fire("onLanguage:" + language_id, ActivationKind::normal, [](CallResult) {});
+    activation_.fire("onLanguage", ActivationKind::normal, [](CallResult) {});
 }
 
 void DocumentsService::send_delta(const json& delta) {
@@ -209,6 +219,7 @@ DocumentsService::add_document(core::Uri uri, std::shared_ptr<core::Document> do
     const auto inserted = entries_.emplace(
         key, Entry{std::move(uri), std::move(document), std::move(language), fixed});
     send_delta({{"addedDocuments", json::array({model_added_data(inserted.first->second)})}});
+    activate_language(inserted.first->second.language_id);
     return {};
 }
 
@@ -236,6 +247,7 @@ void DocumentsService::language_changed(const core::Uri& uri, std::string langua
         send(ProxyId::ExtHostDocuments, "$acceptModelLanguageChanged",
              json::array({uri_to_json(uri), found->second.language_id}));
     }
+    activate_language(found->second.language_id);
 }
 
 void DocumentsService::remove_document(const core::Uri& uri) {
