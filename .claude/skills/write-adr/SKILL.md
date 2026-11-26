@@ -9,7 +9,7 @@ Record a decision when it is hard to reverse, constrains other modules, or when 
 
 ## Procedure
 
-1. Read [docs/adr/README.md](../../../docs/adr/README.md) and the ADRs related to the area. An accepted ADR is followed, and changed only by a new ADR that supersedes it (the old one gets status "Superseded by NNNN" and nothing else).
+1. Read [docs/adr/README.md](../../../docs/adr/README.md) and the ADRs related to the area. An accepted ADR is followed, and changed only by a new ADR that supersedes it (the old one gets status "Superseded by NNNN" and nothing else). A new ADR that changes only a part of an old one names that part in its context, and the old one gets status "Accepted, in part superseded by NNNN".
 2. Copy [docs/adr/template.md](../../../docs/adr/template.md) to `docs/adr/NNNN-short-title.md` with the next free number.
 3. Fill the sections:
    - **Context**: the requirement, the constraints, and the forces that pull apart.

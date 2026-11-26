@@ -1,6 +1,6 @@
 # 0019. The editor keeps its window state in a store of its own
 
-- Status: Accepted
+- Status: Accepted, in part superseded by 0021
 - Date: 2026-11-26
 
 ## Context
