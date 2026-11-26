@@ -53,8 +53,6 @@ struct QuickPickItem {
     // the caller filters itself: they are drawn while the popup does not filter.
     std::vector<core::MatchRange> label_match{};
     std::vector<core::MatchRange> description_match{};
-    // In a list where an item has one, the labels of the items without are indented as far, so that
-    // all of them line up.
     std::optional<QuickPickIcon> icon{};
 };
 
@@ -190,7 +188,6 @@ private:
     QString ignored_prefix_;
     int top_offset_ = 0;
     bool has_detail_ = false;
-    bool has_icons_ = false;
     bool filtering_ = true;
     bool awaiting_items_ = false;
     bool enter_held_ = false;

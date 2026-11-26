@@ -763,14 +763,14 @@ TEST_F(QuickPickIconTest, TheIconIsInFrontOfTheLabelInItsColor) {
     EXPECT_EQ(leftmost(1, red), -1);
 }
 
-TEST_F(QuickPickIconTest, TheLabelOfAnItemWithoutAnIconLinesUpAndAListWithoutIconsHasNoIndent) {
+TEST_F(QuickPickIconTest, OnlyTheLabelOfAnItemWithAnIconMakesRoomForIt) {
     const int with_icon = leftmost(0, green);
-    ASSERT_GE(with_icon, 0);
-    EXPECT_EQ(leftmost(1, green), with_icon);
+    const int without_icon = leftmost(1, green);
+    ASSERT_GE(without_icon, 0);
+    EXPECT_EQ(with_icon - without_icon, 22);
 
-    pick_->set_items(items_of({"HHHH", "HHHH"}));
-    EXPECT_EQ(leftmost(0, green), with_icon - 22);
-    EXPECT_EQ(leftmost(1, green), with_icon - 22);
+    pick_->set_items(items_of({"HHHH"}));
+    EXPECT_EQ(leftmost(0, green), without_icon);
 }
 
 TEST_F(QuickPickIconTest, TheIconFollowsAChangeOfTheKindOfTheTheme) {
@@ -784,15 +784,11 @@ TEST_F(QuickPickIconTest, TheIconFollowsAChangeOfTheKindOfTheTheme) {
     EXPECT_EQ(leftmost(0, blue), -1);
 }
 
-TEST_F(QuickPickIconTest, TheColumnOfTheIconsGrowsWithTheZoom) {
+TEST_F(QuickPickIconTest, TheRoomForAnIconGrowsWithTheZoom) {
     anvil::ui::Zoom zoom;
     zoom.set_level(4);
     pick_->set_zoom(&zoom);
-    const int with_icons = leftmost(0, green);
-    pick_->set_items(items_of({"HHHH"}));
-    const int without = leftmost(0, green);
-    // Close to the column at level 0 scaled; the first glyph's bearing rounds by a pixel.
-    EXPECT_NEAR(with_icons - without, 22 * zoom.factor(), 1.5);
-    EXPECT_GT(with_icons - without, 30);
+    // The column at level 0 scaled, to a pixel or so of rounding.
+    EXPECT_NEAR(leftmost(0, green) - leftmost(1, green), 22 * zoom.factor(), 1.5);
     pick_->set_zoom(nullptr);
 }
