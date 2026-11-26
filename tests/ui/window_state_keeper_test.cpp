@@ -358,6 +358,32 @@ TEST_F(WindowStateKeeperTest, ADraggedSizeIsKeptByAPartThatIsHiddenAfterwards) {
     EXPECT_EQ(window->workbench->size(Part::sidebar), dragged);
 }
 
+TEST_F(WindowStateKeeperTest, ADragOfThePanelsSashIsWrittenAndKept) {
+    const auto window = open();
+    window->panel->activate("terminal");
+    QApplication::processEvents();
+    window->keeper->save();
+    QSplitterHandle* sash = nullptr;
+    for (QSplitterHandle* handle : window->workbench->findChildren<QSplitterHandle*>()) {
+        if (handle->isVisible() && handle->orientation() == Qt::Vertical) {
+            sash = handle;
+        }
+    }
+    ASSERT_NE(sash, nullptr);
+    const int before = window->workbench->panel()->height();
+    const QPoint start = sash->rect().center();
+    QTest::mousePress(sash, Qt::LeftButton, {}, start);
+    QTest::mouseMove(sash, start + QPoint(0, -50));
+    QTest::mouseRelease(sash, Qt::LeftButton, {}, start + QPoint(0, -50));
+    QApplication::processEvents();
+    const int dragged = window->workbench->panel()->height();
+    ASSERT_NE(dragged, before);
+    EXPECT_TRUE(
+        QTest::qWaitFor([&] { return global().at("layout.panel.size.bottom") == dragged; }, 5000));
+    window->window.hide();
+    EXPECT_EQ(window->workbench->size(Part::panel), dragged);
+}
+
 TEST_F(WindowStateKeeperTest, TheModeThatHidesThePartsIsNotWhatIsSaved) {
     const auto window = open();
     bool in_mode = true;
