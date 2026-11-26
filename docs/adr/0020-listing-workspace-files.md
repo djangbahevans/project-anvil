@@ -1,6 +1,6 @@
 # 0020. The files of a workspace are listed with ripgrep when they are asked for
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-26
 
 ## Context
