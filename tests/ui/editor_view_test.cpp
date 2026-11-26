@@ -1900,11 +1900,11 @@ TEST_F(LayoutCacheTest, TheLayoutsAreMadeAgainWhenTheTabSizeOrTheFontChanges) {
     settings_.font_size = 16;
     view_.apply_settings(settings_);
     EXPECT_NE(paint(), wide);
-    EXPECT_GT(built_by([&] {
+    EXPECT_GE(built_by([&] {
                   view_.setFont(QFont("monospace", 9));
                   paint();
               }),
-              0U);
+              lines_in_view() - 1);
 }
 
 TEST_F(LayoutCacheTest, TheControlCharacterSettingLaysTheLinesOutAgain) {
@@ -1931,11 +1931,13 @@ TEST_F(LayoutCacheTest, OnlyTheMostRecentlyUsedLayoutsAreKept) {
 
 TEST_F(LayoutCacheTest, ALayoutThatIsUsedAgainOutlivesOnesThatAreNot) {
     open(numbered(3000));
+    const std::size_t before = view_.layouts_built();
     for (std::size_t line = 0; line < 3000; ++line) {
         view_.cursor_rect(offset_of_line(line));
         view_.cursor_rect(offset_of_line(0));
     }
-    EXPECT_EQ(built_by([&] { view_.cursor_rect(offset_of_line(0)); }), 0U);
+    // Each line is laid out once, the first of them included.
+    EXPECT_EQ(view_.layouts_built() - before, 3000U - before);
 }
 
 TEST_F(LayoutCacheTest, AViewTallerThanTheCacheKeepsEveryLineInView) {

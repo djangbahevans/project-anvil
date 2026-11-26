@@ -302,11 +302,6 @@ void EditorView::refresh_highlighting() {
             ++layout;
         }
     }
-    for (std::size_t line = first; line < last; ++line) {
-        if (!layouts_.contains(line)) {
-            repaint(line);
-        }
-    }
     if (!changed.isEmpty()) {
         viewport()->update(changed);
     }
