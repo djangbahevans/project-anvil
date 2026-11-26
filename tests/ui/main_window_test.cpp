@@ -8,6 +8,7 @@
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/project_links.hpp"
 #include "anvil/ui/scroll_bar.hpp"
+#include "anvil/ui/seti_icons.hpp"
 #include "anvil/ui/splitter.hpp"
 
 #include <QAction>
@@ -7051,6 +7052,46 @@ TEST_F(ChangeLanguageModeTest, ListsTheEntriesThenTheLanguagesByNameWithTheCurre
     ASSERT_NE(plain, items.end());
     EXPECT_EQ(plain->description, "(plaintext)");
     EXPECT_EQ(pick->filter_field()->text(), "");
+}
+
+TEST_F(ChangeLanguageModeTest, EachLanguageHasItsSetiIconAndTheEntriesAboveHaveNone) {
+    create_window();
+    ASSERT_TRUE(open(write("a.ts", "abc")));
+    window_->commands().execute(command);
+    ui::QuickPick* pick = window_->command_palette();
+    const auto& items = pick->items();
+    ASSERT_GT(items.size(), 70U);
+    for (std::size_t i = 0; i < 3; ++i) {
+        EXPECT_FALSE(items[i].icon) << i;
+    }
+    std::size_t with_their_own = 0;
+    for (std::size_t i = 3; i < items.size(); ++i) {
+        const ui::QuickPickItem& item = items[i];
+        const std::string id = item.description.section('(', 1).section(')', 0, 0).toStdString();
+        const ui::SetiIcon icon = ui::seti_icon(id);
+        ASSERT_TRUE(item.icon) << id;
+        EXPECT_EQ(item.icon->font_family, ui::seti_font_family()) << id;
+        EXPECT_EQ(item.icon->dark.code, icon.dark.code) << id;
+        EXPECT_EQ(item.icon->dark.color, QColor::fromRgba(icon.dark.color)) << id;
+        EXPECT_EQ(item.icon->light.code, icon.light.code) << id;
+        EXPECT_EQ(item.icon->light.color, QColor::fromRgba(icon.light.color)) << id;
+        with_their_own += icon != ui::seti_default_icon() ? 1 : 0;
+    }
+    EXPECT_GT(with_their_own, 50U);
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->resize(900, 640);
+        QApplication::processEvents();
+        window_->grab().save(QString::fromUtf8(directory) + "/language_icons_dark.png");
+        QTest::keyClick(pick->filter_field(), Qt::Key_Escape);
+        window_->commands().execute("workbench.action.selectTheme");
+        QTest::keyClicks(pick->filter_field(), "Light 2026");
+        QTest::keyClick(pick->filter_field(), Qt::Key_Return);
+        QApplication::processEvents();
+        window_->commands().execute(command);
+        QApplication::processEvents();
+        window_->grab().save(QString::fromUtf8(directory) + "/language_icons_light.png");
+    }
 }
 
 TEST_F(ChangeLanguageModeTest,

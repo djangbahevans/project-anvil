@@ -39,6 +39,10 @@ constexpr int input_vertical_padding_px = 3;
 constexpr int input_horizontal_padding_px = 6;
 constexpr int row_bottom_text_gap_px = 2;
 constexpr int highlight_radius_px = 3;
+constexpr int icon_width_px = 16;
+constexpr int icon_gap_px = 6;
+// The size of the glyph of an icon, as a share of that of the text, which Seti asks for.
+constexpr int icon_font_percent = 150;
 constexpr std::size_t no_separator = static_cast<std::size_t>(-1);
 
 QString css(const QColor& color) {
@@ -217,6 +221,22 @@ public:
                                    std::max(0, limit - option.rect.left()), option.rect.height()));
 
         int x = option.rect.left() + row_inset + text_padding;
+        const int icon_width = pick_.zoomed(icon_width_px);
+        const int icon_column = pick_.has_icons_ ? icon_width + pick_.zoomed(icon_gap_px) : 0;
+        if (item.icon) {
+            const QuickPickGlyph& glyph =
+                colors_.kind() == core::ThemeKind::light ? item.icon->light : item.icon->dark;
+            QFont icon_font(item.icon->font_family);
+            const int icon_pixels = QFontInfo(option.font).pixelSize() * icon_font_percent / 100;
+            icon_font.setPixelSize(icon_pixels);
+            painter->setFont(icon_font);
+            painter->setPen(glyph.color);
+            // Wider than the column, so that a glyph that fills its square is not cut.
+            painter->drawText(
+                QRect(x - icon_width / 2, option.rect.top(), 2 * icon_width, row_height),
+                Qt::AlignCenter, QString(QChar(glyph.code)));
+        }
+        x += icon_column;
         const int baseline =
             option.rect.top() + (row_height - plain_metrics.height()) / 2 + plain_metrics.ascent();
         const auto draw_runs = [&](const QString& string,
@@ -257,7 +277,7 @@ public:
             small.setPointSizeF(option.font.pointSizeF() * 0.9);
             painter->setFont(small);
             painter->setPen(dim);
-            painter->drawText(option.rect.left() + row_inset + text_padding,
+            painter->drawText(option.rect.left() + row_inset + text_padding + icon_column,
                               option.rect.top() + row_height + QFontMetrics(small).ascent() +
                                   pick_.zoomed(row_bottom_text_gap_px),
                               item.detail);
@@ -438,9 +458,11 @@ void QuickPick::set_items(std::vector<QuickPickItem> items) {
     cached_.clear();
     cached_.reserve(items_.size());
     has_detail_ = false;
+    has_icons_ = false;
     for (const QuickPickItem& item : items_) {
         cached_.push_back({item.label.toStdString(), item.description.toStdString()});
         has_detail_ = has_detail_ || (!item.separator && !item.detail.isEmpty());
+        has_icons_ = has_icons_ || (!item.separator && item.icon.has_value());
     }
     list_->setUniformItemSizes(!has_detail_);
     refilter();

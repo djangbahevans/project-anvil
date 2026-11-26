@@ -171,3 +171,24 @@ TEST(WorkbenchColorsTest, TheFallbacksFollowThePaletteAndChangedIsEmittedForANew
     colors.set_palette(first);
     EXPECT_EQ(colors.color("statusBar.background"), QColor("#000001"));
 }
+
+TEST(WorkbenchColorsTest, TheKindIsThatOfTheThemeAndWithoutOneThatOfThePalette) {
+    QPalette palette = distinct_palette();
+    palette.setColor(QPalette::Base, QColor("#ffffff"));
+    WorkbenchColors colors(palette);
+    EXPECT_EQ(colors.kind(), anvil::core::ThemeKind::light);
+    palette.setColor(QPalette::Base, QColor("#101010"));
+    colors.set_palette(palette);
+    EXPECT_EQ(colors.kind(), anvil::core::ThemeKind::dark);
+
+    QSignalSpy changed(&colors, &WorkbenchColors::changed);
+    colors.set_theme({}, nullptr, anvil::core::ThemeKind::light);
+    EXPECT_EQ(colors.kind(), anvil::core::ThemeKind::light);
+    EXPECT_EQ(changed.count(), 1);
+    colors.set_theme({}, nullptr, anvil::core::ThemeKind::light);
+    EXPECT_EQ(changed.count(), 1);
+    // Another kind alone is a change.
+    colors.set_theme({}, nullptr, anvil::core::ThemeKind::high_contrast_light);
+    EXPECT_EQ(colors.kind(), anvil::core::ThemeKind::high_contrast_light);
+    EXPECT_EQ(changed.count(), 2);
+}

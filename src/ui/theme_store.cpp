@@ -242,7 +242,7 @@ bool ThemeStore::apply(const Entry& entry, std::string* problem) {
     for (const std::string& warning : token_theme->warnings()) {
         logger_->log(core::LogLevel::warning, "theme", entry.id + ": " + warning);
     }
-    colors_.set_theme(compose(entry, *loaded), std::move(token_theme));
+    colors_.set_theme(compose(entry, *loaded), std::move(token_theme), entry.kind);
     current_ = entry.id;
     theme_ = std::move(*loaded);
     last_problem_.clear();

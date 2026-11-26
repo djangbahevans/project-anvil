@@ -4,6 +4,7 @@
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/ui/zoom.hpp"
 
+#include <QColor>
 #include <QFrame>
 #include <QPointer>
 #include <QString>
@@ -19,6 +20,20 @@ class QLineEdit;
 class QListView;
 
 namespace anvil::ui {
+
+// A character of an icon font, in its color.
+struct QuickPickGlyph {
+    char16_t code = 0;
+    QColor color{};
+};
+
+// An icon from a font that a row draws in front of its label. `light` is the glyph on a light color
+// theme and `dark` the one on every other kind.
+struct QuickPickIcon {
+    QString font_family{};
+    QuickPickGlyph dark{};
+    QuickPickGlyph light{};
+};
 
 struct QuickPickItem {
     QString label;
@@ -38,6 +53,9 @@ struct QuickPickItem {
     // the caller filters itself: they are drawn while the popup does not filter.
     std::vector<core::MatchRange> label_match{};
     std::vector<core::MatchRange> description_match{};
+    // In a list where an item has one, the labels of the items without are indented as far, so that
+    // all of them line up.
+    std::optional<QuickPickIcon> icon{};
 };
 
 // A popup list with a filter field, over the top center of a window: VS Code's quick pick, used
@@ -172,6 +190,7 @@ private:
     QString ignored_prefix_;
     int top_offset_ = 0;
     bool has_detail_ = false;
+    bool has_icons_ = false;
     bool filtering_ = true;
     bool awaiting_items_ = false;
     bool enter_held_ = false;

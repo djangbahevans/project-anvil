@@ -14,6 +14,7 @@
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/project_links.hpp"
 #include "anvil/ui/resources.hpp"
+#include "anvil/ui/seti_icons.hpp"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -1256,6 +1257,7 @@ std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current
     });
     std::vector<QuickPickItem> items;
     ids.clear();
+    const QString icon_font = seti_font_family();
     for (Named& language : languages) {
         const QString id = QString::fromStdString(language.id);
         items.push_back({language.name,
@@ -1264,6 +1266,14 @@ std::vector<QuickPickItem> MainWindow::language_picks(const std::string& current
                          {},
                          {},
                          false});
+        if (!icon_font.isEmpty()) {
+            const SetiIcon icon = seti_icon(language.id);
+            items.back().icon = QuickPickIcon{
+                .font_family = icon_font,
+                .dark = {icon.dark.code, QColor::fromRgba(icon.dark.color)},
+                .light = {icon.light.code, QColor::fromRgba(icon.light.color)},
+            };
+        }
         ids.push_back(std::move(language.id));
     }
     return items;

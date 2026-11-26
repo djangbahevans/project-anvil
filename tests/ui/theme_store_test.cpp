@@ -103,10 +103,13 @@ TEST_F(ThemeStoreTest, SwitchingThemesChangesTheColorsOnceAndSelectingTheSameOne
     ASSERT_EQ(changes_->count(), 1);
     ASSERT_EQ(colors_changed.count(), 1);
 
+    EXPECT_EQ(colors_.kind(), core::ThemeKind::dark);
+
     ASSERT_TRUE(store_->select("Light 2026"));
     EXPECT_EQ(changes_->count(), 2);
     EXPECT_EQ(colors_changed.count(), 2);
     EXPECT_EQ(colors_.color("editor.background"), QColor("#FFFFFF"));
+    EXPECT_EQ(colors_.kind(), core::ThemeKind::light);
 
     ASSERT_TRUE(store_->select("Light 2026"));
     EXPECT_EQ(changes_->count(), 2);
