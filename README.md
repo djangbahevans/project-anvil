@@ -61,7 +61,7 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | --- | --- | --- |
 | `editor.fontFamily` | Comma-separated font families; the first installed one is used, `monospace` and an unknown list stand for the system's fixed-width font | `'Droid Sans Mono', monospace` on Linux, `Menlo, Monaco, 'Courier New', monospace` on macOS, `Consolas, 'Courier New', monospace` on Windows |
 | `editor.fontSize` | Font size in pixels, clamped to 6-100 | 14 (12 on macOS) |
-| `window.zoomLevel` | The zoom of the window, in steps of a factor of 1.2: -8 to 8, decimals allowed, written by View > Appearance > Zoom In, Zoom Out and Reset Zoom (Ctrl+=, Ctrl+-, Ctrl+NumPad0). The editor text follows it | 0 |
+| `window.zoomLevel` | The zoom of the window, in steps of a factor of 1.2: -8 to 8, decimals allowed, written by View > Appearance > Zoom In, Zoom Out and Reset Zoom (Ctrl+=, Ctrl+-, Ctrl+NumPad0). Every size of the window follows it: the text, the bars, the side bar, the panel, the menus and the quick pick | 0 |
 | `editor.tabSize` | Columns per tab stop, an integer of at least 1 (values above 1024 are treated as 1024) | 4 |
 | `editor.insertSpaces` | Tab inserts spaces up to the next tab stop when `true`, a tab character when `false` | `true` |
 | `editor.multiCursorModifier` | The key that makes a click add a cursor: `"alt"` (Alt+click), or `"ctrlCmd"` (Ctrl+click, Cmd+click on macOS). Shift with it, or Shift+Alt with `"ctrlCmd"`, selects a rectangle | `"alt"` |

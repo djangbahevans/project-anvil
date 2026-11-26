@@ -272,6 +272,8 @@ private:
     void populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items);
     // Gives a menu, or a submenu, the style that draws the menus of VS Code.
     void style_menu(QMenu* menu);
+    // The font of the menus: the system's, scaled by the zoom.
+    QFont menu_font() const;
     // Lets extensions execute the registered commands, once the extension host is running.
     void share_commands_with_extensions();
     // Applies `options_.workspace`: restarts the extension host with it and gives it what the

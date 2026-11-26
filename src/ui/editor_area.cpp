@@ -3,6 +3,7 @@
 #include "anvil/ui/splitter.hpp"
 
 #include <QApplication>
+#include <QFontInfo>
 #include <QPainter>
 #include <QSplitter>
 #include <QVBoxLayout>
@@ -27,6 +28,11 @@ EditorGroupWidget::EditorGroupWidget(workbench::GroupId id, const WorkbenchColor
     // Takes the space of the editor while it is hidden, so that the strip stays at the top.
     layout->addStretch(0);
     connect(&colors_, &WorkbenchColors::changed, this, qOverload<>(&QWidget::update));
+}
+
+void EditorGroupWidget::set_zoom(const Zoom* zoom) {
+    tabs_->set_zoom(zoom);
+    find_bar_->set_zoom(zoom);
 }
 
 void EditorGroupWidget::set_tabs_mode(core::TabsMode mode) {
@@ -75,19 +81,22 @@ private:
 // The dragged tab that follows the pointer, also outside the window.
 class EditorArea::DragGhost : public QWidget {
 public:
-    DragGhost(const WorkbenchColors& colors, const QFont& font)
+    DragGhost(const WorkbenchColors& colors, const Zoom* zoom, const QFont& font)
         : QWidget(nullptr, Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowTransparentForInput),
-          colors_(colors) {
+          colors_(colors), zoom_(zoom) {
         setAttribute(Qt::WA_ShowWithoutActivating);
         setAttribute(Qt::WA_TranslucentBackground);
-        setFont(font);
+        QFont ghost_font = font;
+        ghost_font.setPixelSize(scaled_by(zoom_, QFontInfo(font).pixelSize()));
+        setFont(ghost_font);
     }
 
     void set_title(const QString& title) {
         title_ = title;
-        resize(std::max(TabStrip::minimum_tab_width,
-                        fontMetrics().horizontalAdvance(title) + 2 * TabStrip::title_padding),
-               TabStrip::height_pixels);
+        resize(std::max(scaled_by(zoom_, TabStrip::minimum_tab_width),
+                        fontMetrics().horizontalAdvance(title) +
+                            2 * scaled_by(zoom_, TabStrip::title_padding)),
+               scaled_by(zoom_, TabStrip::height_pixels));
         update();
     }
 
@@ -97,12 +106,13 @@ protected:
         painter.setOpacity(0.85);
         painter.fillRect(rect(), colors_.color("tab.activeBackground"));
         painter.setPen(colors_.color("tab.activeForeground"));
-        painter.drawText(rect().adjusted(TabStrip::title_padding, 0, 0, 0),
+        painter.drawText(rect().adjusted(scaled_by(zoom_, TabStrip::title_padding), 0, 0, 0),
                          Qt::AlignVCenter | Qt::AlignLeft, title_);
     }
 
 private:
     const WorkbenchColors& colors_;
+    const Zoom* zoom_;
     QString title_;
 };
 
@@ -164,6 +174,10 @@ bool EditorArea::drag_picture_visible() const {
     return ghost_ && ghost_->isVisible();
 }
 
+QSize EditorArea::drag_picture_size() const {
+    return ghost_ ? ghost_->size() : QSize();
+}
+
 QSplitter* EditorArea::root_splitter() const {
     return qobject_cast<QSplitter*>(root_);
 }
@@ -186,7 +200,7 @@ void EditorArea::refresh_tab(workbench::GroupId id, std::size_t index) {
 EditorGroupWidget* EditorArea::add_group(workbench::GroupId id) {
     auto* widget = new EditorGroupWidget(id, colors_, this);
     widget->view()->apply_settings(settings_);
-    widget->tabs()->set_zoom(zoom_);
+    widget->set_zoom(zoom_);
     groups_.push_back(widget);
 
     TabStrip* tabs = widget->tabs();
@@ -266,6 +280,7 @@ QWidget* EditorArea::build(const workbench::LayoutNode& node, std::vector<std::s
     auto* splitter = new Splitter(
         node.orientation == workbench::Orientation::horizontal ? Qt::Horizontal : Qt::Vertical,
         colors_, "editorGroup.border");
+    splitter->set_zoom(zoom_);
     for (std::size_t i = 0; i < node.children.size(); ++i) {
         path.push_back(i);
         splitter->addWidget(build(node.children[i], path));
@@ -375,7 +390,10 @@ void EditorArea::set_tabs_mode(core::TabsMode mode) {
 void EditorArea::set_zoom(const Zoom* zoom) {
     zoom_ = zoom;
     for (EditorGroupWidget* widget : groups_) {
-        widget->tabs()->set_zoom(zoom);
+        widget->set_zoom(zoom);
+    }
+    for (Splitter* splitter : findChildren<Splitter*>()) {
+        splitter->set_zoom(zoom);
     }
 }
 
@@ -519,10 +537,10 @@ void EditorArea::drag_out_moved(workbench::GroupId from, int index, const QPoint
         return;
     }
     if (!ghost_) {
-        ghost_ = new DragGhost(colors_, font());
+        ghost_ = new DragGhost(colors_, zoom_, font());
     }
     ghost_->set_title(tab_info_(state->tabs[static_cast<std::size_t>(index)]).title);
-    ghost_->move(global + QPoint(12, 12));
+    ghost_->move(global + QPoint(scaled_by(zoom_, 12), scaled_by(zoom_, 12)));
     ghost_->show();
 
     const DropTarget target = drop_target_at(from, global);

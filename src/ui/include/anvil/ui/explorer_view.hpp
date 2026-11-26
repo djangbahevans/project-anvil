@@ -3,12 +3,14 @@
 #include "anvil/core/file_tree.hpp"
 #include "anvil/ui/explorer_model.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QString>
 #include <QWidget>
 #include <filesystem>
 #include <optional>
 
+class QVBoxLayout;
 class QLabel;
 class QPushButton;
 class QStackedLayout;
@@ -42,6 +44,11 @@ public:
     // Applies the patterns of `files.exclude`; what is open stays open.
     void set_excludes(core::FileExcludes excludes);
 
+    // The zoom that the sizes of the view (rows, indentation, twisties, paddings, font) are read
+    // through, which must outlive the view; the view follows it when it changes. Null means level
+    // 0.
+    void set_zoom(const Zoom* zoom);
+
     QTreeView* tree() const {
         return tree_;
     }
@@ -71,6 +78,10 @@ private:
     class Header;
 
     void apply_colors();
+    void apply_zoom();
+    const Zoom* zoom_ = nullptr;
+    int base_font_pixels_ = 0;
+    QVBoxLayout* empty_layout_ = nullptr;
 
     const WorkbenchColors& colors_;
     ExplorerModel* model_ = nullptr;

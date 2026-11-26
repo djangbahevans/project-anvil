@@ -384,6 +384,23 @@ TEST_F(EditorAreaTest, ATabDraggedOverAnotherStripShowsWhereItWouldGo) {
     release_at(first_, point_in_strip(second_, 130));
 }
 
+TEST_F(EditorAreaTest, ThePictureOfADraggedTabIsTheSizeOfATabAtTheZoom) {
+    Zoom zoom;
+    area_->set_zoom(&zoom);
+    two_groups();
+    for (const double level : {-2.0, 0.0, 3.0}) {
+        SCOPED_TRACE(level);
+        zoom.set_level(level);
+        press_tab(first_, 1);
+        drag_to(first_, point_in_strip(second_, 130));
+        ASSERT_TRUE(area_->drag_picture_visible());
+        EXPECT_EQ(area_->drag_picture_size().height(), zoom.scaled(TabStrip::height_pixels));
+        EXPECT_GE(area_->drag_picture_size().width(), zoom.scaled(TabStrip::minimum_tab_width));
+        release_at(first_, point_in_strip(second_, 130));
+    }
+    area_->set_zoom(nullptr);
+}
+
 TEST_F(EditorAreaTest, DroppingOnAnotherStripReportsThePositionAmongItsTabs) {
     two_groups();
     QSignalSpy strip(area_.get(), &EditorArea::tab_dropped_on_strip);

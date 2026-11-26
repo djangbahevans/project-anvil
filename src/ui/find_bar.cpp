@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QEvent>
+#include <QFontInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -11,6 +12,7 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QSignalBlocker>
+#include <QSpacerItem>
 #include <QThreadPool>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -90,11 +92,12 @@ core::Selection to_selection(const core::Match& match) {
 } // namespace
 
 FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(view) {
+    base_font_pixels_ = QFontInfo(font()).pixelSize();
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 4, 6, 4);
-    layout->setSpacing(4);
+    layout_ = layout;
 
     auto* find_row = new QHBoxLayout;
+    find_row_ = find_row;
     replace_toggle_ = make_toggle(QString::fromUtf8("▸"), tr("Toggle Replace"), this);
     find_edit_ = new QLineEdit(this);
     find_edit_->setPlaceholderText(tr("Find"));
@@ -110,8 +113,6 @@ FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(vie
     regex_button_ = make_option_button(
         make_option_action(this, tr(".*"), tr("Use Regular Expression"), Qt::Key_R), this);
     status_label_ = new QLabel(this);
-    status_label_->setMinimumWidth(status_label_->fontMetrics().horizontalAdvance(
-        QStringLiteral("20000+ of 20000+ (wrapped)")));
     auto* previous = make_action(QString::fromUtf8("↑"), tr("Previous Match"), this);
     auto* next = make_action(QString::fromUtf8("↓"), tr("Next Match"), this);
     auto* close = make_action(QString::fromUtf8("✕"), tr("Close"), this);
@@ -128,18 +129,21 @@ FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(vie
 
     replace_row_ = new QWidget(this);
     auto* replace_layout = new QHBoxLayout(replace_row_);
+    replace_layout_ = replace_layout;
     replace_layout->setContentsMargins(0, 0, 0, 0);
     replace_edit_ = new QLineEdit(replace_row_);
     replace_edit_->setPlaceholderText(tr("Replace"));
     replace_edit_->installEventFilter(this);
     auto* replace = make_action(tr("Replace"), tr("Replace the Match"), replace_row_);
     auto* replace_every = make_action(tr("Replace All"), tr("Replace All Matches"), replace_row_);
-    replace_layout->addSpacing(replace_toggle_->sizeHint().width() + find_row->spacing());
+    replace_indent_ = new QSpacerItem(0, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+    replace_layout->addItem(replace_indent_);
     replace_layout->addWidget(replace_edit_, 1);
     replace_layout->addWidget(replace);
     replace_layout->addWidget(replace_every);
     layout->addWidget(replace_row_);
     replace_row_->hide();
+    apply_zoom();
     hide();
 
     connect(replace_toggle_, &QToolButton::toggled, this, [this](bool shown) {
@@ -166,6 +170,36 @@ FindBar::FindBar(EditorView* view, QWidget* parent) : QWidget(parent), view_(vie
             update_status();
         }
     });
+}
+
+void FindBar::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &FindBar::apply_zoom);
+    }
+    apply_zoom();
+}
+
+void FindBar::apply_zoom() {
+    QFont bar_font = font();
+    bar_font.setPixelSize(zoomed(base_font_pixels_));
+    setFont(bar_font);
+    // The buttons and fields have fonts of their own that a parent's font does not reach.
+    for (QWidget* child : findChildren<QWidget*>()) {
+        child->setFont(bar_font);
+    }
+    layout_->setContentsMargins(zoomed(6), zoomed(4), zoomed(6), zoomed(4));
+    layout_->setSpacing(zoomed(4));
+    find_row_->setSpacing(zoomed(4));
+    replace_layout_->setSpacing(zoomed(4));
+    status_label_->setMinimumWidth(status_label_->fontMetrics().horizontalAdvance(
+        QStringLiteral("20000+ of 20000+ (wrapped)")));
+    replace_indent_->changeSize(replace_toggle_->sizeHint().width() + find_row_->spacing(), 0,
+                                QSizePolicy::Fixed, QSizePolicy::Minimum);
+    layout_->invalidate();
 }
 
 FindBar::~FindBar() {

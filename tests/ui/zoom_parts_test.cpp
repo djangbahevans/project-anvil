@@ -1,6 +1,13 @@
 #include "anvil/ui/activity_bar.hpp"
 #include "anvil/ui/codicons.hpp"
+#include "anvil/ui/editor_view.hpp"
+#include "anvil/ui/explorer_view.hpp"
+#include "anvil/ui/find_bar.hpp"
+#include "anvil/ui/menu_style.hpp"
+#include "anvil/ui/panel.hpp"
+#include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/sidebar.hpp"
+#include "anvil/ui/splitter.hpp"
 #include "anvil/ui/status_bar.hpp"
 #include "anvil/ui/tab_strip.hpp"
 #include "anvil/ui/title_bar.hpp"
@@ -10,14 +17,26 @@
 #include <QApplication>
 #include <QFontMetrics>
 #include <QLabel>
+#include <QLayout>
+#include <QLineEdit>
+#include <QListView>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
+#include <QPushButton>
+#include <QScrollBar>
 #include <QSignalSpy>
+#include <QSplitter>
+#include <QStyleOptionMenuItem>
 #include <QTest>
 #include <QToolButton>
+#include <QTreeView>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
+#include <unistd.h>
 
 namespace {
 
@@ -269,7 +288,6 @@ protected:
         workbench_->set_editor_area(new QLabel("editor"));
         workbench_->resize(1000, 700);
         sidebar_ = std::make_unique<Sidebar>(*workbench_, registry_, colors_);
-        sidebar_->set_zoom(&zoom_);
         QPixmap pixmap(24, 24);
         pixmap.fill(Qt::black);
         for (const char* id : {"one", "two"}) {
@@ -395,6 +413,391 @@ TEST_F(TitleBarZoomTest, TheCloseButtonIsClickedWhereItIsAtLevelThree) {
         bar_->close_button(), Qt::LeftButton, {},
         QPoint(bar_->close_button()->width() - 2, bar_->close_button()->height() - 2));
     EXPECT_EQ(spy.count(), 1);
+}
+
+// --- the side bar, the panel and the workbench around them ---
+
+class WorkbenchZoomTest : public ZoomPartsTest {
+protected:
+    void SetUp() override {
+        workbench_ = std::make_unique<Workbench>(colors_);
+        workbench_->set_zoom(&zoom_);
+        workbench_->set_editor_area(new QLabel("editor"));
+        workbench_->resize(1400, 900);
+        sidebar_ = std::make_unique<Sidebar>(*workbench_, registry_, colors_);
+        panel_ = std::make_unique<Panel>(*workbench_, registry_, colors_);
+        for (const auto& [id, location] : {std::pair{"side", ViewContainerLocation::sidebar},
+                                           std::pair{"bottom", ViewContainerLocation::panel}}) {
+            ViewContainer container;
+            container.id = id;
+            container.title = id;
+            container.location = location;
+            container.create = [] { return new QLabel("view"); };
+            registry_.add(std::move(container));
+        }
+        workbench_->show();
+        QApplication::processEvents();
+    }
+    ViewContainerRegistry registry_;
+    std::unique_ptr<Workbench> workbench_;
+    std::unique_ptr<Sidebar> sidebar_;
+    std::unique_ptr<Panel> panel_;
+};
+
+TEST_F(WorkbenchZoomTest, TheMinimumSizesTheSashesAndTheHeadersAreTheSizesAtLevelZeroScaled) {
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_visible(Part::panel, true);
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        EXPECT_EQ(workbench_->sidebar()->minimumWidth(),
+                  zoom_.scaled(Workbench::sidebar_minimum_width));
+        EXPECT_EQ(workbench_->panel()->minimumHeight(),
+                  zoom_.scaled(Workbench::panel_minimum_height));
+        workbench_->set_size(Part::sidebar, 1);
+        workbench_->set_size(Part::panel, 1);
+        QApplication::processEvents();
+        EXPECT_EQ(workbench_->size(Part::sidebar), zoom_.scaled(Workbench::sidebar_minimum_width));
+        EXPECT_EQ(workbench_->size(Part::panel), zoom_.scaled(Workbench::panel_minimum_height));
+        for (const QSplitter* splitter : workbench_->findChildren<QSplitter*>()) {
+            EXPECT_EQ(splitter->handleWidth(), zoom_.scaled(Splitter::sash_width));
+        }
+        EXPECT_EQ(sidebar_->title_height(), zoom_.scaled(35));
+        const QWidget* title = sidebar_->title_actions()->parentWidget();
+        EXPECT_EQ(title->height(), zoom_.scaled(35));
+        EXPECT_EQ(title->layout()->contentsMargins().left(), zoom_.scaled(20));
+        EXPECT_EQ(title->layout()->contentsMargins().right(), zoom_.scaled(8));
+        EXPECT_EQ(panel_->header_size(), zoom_.scaled(Panel::header_height));
+        for (const QToolButton* button : {panel_->maximize_button(), panel_->close_button()}) {
+            EXPECT_EQ(button->size(), QSize(zoom_.scaled(28), zoom_.scaled(28)));
+        }
+        EXPECT_EQ(panel_->tab("bottom")->height(), zoom_.scaled(Panel::header_height));
+    }
+}
+
+TEST_F(WorkbenchZoomTest, APartThatIsShownForTheFirstTimeStartsAtTheScaledDefaultSize) {
+    zoom_.set_level(3);
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->size(Part::sidebar), zoom_.scaled(Workbench::default_size), 2);
+    EXPECT_NEAR(workbench_->size(Part::panel), zoom_.scaled(Workbench::default_size), 2);
+}
+
+TEST_F(WorkbenchZoomTest, ALevelChangeKeepsTheSizeOfAPartAndMovesItOnlyToItsNewMinimum) {
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_size(Part::sidebar, 200);
+    workbench_->set_size(Part::panel, 400);
+    QApplication::processEvents();
+    ASSERT_EQ(workbench_->size(Part::sidebar), 200);
+    ASSERT_EQ(workbench_->size(Part::panel), 400);
+
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->size(Part::sidebar), zoom_.scaled(Workbench::sidebar_minimum_width))
+        << "200 is under the minimum of level 3";
+    EXPECT_EQ(workbench_->size(Part::panel), 400);
+
+    zoom_.set_level(-2);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->size(Part::panel), 400);
+    EXPECT_GE(workbench_->size(Part::sidebar), zoom_.scaled(Workbench::sidebar_minimum_width));
+}
+
+TEST_F(WorkbenchZoomTest, ASidebarThatWasDraggedToAWidthKeepsItAcrossALevelChange) {
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    QSplitter* across = nullptr;
+    for (QSplitter* splitter : workbench_->findChildren<QSplitter*>()) {
+        if (splitter->orientation() == Qt::Horizontal &&
+            splitter->indexOf(workbench_->sidebar()) >= 0) {
+            across = splitter;
+        }
+    }
+    ASSERT_NE(across, nullptr);
+    QWidget* sash = across->handle(1);
+    const QPoint start = sash->rect().center();
+    QTest::mousePress(sash, Qt::LeftButton, {}, start);
+    QTest::mouseMove(sash, start + QPoint(300, 0));
+    QTest::mouseRelease(sash, Qt::LeftButton, {}, start + QPoint(300, 0));
+    QApplication::processEvents();
+    const int dragged = workbench_->sidebar()->width();
+    ASSERT_GT(dragged, 500);
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), dragged, 2);
+}
+
+TEST_F(WorkbenchZoomTest, APartThatWasNeverResizedFollowsTheScaledDefaultWhenTheLevelChanges) {
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    ASSERT_NEAR(workbench_->sidebar()->width(), Workbench::default_size, 2);
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->sidebar()->width(), zoom_.scaled(Workbench::default_size), 2);
+}
+
+TEST_F(WorkbenchZoomTest, AHiddenPartKeepsItsSizeAcrossALevelChangeToo) {
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_size(Part::sidebar, 500);
+    QApplication::processEvents();
+    workbench_->set_visible(Part::sidebar, false);
+    zoom_.set_level(3);
+    workbench_->set_visible(Part::sidebar, true);
+    QApplication::processEvents();
+    EXPECT_NEAR(workbench_->size(Part::sidebar), 500, 2);
+}
+
+TEST_F(WorkbenchZoomTest, TheWindowAtTheEndsOfTheRangeHasNoPartWiderThanItselfAndNoOverlap) {
+    workbench_->set_visible(Part::activity_bar, true);
+    workbench_->set_visible(Part::sidebar, true);
+    workbench_->set_visible(Part::panel, true);
+    for (const double level : {-8.0, 8.0}) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        const int across = workbench_->size(Part::activity_bar) + workbench_->size(Part::sidebar) +
+                           workbench_->size(Part::editor);
+        EXPECT_LE(across, workbench_->width());
+        for (QWidget* part :
+             {workbench_->activity_bar(), workbench_->sidebar(), workbench_->panel()}) {
+            EXPECT_LE(part->geometry().right(), workbench_->width());
+            EXPECT_LE(part->geometry().bottom(), workbench_->height());
+        }
+        const QRect sidebar(workbench_->sidebar()->mapTo(workbench_.get(), QPoint(0, 0)),
+                            workbench_->sidebar()->size());
+        const QRect activity(workbench_->activity_bar()->mapTo(workbench_.get(), QPoint(0, 0)),
+                             workbench_->activity_bar()->size());
+        EXPECT_FALSE(sidebar.intersects(activity));
+    }
+}
+
+// --- the find bar ---
+
+class FindBarZoomTest : public ZoomPartsTest {
+protected:
+    void SetUp() override {
+        host_ = std::make_unique<QWidget>();
+        view_ = new EditorView(host_.get());
+        bar_ = new FindBar(view_, host_.get());
+        base_ = QFontInfo(bar_->font()).pixelSize();
+        bar_->set_zoom(&zoom_);
+        host_->resize(800, 400);
+        host_->show();
+        bar_->open();
+        QApplication::processEvents();
+    }
+    std::unique_ptr<QWidget> host_;
+    EditorView* view_ = nullptr;
+    FindBar* bar_ = nullptr;
+    int base_ = 0;
+};
+
+TEST_F(FindBarZoomTest, TheFontTheMarginsAndTheSpacingAreScaled) {
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        EXPECT_EQ(bar_->font().pixelSize(), zoom_.scaled(base_));
+        for (const QWidget* child : bar_->findChildren<QWidget*>()) {
+            EXPECT_EQ(child->font().pixelSize(), zoom_.scaled(base_))
+                << child->metaObject()->className();
+        }
+        const QMargins margins = bar_->layout()->contentsMargins();
+        EXPECT_EQ(margins,
+                  QMargins(zoom_.scaled(6), zoom_.scaled(4), zoom_.scaled(6), zoom_.scaled(4)));
+        EXPECT_EQ(bar_->layout()->spacing(), zoom_.scaled(4));
+        EXPECT_GE(bar_->sizeHint().height(),
+                  bar_->fontMetrics().height() + margins.top() + margins.bottom());
+    }
+}
+
+TEST_F(FindBarZoomTest, TheBarGrowsWithTheZoomAndTheFieldStaysInsideIt) {
+    const int plain = bar_->sizeHint().height();
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_GT(bar_->sizeHint().height(), plain);
+    EXPECT_TRUE(bar_->rect().contains(bar_->findChild<QLineEdit*>()->geometry()));
+}
+
+// --- the quick pick ---
+
+class QuickPickZoomTest : public ZoomPartsTest {
+protected:
+    void SetUp() override {
+        host_ = std::make_unique<QWidget>();
+        host_->resize(1400, 900);
+        pick_ = new QuickPick(host_.get(), colors_);
+        base_points_ = QFontInfo(pick_->font()).pointSizeF();
+        pick_->set_zoom(&zoom_);
+        std::vector<QuickPickItem> items;
+        for (const char* label : {"One", "Two", "Three"}) {
+            items.push_back({label, {}, {}, {}});
+        }
+        items.push_back({"Four", {}, "detail of four", {}});
+        pick_->set_items(std::move(items));
+        host_->show();
+        pick_->open();
+        QApplication::processEvents();
+    }
+    std::unique_ptr<QWidget> host_;
+    QuickPick* pick_ = nullptr;
+    qreal base_points_ = 0;
+};
+
+TEST_F(QuickPickZoomTest, TheRowsTheWidthAndTheFontAreTheSizesAtLevelZeroScaled) {
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        EXPECT_EQ(pick_->row_size(), zoom_.scaled(QuickPick::row_height));
+        EXPECT_EQ(pick_->list()->sizeHintForRow(0), zoom_.scaled(QuickPick::row_height));
+        EXPECT_EQ(pick_->list()->sizeHintForRow(3), 2 * zoom_.scaled(QuickPick::row_height))
+            << "an item with a detail has two lines";
+        EXPECT_EQ(pick_->width(),
+                  std::min(zoom_.scaled(600), host_->width() - 2 * zoom_.scaled(8)));
+        EXPECT_NEAR(pick_->font().pointSizeF(), base_points_ * zoom_.factor(), 0.01);
+        EXPECT_NEAR(pick_->filter_field()->font().pointSizeF(), base_points_ * zoom_.factor(),
+                    0.01);
+        EXPECT_EQ(pick_->list()->verticalScrollBar()->maximumWidth(),
+                  zoom_.scaled(pick_->style()->pixelMetric(QStyle::PM_ScrollBarExtent)));
+        const int blur = zoom_.scaled(20);
+        bool shadow = false;
+        for (const QWidget* sibling : host_->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+            shadow = shadow ||
+                     (sibling != pick_ &&
+                      sibling->geometry() == pick_->geometry().adjusted(-blur, -blur, blur, blur));
+        }
+        EXPECT_TRUE(shadow) << "the shadow is larger than the popup by the scaled blur";
+        EXPECT_EQ(pick_->list()->height(), 3 * zoom_.scaled(QuickPick::row_height) +
+                                               2 * zoom_.scaled(QuickPick::row_height));
+    }
+}
+
+TEST_F(QuickPickZoomTest, ARowIsClickedWhereItIsDrawnAtLevelThree) {
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    const QModelIndex second = pick_->list()->model()->index(1, 0);
+    const QPoint inside = pick_->list()->visualRect(second).center();
+    QTest::mouseClick(pick_->list()->viewport(), Qt::LeftButton, {}, inside);
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.at(0).at(0).toULongLong(), 1U);
+}
+
+TEST_F(QuickPickZoomTest, AWindowTooNarrowForTheScaledWidthGetsTheWholeWindowLessItsMargins) {
+    host_->resize(700, 900);
+    zoom_.set_level(3);
+    QApplication::processEvents();
+    EXPECT_EQ(pick_->width(), 700 - 2 * zoom_.scaled(8));
+    EXPECT_GE(pick_->x(), 0);
+}
+
+// --- the menus ---
+
+class MenuStyleZoomTest : public ZoomPartsTest {
+protected:
+    MenuStyleZoomTest() : style_(colors_) {
+        style_.set_zoom(&zoom_);
+    }
+    QSize item_size(const QString& text,
+                    QStyleOptionMenuItem::MenuItemType type = QStyleOptionMenuItem::Normal) {
+        QStyleOptionMenuItem option;
+        option.menuItemType = type;
+        option.text = text;
+        option.font = QApplication::font();
+        option.fontMetrics = QFontMetrics(option.font);
+        return style_.sizeFromContents(QStyle::CT_MenuItem, &option, QSize(0, 0), nullptr);
+    }
+    MenuStyle style_;
+};
+
+TEST_F(MenuStyleZoomTest, TheMeasuresOfAnItemAreTheSizesAtLevelZeroScaled) {
+    const QFontMetrics metrics(QApplication::font());
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        SCOPED_TRACE(level);
+        const QSize plain = item_size("Open");
+        EXPECT_EQ(plain.height(), std::max(zoom_.scaled(MenuStyle::item_height),
+                                           metrics.height() + zoom_.scaled(8)));
+        EXPECT_EQ(plain.width(), zoom_.scaled(MenuStyle::label_left) +
+                                     metrics.horizontalAdvance("Open") +
+                                     zoom_.scaled(MenuStyle::shortcut_right));
+        const QSize with_key = item_size("Open\tCtrl+O");
+        EXPECT_EQ(with_key.width(), zoom_.scaled(MenuStyle::label_left) +
+                                        metrics.horizontalAdvance("Open") +
+                                        zoom_.scaled(MenuStyle::shortcut_right) +
+                                        zoom_.scaled(MenuStyle::label_to_shortcut) +
+                                        metrics.horizontalAdvance("Ctrl+O"));
+        EXPECT_EQ(item_size("", QStyleOptionMenuItem::Separator).height(),
+                  zoom_.scaled(MenuStyle::separator_height));
+        EXPECT_EQ(style_.pixelMetric(QStyle::PM_MenuVMargin, nullptr, nullptr),
+                  zoom_.scaled(MenuStyle::vertical_margin));
+        EXPECT_EQ(style_.pixelMetric(QStyle::PM_MenuPanelWidth, nullptr, nullptr),
+                  MenuStyle::frame_width);
+    }
+}
+
+TEST_F(MenuStyleZoomTest, AMenuShownAtLevelThreeHasItemsOfTheScaledHeight) {
+    QMenu menu;
+    menu.setStyle(&style_);
+    QAction* first = menu.addAction("First");
+    QAction* second = menu.addAction("Second");
+    menu.addSeparator();
+    QAction* third = menu.addAction("Third");
+    zoom_.set_level(3);
+    menu.show();
+    QApplication::processEvents();
+    EXPECT_GE(menu.actionGeometry(first).height(), zoom_.scaled(MenuStyle::item_height));
+    EXPECT_EQ(menu.actionGeometry(first).height(), menu.actionGeometry(second).height());
+    EXPECT_EQ(menu.actionGeometry(second).bottom() + 1 + zoom_.scaled(MenuStyle::separator_height),
+              menu.actionGeometry(third).top());
+}
+
+// --- the Explorer ---
+
+class ExplorerZoomTest : public ZoomPartsTest {
+protected:
+    void SetUp() override {
+        folder_ = std::filesystem::temp_directory_path() /
+                  ("anvil-zoom-explorer-" + std::to_string(::getpid()));
+        std::filesystem::create_directories(folder_ / "src");
+        for (const char* name : {"a.txt", "b.txt"}) {
+            std::ofstream(folder_ / name) << "x";
+        }
+        view_ = std::make_unique<ExplorerView>(colors_);
+        view_->set_zoom(&zoom_);
+        view_->resize(400, 600);
+        view_->set_workspace(folder_, "project");
+        view_->show();
+        QApplication::processEvents();
+    }
+    void TearDown() override {
+        view_.reset();
+        std::filesystem::remove_all(folder_);
+    }
+    std::filesystem::path folder_;
+    std::unique_ptr<ExplorerView> view_;
+};
+
+TEST_F(ExplorerZoomTest, TheRowsTheIndentationTheScrollBarAndTheFontAreScaled) {
+    const int base_font = QFontInfo(view_->font()).pixelSize();
+    const int bar = view_->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return view_->tree()->model()->rowCount() == 3; }));
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        const QModelIndex first = view_->tree()->model()->index(0, 0);
+        EXPECT_EQ(view_->tree()->visualRect(first).height(), zoom_.scaled(22));
+        EXPECT_EQ(view_->tree()->indentation(), zoom_.scaled(8));
+        EXPECT_EQ(view_->tree()->verticalScrollBar()->width(), zoom_.scaled(bar));
+        EXPECT_EQ(view_->font().pixelSize(), zoom_.scaled(base_font));
+        EXPECT_EQ(view_->open_folder_button()->font().pixelSize(), zoom_.scaled(base_font));
+        EXPECT_EQ(view_->message()->font().pixelSize(), zoom_.scaled(base_font));
+    }
 }
 
 } // namespace

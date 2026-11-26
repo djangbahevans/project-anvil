@@ -62,8 +62,20 @@ private:
 Splitter::Splitter(Qt::Orientation orientation, const WorkbenchColors& colors,
                    std::string_view border, QWidget* parent)
     : QSplitter(orientation, parent), colors_(colors), border_(border) {
-    setHandleWidth(sash_width);
+    setHandleWidth(scaled_by(zoom_, sash_width));
     setChildrenCollapsible(false);
+}
+
+void Splitter::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this,
+                [this] { setHandleWidth(scaled_by(zoom_, sash_width)); });
+    }
+    setHandleWidth(scaled_by(zoom_, sash_width));
 }
 
 QSplitterHandle* Splitter::createHandle() {

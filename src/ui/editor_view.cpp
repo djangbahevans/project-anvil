@@ -1,6 +1,7 @@
 #include "anvil/ui/editor_view.hpp"
 
 #include "anvil/core/zoom.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -27,8 +28,8 @@ QColor to_color(const core::Rgba& color) {
     return QColor(color.red, color.green, color.blue, color.alpha);
 }
 
-constexpr int text_padding = 6;
-constexpr int gutter_padding = 8;
+constexpr int text_padding_px = 6;
+constexpr int gutter_padding_px = 8;
 const QColor match_highlight(255, 190, 0, 90);
 // VS Code draws a control character in white on this red, whatever the theme.
 const QColor control_background(150, 0, 0);
@@ -193,6 +194,9 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     render_control_characters_ = settings.render_control_characters;
     multi_cursor_modifier_ = settings.multi_cursor_modifier;
     column_selection_ = settings.column_selection;
+    text_padding_ = core::scale_for_zoom(text_padding_px, settings.zoom_level);
+    gutter_padding_ = core::scale_for_zoom(gutter_padding_px, settings.zoom_level);
+    scale_scroll_bars(*this, settings.zoom_level);
     const QFont wanted = font_for(settings.font_family,
                                   core::scale_for_zoom(settings.font_size, settings.zoom_level));
     if (wanted != font()) {
@@ -312,11 +316,11 @@ int EditorView::gutter_width() const {
     }
     const int digits =
         std::max(3, static_cast<int>(QString::number(document_->text().line_count()).size()));
-    return digits * char_width_ + 2 * gutter_padding;
+    return digits * char_width_ + 2 * gutter_padding_;
 }
 
 int EditorView::text_origin_x() const {
-    return gutter_width() + text_padding - horizontalScrollBar()->value();
+    return gutter_width() + text_padding_ - horizontalScrollBar()->value();
 }
 
 QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenTheme& token_theme,
@@ -421,7 +425,7 @@ void EditorView::update_scroll_bars() {
     verticalScrollBar()->setRange(
         0, std::max(0, lines * line_height_ - viewport()->height() + line_height_));
     verticalScrollBar()->setPageStep(viewport()->height());
-    const int available = viewport()->width() - gutter_width() - 2 * text_padding;
+    const int available = viewport()->width() - gutter_width() - 2 * text_padding_;
     horizontalScrollBar()->setRange(0, std::max(0, max_line_width_ - available));
     horizontalScrollBar()->setPageStep(available);
 }
@@ -442,7 +446,7 @@ void EditorView::ensure_cursor_visible() {
 
     const auto layout = layout_line(position.line);
     const int x = static_cast<int>(layout->x_of(position.column));
-    const int available = viewport()->width() - gutter_width() - 2 * text_padding;
+    const int available = viewport()->width() - gutter_width() - 2 * text_padding_;
     QScrollBar* horizontal = horizontalScrollBar();
     if (x < horizontal->value()) {
         horizontal->setValue(x);
@@ -1222,7 +1226,7 @@ void EditorView::paintEvent(QPaintEvent*) {
     for (std::size_t line = first; line < last; ++line) {
         const int y = static_cast<int>(line) * line_height_ - scroll_y;
         painter.setPen(line == active_line ? colors.line_number_active : colors.line_number);
-        painter.drawText(QRect(0, y, gutter - gutter_padding, line_height_),
+        painter.drawText(QRect(0, y, gutter - gutter_padding_, line_height_),
                          Qt::AlignRight | Qt::AlignVCenter, QString::number(line + 1));
     }
 

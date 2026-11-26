@@ -2,6 +2,7 @@
 
 #include <QAbstractListModel>
 #include <QApplication>
+#include <QFontInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -19,15 +20,23 @@
 namespace anvil::ui {
 namespace {
 
-constexpr int max_width = 600;
-constexpr int window_margin = 8;
-constexpr int text_padding = 8;
-constexpr int detail_row_height = 2 * QuickPick::row_height;
-constexpr qreal corner_radius = 8;
-constexpr int shadow_blur = 20;
+// The sizes at zoom level 0; the popup reads them through its zoom.
+constexpr int max_width_px = 600;
+constexpr int window_margin_px = 8;
+constexpr int text_padding_px = 8;
+constexpr int detail_row_lines = 2;
+constexpr qreal corner_radius_px = 8;
+constexpr int shadow_blur_px = 20;
 // The highlight of a row is inset from the edges of the list, and its text from the highlight.
-constexpr int row_inset = 4;
-constexpr int header_padding = 6;
+constexpr int row_inset_px = 4;
+constexpr int header_padding_px = 6;
+constexpr int list_slack_px = 6;
+constexpr int header_bottom_padding_px = 4;
+constexpr int input_radius_px = 6;
+constexpr int input_vertical_padding_px = 3;
+constexpr int input_horizontal_padding_px = 6;
+constexpr int row_bottom_text_gap_px = 2;
+constexpr int highlight_radius_px = 3;
 constexpr std::size_t no_separator = static_cast<std::size_t>(-1);
 
 QString css(const QColor& color) {
@@ -93,7 +102,8 @@ private:
 // cannot draw outside its own bounds.
 class QuickPick::Shadow : public QWidget {
 public:
-    Shadow(QWidget* window, const WorkbenchColors& colors) : QWidget(window), colors_(colors) {
+    Shadow(QWidget* window, const QuickPick& pick, const WorkbenchColors& colors)
+        : QWidget(window), pick_(pick), colors_(colors) {
         setAttribute(Qt::WA_TransparentForMouseEvents);
         hide();
     }
@@ -103,10 +113,13 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         const QColor base = colors_.color("widget.shadow");
+        const int shadow_blur = pick_.zoomed(shadow_blur_px);
+        const qreal corner_radius = pick_.zoomed_radius();
         const QRectF card =
             QRectF(rect()).adjusted(shadow_blur, shadow_blur, -shadow_blur, -shadow_blur);
         for (int distance = shadow_blur; distance >= 1; --distance) {
-            const float falloff = 1.0F - static_cast<float>(distance) / (shadow_blur + 1);
+            const float falloff =
+                1.0F - static_cast<float>(distance) / static_cast<float>(shadow_blur + 1);
             QColor color = base;
             color.setAlphaF(base.alphaF() * falloff * falloff * 0.5F);
             painter.setPen(QPen(color, 1));
@@ -117,18 +130,20 @@ protected:
     }
 
 private:
+    const QuickPick& pick_;
     const WorkbenchColors& colors_;
 };
 
 class QuickPick::Delegate : public QStyledItemDelegate {
 public:
-    Delegate(const WorkbenchColors& colors, QObject* parent)
-        : QStyledItemDelegate(parent), colors_(colors) {}
+    Delegate(const QuickPick& pick, const WorkbenchColors& colors, QObject* parent)
+        : QStyledItemDelegate(parent), pick_(pick), colors_(colors) {}
 
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex& index) const override {
         const auto* model = static_cast<const Model*>(index.model());
         const bool two_lines = !model->item_of(index).detail.isEmpty();
-        return {0, two_lines ? detail_row_height : row_height};
+        const int row_height = pick_.row_size();
+        return {0, two_lines ? detail_row_lines * row_height : row_height};
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -138,13 +153,17 @@ public:
         const Model::Row& row = model->row_of(index);
         const bool selected = option.state & QStyle::State_Selected;
 
+        const int row_height = pick_.row_size();
+        const int row_inset = pick_.zoomed(row_inset_px);
+        const int text_padding = pick_.zoomed(text_padding_px);
         painter->save();
         painter->setClipRect(option.rect);
         painter->setRenderHint(QPainter::Antialiasing);
         if (selected) {
             QPainterPath highlight;
-            highlight.addRoundedRect(QRectF(option.rect).adjusted(row_inset, 0, -row_inset, 0), 3,
-                                     3);
+            highlight.addRoundedRect(QRectF(option.rect).adjusted(row_inset, 0, -row_inset, 0),
+                                     pick_.zoomed(highlight_radius_px),
+                                     pick_.zoomed(highlight_radius_px));
             painter->fillPath(highlight, colors_.color("quickInputList.focusBackground"));
         }
         if (row.separator != no_separator && index.row() > 0) {
@@ -237,13 +256,15 @@ public:
             painter->setFont(small);
             painter->setPen(dim);
             painter->drawText(option.rect.left() + row_inset + text_padding,
-                              option.rect.top() + row_height + QFontMetrics(small).ascent() + 2,
+                              option.rect.top() + row_height + QFontMetrics(small).ascent() +
+                                  pick_.zoomed(row_bottom_text_gap_px),
                               item.detail);
         }
         painter->restore();
     }
 
 private:
+    const QuickPick& pick_;
     const WorkbenchColors& colors_;
 };
 
@@ -252,12 +273,12 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
     hide();
 
     setAttribute(Qt::WA_TranslucentBackground);
-    shadow_ = new Shadow(window, colors_);
+    shadow_ = new Shadow(window, *this, colors_);
     header_ = new QWidget(this);
     filter_ = new QLineEdit(header_);
     filter_->installEventFilter(this);
     auto* header_layout = new QHBoxLayout(header_);
-    header_layout->setContentsMargins(header_padding, header_padding, header_padding, 4);
+    header_layout_ = header_layout;
     header_layout->addWidget(filter_);
     list_ = new QListView(this);
     list_->setFrameShape(QFrame::NoFrame);
@@ -266,16 +287,14 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    list_->setItemDelegate(new Delegate(colors_, list_));
+    list_->setItemDelegate(new Delegate(*this, colors_, list_));
     model_ = new Model(items_, this);
     list_->setModel(model_);
     empty_ = new QLabel(this);
-    empty_->setContentsMargins(text_padding, 0, text_padding, 0);
-    empty_->setFixedHeight(row_height);
     empty_->hide();
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(1, 1, 1, static_cast<int>(corner_radius) - 1);
+    layout_ = layout;
     layout->setSpacing(0);
     layout->addWidget(header_);
     layout->addWidget(list_);
@@ -294,7 +313,48 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
             [this](QWidget*, QWidget* now) { on_focus_changed(now); });
     window->installEventFilter(this);
     connect(&colors_, &WorkbenchColors::changed, this, [this] { apply_colors(); });
+    base_font_points_ = QFontInfo(font()).pointSizeF();
+    apply_zoom();
+}
+
+void QuickPick::set_zoom(const Zoom* zoom) {
+    if (zoom_) {
+        disconnect(zoom_, &Zoom::changed, this, nullptr);
+    }
+    zoom_ = zoom;
+    if (zoom_) {
+        connect(zoom_, &Zoom::changed, this, &QuickPick::apply_zoom);
+    }
+    apply_zoom();
+}
+
+int QuickPick::row_size() const {
+    return zoomed(row_height);
+}
+
+qreal QuickPick::zoomed_radius() const {
+    return zoom_ ? corner_radius_px * zoom_->factor() : corner_radius_px;
+}
+
+void QuickPick::apply_zoom() {
+    QFont popup_font = font();
+    popup_font.setPointSizeF(zoom_ ? base_font_points_ * zoom_->factor() : base_font_points_);
+    setFont(popup_font);
+    // The field and the message have fonts of their own that a parent's font does not reach.
+    filter_->setFont(popup_font);
+    empty_->setFont(popup_font);
+    list_->setFont(popup_font);
+    scale_scroll_bars(*list_, zoom_ ? zoom_->level() : 0);
+    const int padding = zoomed(header_padding_px);
+    header_layout_->setContentsMargins(padding, padding, padding, zoomed(header_bottom_padding_px));
+    empty_->setContentsMargins(zoomed(text_padding_px), 0, zoomed(text_padding_px), 0);
+    empty_->setFixedHeight(row_size());
+    layout_->setContentsMargins(1, 1, 1, static_cast<int>(zoomed_radius()) - 1);
     apply_colors();
+    list_->doItemsLayout();
+    if (isVisible()) {
+        reposition();
+    }
 }
 
 QuickPick::~QuickPick() = default;
@@ -306,11 +366,14 @@ void QuickPick::apply_colors() {
     input.setColor(QPalette::PlaceholderText, colors_.color("input.placeholderForeground"));
     filter_->setPalette(input);
     filter_->setStyleSheet(
-        QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; "
-                "padding: 3px 6px; }"
+        QString("QLineEdit { background: %1; color: %2; border: 1px solid %3; border-radius: %5px; "
+                "padding: %6px %7px; }"
                 "QLineEdit:focus { border-color: %4; }")
             .arg(css(colors_.color("input.background")), css(colors_.color("input.foreground")),
-                 css(colors_.color("input.border")), css(colors_.color("focusBorder"))));
+                 css(colors_.color("input.border")), css(colors_.color("focusBorder")))
+            .arg(zoomed(input_radius_px))
+            .arg(zoomed(input_vertical_padding_px))
+            .arg(zoomed(input_horizontal_padding_px)));
 
     QPalette list = list_->palette();
     list.setColor(QPalette::Base, colors_.color("quickInput.background"));
@@ -328,14 +391,15 @@ void QuickPick::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     QPainterPath card;
-    card.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), corner_radius,
-                        corner_radius);
+    card.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), zoomed_radius(),
+                        zoomed_radius());
     painter.fillPath(card, colors_.color("quickInput.background"));
     painter.setPen(colors_.color("widget.border"));
     painter.drawPath(card);
 }
 
 void QuickPick::sync_shadow() {
+    const int shadow_blur = zoomed(shadow_blur_px);
     shadow_->setGeometry(geometry().adjusted(-shadow_blur, -shadow_blur, shadow_blur, shadow_blur));
     shadow_->setVisible(isVisible());
     shadow_->stackUnder(this);
@@ -489,7 +553,9 @@ void QuickPick::refilter() {
 
 void QuickPick::reposition() {
     QWidget* window = parentWidget();
-    const int width = std::min(max_width, window->width() - 2 * window_margin);
+    const int row_height = row_size();
+    const int window_margin = zoomed(window_margin_px);
+    const int width = std::min(zoomed(max_width_px), window->width() - 2 * window_margin);
     const int rows = model_->rowCount();
 
     int list_height = 0;
@@ -497,8 +563,9 @@ void QuickPick::reposition() {
         int content = 0;
         if (has_detail_) {
             for (int row = 0; row < rows; ++row) {
-                content += model_->item_of(model_->index(row)).detail.isEmpty() ? row_height
-                                                                                : detail_row_height;
+                content += model_->item_of(model_->index(row)).detail.isEmpty()
+                               ? row_height
+                               : detail_row_lines * row_height;
             }
         } else {
             content = rows * row_height;
@@ -507,7 +574,7 @@ void QuickPick::reposition() {
             window->height() - top_offset_ - header_->sizeHint().height() - 2 * window_margin;
         const int fitting = std::max(3, available / row_height);
         const int limit = std::min(max_visible_rows, fitting) * row_height;
-        list_height = std::min(content, limit + 6);
+        list_height = std::min(content, limit + zoomed(list_slack_px));
     }
     list_->setVisible(rows > 0);
     empty_->setVisible(rows == 0 && !empty_->text().isEmpty());
@@ -571,7 +638,7 @@ bool QuickPick::eventFilter(QObject* watched, QEvent* event) {
         return false;
     }
     const auto* key = static_cast<QKeyEvent*>(event);
-    const int page = std::max(1, list_->viewport()->height() / row_height - 1);
+    const int page = std::max(1, list_->viewport()->height() / row_size() - 1);
     switch (key->key()) {
     case Qt::Key_Down:
         move_selection(1, true);

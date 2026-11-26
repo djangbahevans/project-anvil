@@ -2,6 +2,7 @@
 
 #include "anvil/core/fuzzy.hpp"
 #include "anvil/ui/workbench_colors.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QFrame>
 #include <QPointer>
@@ -10,7 +11,9 @@
 #include <string>
 #include <vector>
 
+class QHBoxLayout;
 class QLabel;
+class QVBoxLayout;
 class QLineEdit;
 class QListView;
 
@@ -44,6 +47,7 @@ class QuickPick : public QFrame {
     Q_OBJECT
 
 public:
+    // The height of a row at zoom level 0.
     static constexpr int row_height = 22;
     // The list shows this many rows at most, fewer in a window that is not high enough.
     static constexpr int max_visible_rows = 20;
@@ -53,6 +57,12 @@ public:
     // keys of `colors`, and the popup repaints when they change.
     QuickPick(QWidget* window, const WorkbenchColors& colors);
     ~QuickPick() override;
+
+    // The zoom that the sizes of the popup are read through (rows, paddings, font, shadow, width),
+    // which must outlive it; the popup follows it when it changes. Null means level 0.
+    void set_zoom(const Zoom* zoom);
+    // The height of a row at the zoom now.
+    int row_size() const;
 
     // Replaces the items; the filter is applied again.
     void set_items(std::vector<QuickPickItem> items);
@@ -126,9 +136,18 @@ private:
     void close_popup(bool restore_focus);
     void on_focus_changed(QWidget* now);
     void apply_colors();
+    void apply_zoom();
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    qreal zoomed_radius() const;
     void sync_shadow();
 
     const WorkbenchColors& colors_;
+    const Zoom* zoom_ = nullptr;
+    qreal base_font_points_ = 0;
+    QHBoxLayout* header_layout_ = nullptr;
+    QVBoxLayout* layout_ = nullptr;
     QWidget* header_ = nullptr;
     QLineEdit* filter_ = nullptr;
     QListView* list_ = nullptr;

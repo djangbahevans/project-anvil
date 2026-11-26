@@ -152,6 +152,13 @@ public:
         return !preedit_.isEmpty();
     }
 
+    // The space before the text of a line and around the line numbers, at the zoom of the settings.
+    int text_padding() const {
+        return text_padding_;
+    }
+    int gutter_padding() const {
+        return gutter_padding_;
+    }
     int line_height() const {
         return line_height_;
     }
@@ -236,6 +243,8 @@ private:
     QMetaObject::Connection colors_connection_;
     std::shared_ptr<core::Document> document_;
     std::unique_ptr<core::EditController> controller_;
+    int text_padding_ = 6;
+    int gutter_padding_ = 8;
     int line_height_ = 16;
     int char_width_ = 8;
     std::size_t tab_size_ = 4;

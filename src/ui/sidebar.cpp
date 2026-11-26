@@ -9,23 +9,35 @@
 namespace anvil::ui {
 namespace {
 
-constexpr int title_height = 35;
+constexpr int title_height_pixels = 35;
 constexpr int title_padding = 20;
+constexpr int title_right_padding = 8;
+constexpr int title_font_pixels = 11;
 
 } // namespace
 
 // The title above the container: its name in capitals, and room for actions on the right.
 class Sidebar::Title : public QWidget {
 public:
-    Title(const WorkbenchColors& colors, QWidget* parent) : QWidget(parent), colors_(colors) {
-        setFixedHeight(title_height);
-        auto* layout = new QHBoxLayout(this);
-        layout->setContentsMargins(title_padding, 0, 8, 0);
-        layout->addStretch(1);
+    Title(const WorkbenchColors& colors, const Zoom* zoom, QWidget* parent)
+        : QWidget(parent), colors_(colors), zoom_(zoom) {
+        layout_ = new QHBoxLayout(this);
+        layout_->addStretch(1);
         actions_ = new QWidget(this);
         auto* actions_layout = new QHBoxLayout(actions_);
         actions_layout->setContentsMargins(0, 0, 0, 0);
-        layout->addWidget(actions_);
+        layout_->addWidget(actions_);
+        apply_zoom();
+    }
+
+    int height_now() const {
+        return scaled_by(zoom_, title_height_pixels);
+    }
+    void apply_zoom() {
+        setFixedHeight(height_now());
+        layout_->setContentsMargins(scaled_by(zoom_, title_padding), 0,
+                                    scaled_by(zoom_, title_right_padding), 0);
+        update();
     }
 
     void set_text(const QString& text) {
@@ -43,22 +55,25 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         QFont font = painter.font();
-        font.setPixelSize(11);
+        font.setPixelSize(scaled_by(zoom_, title_font_pixels));
         font.setBold(true);
         painter.setFont(font);
         painter.setPen(colors_.color("sideBarTitle.foreground"));
-        painter.drawText(QRect(title_padding, 0, width() - title_padding, height()),
+        const int padding = scaled_by(zoom_, title_padding);
+        painter.drawText(QRect(padding, 0, width() - padding, height()),
                          Qt::AlignVCenter | Qt::AlignLeft, text_);
     }
 
 private:
     const WorkbenchColors& colors_;
+    const Zoom* zoom_;
+    QHBoxLayout* layout_ = nullptr;
     QString text_;
     QWidget* actions_ = nullptr;
 };
 
-void Sidebar::set_zoom(const Zoom* zoom) {
-    activity_bar_->set_zoom(zoom);
+int Sidebar::title_height() const {
+    return title_->height_now();
 }
 
 Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
@@ -67,12 +82,16 @@ Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
     auto* activity_layout = new QVBoxLayout(workbench_.activity_bar());
     activity_layout->setContentsMargins(0, 0, 0, 0);
     activity_bar_ = new ActivityBar(colors, workbench_.activity_bar());
+    activity_bar_->set_zoom(workbench_.zoom());
     activity_layout->addWidget(activity_bar_);
 
     auto* content = new QVBoxLayout(workbench_.sidebar());
     content->setContentsMargins(0, 0, 0, 0);
     content->setSpacing(0);
-    title_ = new Title(colors, workbench_.sidebar());
+    title_ = new Title(colors, workbench_.zoom(), workbench_.sidebar());
+    if (workbench_.zoom()) {
+        connect(workbench_.zoom(), &Zoom::changed, title_, [this] { title_->apply_zoom(); });
+    }
     title_actions_ = title_->actions();
     stack_ = std::make_unique<ViewContainerStack>(registry_, ViewContainerLocation::sidebar,
                                                   workbench_.sidebar());

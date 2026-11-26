@@ -2,6 +2,7 @@
 
 #include "anvil/core/search.hpp"
 #include "anvil/ui/editor_view.hpp"
+#include "anvil/ui/zoom.hpp"
 
 #include <QWidget>
 #include <cstdint>
@@ -13,6 +14,10 @@ class QAbstractButton;
 class QLabel;
 class QLineEdit;
 class QToolButton;
+
+class QHBoxLayout;
+class QSpacerItem;
+class QVBoxLayout;
 
 namespace anvil::ui {
 
@@ -33,6 +38,10 @@ public:
 
     explicit FindBar(EditorView* view, QWidget* parent = nullptr);
     ~FindBar() override;
+
+    // The zoom that the sizes of the bar are read through (its font, margins and spacing), which
+    // must outlive the bar; the bar follows it when it changes. Null means level 0.
+    void set_zoom(const Zoom* zoom);
 
     // Shows the bar and focuses the find field. With `with_replace` the replace field is shown.
     void open(bool with_replace = false);
@@ -78,6 +87,17 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void apply_zoom();
+    int zoomed(int size) const {
+        return scaled_by(zoom_, size);
+    }
+    const Zoom* zoom_ = nullptr;
+    int base_font_pixels_ = 0;
+    QVBoxLayout* layout_ = nullptr;
+    QHBoxLayout* find_row_ = nullptr;
+    QHBoxLayout* replace_layout_ = nullptr;
+    QSpacerItem* replace_indent_ = nullptr;
+
     enum class Direction {
         forward,
         backward,

@@ -40,6 +40,8 @@ public:
     EditorView* view() {
         return view_;
     }
+    // The zoom that the strip of tabs and the find bar read their sizes through.
+    void set_zoom(const Zoom* zoom);
     // How the strip of tabs shows the tabs, or that it is not shown at all: the group keeps its
     // editor and find bar.
     void set_tabs_mode(core::TabsMode mode);
@@ -107,6 +109,8 @@ public:
     // the drop goes, empty when there is none, and whether the picture of the tab is shown.
     QRect drop_shade() const;
     bool drag_picture_visible() const;
+    // The size of the picture of the dragged tab; empty before one was shown.
+    QSize drag_picture_size() const;
 
     // The splitter that holds the groups, or null while there is only one group.
     QSplitter* root_splitter() const;

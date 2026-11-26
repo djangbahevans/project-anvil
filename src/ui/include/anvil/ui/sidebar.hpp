@@ -53,9 +53,8 @@ public:
     const ActivityBar& activity_bar() const {
         return *activity_bar_;
     }
-    // The zoom that the sizes of the activity bar are read through, which must outlive the side
-    // bar.
-    void set_zoom(const Zoom* zoom);
+    // The height of the title at the zoom now.
+    int title_height() const;
 
 signals:
     // The active container changed. Empty when there is none left.

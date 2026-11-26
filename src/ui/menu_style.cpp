@@ -8,13 +8,14 @@
 namespace anvil::ui {
 namespace {
 
-void draw_glyph(QPainter* painter, const QRect& rect, std::string_view name, const QColor& color) {
+void draw_glyph(QPainter* painter, const QRect& rect, std::string_view name, const QColor& color,
+                int size) {
     const auto code = codicon(name);
     if (!code) {
         return;
     }
     QFont font(codicon_font_family());
-    font.setPixelSize(MenuStyle::glyph_size);
+    font.setPixelSize(size);
     painter->setFont(font);
     painter->setPen(color);
     painter->drawText(rect, Qt::AlignCenter, QString(QChar(*code)));
@@ -49,7 +50,7 @@ int MenuStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
     case PM_MenuPanelWidth:
         return frame_width;
     case PM_MenuVMargin:
-        return vertical_margin;
+        return zoomed(vertical_margin);
     case PM_MenuHMargin:
         return 0;
     default:
@@ -64,16 +65,16 @@ QSize MenuStyle::sizeFromContents(ContentsType type, const QStyleOption* option,
         return QProxyStyle::sizeFromContents(type, option, size, widget);
     }
     if (item->menuItemType == QStyleOptionMenuItem::Separator) {
-        return {size.width(), separator_height};
+        return {size.width(), zoomed(separator_height)};
     }
     const QString shortcut = shortcut_of(item->text);
-    int width = label_left +
+    int width = zoomed(label_left) +
                 item->fontMetrics.horizontalAdvance(without_mnemonic_marker(label_of(item->text))) +
-                shortcut_right;
+                zoomed(shortcut_right);
     if (!shortcut.isEmpty()) {
-        width += label_to_shortcut + item->fontMetrics.horizontalAdvance(shortcut);
+        width += zoomed(label_to_shortcut) + item->fontMetrics.horizontalAdvance(shortcut);
     }
-    return {width, std::max(item_height, item->fontMetrics.height() + 8)};
+    return {width, std::max(zoomed(item_height), item->fontMetrics.height() + zoomed(8))};
 }
 
 void MenuStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* option,
@@ -122,8 +123,8 @@ void MenuStyle::drawControl(ControlElement element, const QStyleOption* option, 
     }
 
     if (item->checkType != QStyleOptionMenuItem::NotCheckable && item->checked) {
-        draw_glyph(painter, QRect(rect.left(), rect.top(), check_column, rect.height()), "check",
-                   color);
+        draw_glyph(painter, QRect(rect.left(), rect.top(), zoomed(check_column), rect.height()),
+                   "check", color, zoomed(glyph_size));
     }
 
     painter->setFont(item->font);
@@ -132,18 +133,20 @@ void MenuStyle::drawControl(ControlElement element, const QStyleOption* option, 
     if (!proxy()->styleHint(SH_UnderlineShortcut, item, widget)) {
         flags = (flags & ~Qt::TextShowMnemonic) | Qt::TextHideMnemonic;
     }
+    const int label_start = zoomed(label_left);
     painter->drawText(
-        QRect(rect.left() + label_left, rect.top(), rect.width() - label_left, rect.height()),
+        QRect(rect.left() + label_start, rect.top(), rect.width() - label_start, rect.height()),
         flags | Qt::AlignLeft, label_of(item->text));
     if (const QString shortcut = shortcut_of(item->text); !shortcut.isEmpty()) {
         painter->drawText(
-            QRect(rect.left(), rect.top(), rect.width() - shortcut_right, rect.height()),
+            QRect(rect.left(), rect.top(), rect.width() - zoomed(shortcut_right), rect.height()),
             Qt::AlignVCenter | Qt::AlignRight | Qt::TextSingleLine, shortcut);
     }
     if (item->menuItemType == QStyleOptionMenuItem::SubMenu) {
-        const int left = rect.right() - chevron_center_from_right - glyph_size / 2;
-        draw_glyph(painter, QRect(left, rect.top(), glyph_size, rect.height()), "chevron-right",
-                   color);
+        const int glyph = zoomed(glyph_size);
+        const int left = rect.right() - zoomed(chevron_center_from_right) - glyph / 2;
+        draw_glyph(painter, QRect(left, rect.top(), glyph, rect.height()), "chevron-right", color,
+                   glyph);
     }
 }
 
