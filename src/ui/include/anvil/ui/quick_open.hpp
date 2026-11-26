@@ -18,8 +18,6 @@
 #include <string>
 #include <vector>
 
-class QWidget;
-
 namespace anvil::ui {
 
 // Gives the files of a folder in batches, as `search::FileListing` does, on the thread that asks.
@@ -50,6 +48,9 @@ struct QuickOpenEntry {
 
 // Go to File: a quick pick over the files of a folder, matched and ranked as VS Code does it.
 //
+// It runs in a popup that other lists use too, such as the command palette: `open` takes the popup
+// over, in place when it is showing, and `end` gives it up.
+//
 // With an empty filter it offers the entries it was given, in their order. With a filter it offers
 // the ones of them that match, best first, and then the files of the folder that match, best first,
 // at most `max_results` in all. The folder is listed each time the popup opens, and the listing and
@@ -67,17 +68,20 @@ public:
         FileSourceFactory source;
     };
 
-    // `window` is the window that the popup overlays; the colors must outlive this object.
-    QuickOpen(QWidget* window, const WorkbenchColors& colors, QObject* parent = nullptr);
+    // The popup must outlive this object.
+    explicit QuickOpen(QuickPick& pick, QObject* parent = nullptr);
     ~QuickOpen() override;
 
-    // The popup, to place and zoom it.
     QuickPick* pick() const {
         return pick_;
     }
 
-    // Shows the popup with the entries, and lists the files when there is a folder.
-    void open(std::vector<QuickOpenEntry> entries, std::optional<Files> files);
+    // Shows the popup with `filter` in its field, offers the entries, and lists the files when
+    // there is a folder.
+    void open(std::vector<QuickOpenEntry> entries, std::optional<Files> files,
+              const QString& filter = {});
+    // Ends the listing and the matching, and leaves the popup as it is, for another use of it.
+    void end();
     bool is_open() const {
         return search_ != nullptr;
     }
@@ -99,8 +103,11 @@ private:
     class Search;
 
     void apply(const Results& results);
+    void set_filter(const QString& text);
 
     QPointer<QuickPick> pick_;
+    // To the popup, while it is ours.
+    std::vector<QMetaObject::Connection> connections_;
     std::unique_ptr<Search> search_;
     // Where the items that the popup shows lead.
     std::vector<core::Uri> shown_;

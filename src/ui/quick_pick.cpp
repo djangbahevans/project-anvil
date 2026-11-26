@@ -464,12 +464,16 @@ void QuickPick::open(const QString& text) {
     }
     awaiting_items_ = false;
     enter_held_ = false;
-    filter_->setText(text);
+    // A popup that is showing and keeps its text keeps its cursor too, since its use changed
+    // under the user's typing; setting the same text would move the cursor to the end.
+    if (!isVisible() || filter_->text() != text) {
+        filter_->setText(text);
+        filter_->setCursorPosition(static_cast<int>(text.size()));
+    }
     refilter();
     show();
     raise();
     filter_->setFocus();
-    filter_->setCursorPosition(static_cast<int>(text.size()));
 }
 
 void QuickPick::set_active_item(std::size_t item) {

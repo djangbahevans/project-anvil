@@ -336,6 +336,12 @@ private:
     // Go to File: opens the quick pick over the files of the workspace folder, or over the open
     // documents without one. Run again while it is open, it chooses the next row.
     void show_quick_open();
+    // The two uses of the popup of quick access, as in VS Code, where `>` at the start of the text
+    // turns a search for files into the command palette and removing it turns back.
+    void show_files(const QString& filter);
+    void follow_quick_access_text(const QString& text);
+    // Ends the list that `pick_from` shows, when another use takes the popup over.
+    void dismiss_pick();
     // The documents that the window has shown, in the form that quick open offers them.
     std::vector<QuickOpenEntry> recent_entries(bool open_only) const;
     QuickOpenEntry quick_open_entry(const core::Uri& uri) const;
@@ -489,7 +495,7 @@ private:
     // created.
     bool open_user_file(const std::filesystem::path& file, std::string_view initial);
     // Shows the command palette, unless a dialog is open.
-    void show_command_palette();
+    void show_command_palette(const QString& text = QStringLiteral(">"));
     // Opens Go to Line/Column over the shown document: the caret follows the text typed, Enter
     // keeps it and Escape puts the caret and the scroll position back.
     void show_go_to_line();
@@ -567,6 +573,9 @@ private:
     QuickPick* palette_ = nullptr;
     QuickPick* go_to_line_ = nullptr;
     std::unique_ptr<QuickOpen> quick_open_;
+    // What the popup of the command palette is used for; `other` is a list of `pick_from`.
+    enum class QuickAccess { other, commands, files };
+    QuickAccess quick_access_ = QuickAccess::other;
     core::FileSearchOptions search_options_;
     // What Go to Line/Column puts back when it is cancelled. `document` is empty while it is
     // closed.

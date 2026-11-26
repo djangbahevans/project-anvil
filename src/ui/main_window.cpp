@@ -152,6 +152,11 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));
     connect(palette_, &QuickPick::accepted, this, [this](std::size_t item) {
+        // Go to File answers for itself. It connects when it takes the popup over, so this runs
+        // first and still sees it open.
+        if (quick_open_->is_open()) {
+            return;
+        }
         pick_highlighted_ = nullptr;
         pick_dismissed_ = nullptr;
         if (pick_action_) {
@@ -173,8 +178,9 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             dismissed();
         }
     });
-    quick_open_ = std::make_unique<QuickOpen>(this, colors_);
-    quick_open_->pick()->set_zoom(&zoom_);
+    connect(palette_->filter_field(), &QLineEdit::textChanged, this,
+            &MainWindow::follow_quick_access_text);
+    quick_open_ = std::make_unique<QuickOpen>(*palette_);
     connect(quick_open_.get(), &QuickOpen::chosen, this, &MainWindow::open_chosen);
     connect(quick_open_.get(), &QuickOpen::failed, this,
             [this](const QString& message) { status_bar_->show_message(message, 15000); });
@@ -434,7 +440,8 @@ MainWindow::~MainWindow() {
         menu->setStyle(nullptr);
     }
     // Ends a listing that is running, while the window is whole.
-    quick_open_.reset();
+    quick_open_->end();
+    palette_->filter_field()->disconnect(this);
     // The pick closes when its widget is deleted, after the members that its handlers use are gone.
     palette_->disconnect(this);
     // Deleting the widgets moves the focus, which must not reach a window that is half destroyed.
@@ -984,14 +991,42 @@ std::vector<QuickOpenEntry> MainWindow::recent_entries(bool open_only) const {
     return entries;
 }
 
+void MainWindow::dismiss_pick() {
+    pick_action_ = nullptr;
+    pick_highlighted_ = nullptr;
+    if (const auto dismissed = std::exchange(pick_dismissed_, nullptr);
+        dismissed && palette_->isVisible()) {
+        dismissed();
+    }
+}
+
+void MainWindow::follow_quick_access_text(const QString& text) {
+    // A popup that is being opened gets its text before it shows.
+    if (!palette_->isVisible()) {
+        return;
+    }
+    const bool commands = text.startsWith(QLatin1Char('>'));
+    if (quick_access_ == QuickAccess::files && commands) {
+        show_command_palette(text);
+    } else if (quick_access_ == QuickAccess::commands && !commands) {
+        show_files(text);
+    }
+}
+
 void MainWindow::show_quick_open() {
+    if (quick_open_->is_open() && palette_->isVisible()) {
+        palette_->select_next();
+        return;
+    }
+    show_files({});
+}
+
+void MainWindow::show_files(const QString& filter) {
     if (QApplication::activeModalWidget()) {
         return;
     }
-    if (quick_open_->is_open()) {
-        quick_open_->pick()->select_next();
-        return;
-    }
+    dismiss_pick();
+    quick_access_ = QuickAccess::files;
     std::optional<QuickOpen::Files> files;
     if (options_.workspace) {
         const std::filesystem::path& folder = options_.workspace->folder;
@@ -1007,10 +1042,9 @@ void MainWindow::show_quick_open() {
                                       15000);
         }
     }
-    quick_open_->pick()->set_top_offset(has_custom_title_bar() ? title_bar_->height()
-                                                               : menu_bar_->height());
+    palette_->set_top_offset(has_custom_title_bar() ? title_bar_->height() : menu_bar_->height());
     std::vector<QuickOpenEntry> entries = recent_entries(!files);
-    quick_open_->open(std::move(entries), std::move(files));
+    quick_open_->open(std::move(entries), std::move(files), filter);
 }
 
 void MainWindow::open_chosen(const core::Uri& uri) {
@@ -1108,9 +1142,12 @@ void MainWindow::pick_from(const QString& placeholder, std::vector<QuickPickItem
     if (QApplication::activeModalWidget()) {
         return;
     }
+    quick_open_->end();
+    dismiss_pick();
+    quick_access_ = QuickAccess::other;
     pick_action_ = std::move(chosen);
-    pick_highlighted_ = nullptr;
     pick_dismissed_ = std::move(hooks.dismissed);
+    palette_->set_filtering(true);
     palette_->set_ignored_prefix({});
     palette_->set_placeholder(placeholder);
     palette_->set_empty_message(tr("No matching results"));
@@ -2671,10 +2708,13 @@ void MainWindow::open_dialog() {
     }
 }
 
-void MainWindow::show_command_palette() {
+void MainWindow::show_command_palette(const QString& text) {
     if (QApplication::activeModalWidget()) {
         return;
     }
+    quick_open_->end();
+    dismiss_pick();
+    quick_access_ = QuickAccess::commands;
     struct Entry {
         std::string id;
         QString title;
@@ -2709,9 +2749,7 @@ void MainWindow::show_command_palette() {
         }
     }
 
-    pick_action_ = nullptr;
-    pick_highlighted_ = nullptr;
-    pick_dismissed_ = nullptr;
+    palette_->set_filtering(true);
     palette_->set_ignored_prefix(">");
     palette_->set_placeholder(tr("Type the name of a command to run"));
     palette_->set_empty_message(tr("No matching commands"));
@@ -2723,7 +2761,7 @@ void MainWindow::show_command_palette() {
     }
     palette_->set_items(std::move(items));
     palette_->set_top_offset(has_custom_title_bar() ? title_bar_->height() : menu_bar_->height());
-    palette_->open(">");
+    palette_->open(text);
 }
 
 void MainWindow::show_go_to_line() {

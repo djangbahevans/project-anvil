@@ -100,7 +100,8 @@ protected:
         window_ = std::make_unique<QMainWindow>();
         window_->resize(800, 600);
         window_->show();
-        quick_open_ = std::make_unique<QuickOpen>(window_.get(), *colors_);
+        pick_ = new anvil::ui::QuickPick(window_.get(), *colors_);
+        quick_open_ = std::make_unique<QuickOpen>(*pick_);
         chosen_ = std::make_unique<QSignalSpy>(quick_open_.get(), &QuickOpen::chosen);
         QObject::connect(quick_open_.get(), &QuickOpen::chosen, window_.get(),
                          [this](const core::Uri& uri) { opened_.push_back(uri); });
@@ -176,6 +177,7 @@ protected:
     std::shared_ptr<Listings> listings_ = std::make_shared<Listings>();
     std::unique_ptr<WorkbenchColors> colors_;
     std::unique_ptr<QMainWindow> window_;
+    anvil::ui::QuickPick* pick_ = nullptr; // a child of the window
     std::unique_ptr<QuickOpen> quick_open_;
     std::unique_ptr<QSignalSpy> chosen_;
     std::unique_ptr<QSignalSpy> failed_;
@@ -425,6 +427,37 @@ TEST_F(QuickOpenTest, AListingThatCannotStartIsReportedAndTheEntriesStay) {
     type("rec");
     ASSERT_TRUE(wait_until([&] { return quick_open_->is_complete(); }));
     EXPECT_EQ(shown(), Names{"recent.txt"});
+}
+
+TEST_F(QuickOpenTest, ItCanStartWithAFilter) {
+    listings_->give({"alpha.txt", "beta.txt"}, true);
+    quick_open_->open(
+        {entry("recent.txt")},
+        QuickOpen::Files{
+            "/w",
+            [listings = listings_]() -> std::expected<std::unique_ptr<FileSource>, Error> {
+                return std::make_unique<FakeSource>(listings);
+            }},
+        "bet");
+    EXPECT_EQ(field()->text(), "bet");
+    // Nothing shows that does not answer the filter, and Enter waits for what does.
+    EXPECT_TRUE(shown().empty());
+    press(Qt::Key_Return);
+    ASSERT_TRUE(wait_until([&] { return !opened_.empty(); }));
+    EXPECT_EQ(opened_, std::vector{core::Uri::file("/w/beta.txt")});
+}
+
+TEST_F(QuickOpenTest, EndingGivesUpThePopupAndLeavesItAsItIs) {
+    open({"one"});
+    ASSERT_TRUE(wait_until([&] { return listings_->count_of(&Listings::started) == 1; }));
+    quick_open_->end();
+    EXPECT_FALSE(quick_open_->is_open());
+    EXPECT_EQ(listings_->count_of(&Listings::ended), 1);
+    EXPECT_TRUE(pick_->isVisible());
+    // What the popup does from now on is none of its business.
+    press(Qt::Key_Return);
+    EXPECT_TRUE(opened_.empty());
+    EXPECT_EQ(chosen_->count(), 0);
 }
 
 TEST_F(QuickOpenTest, WithoutAFolderOnlyTheEntriesAreMatched) {

@@ -11141,3 +11141,137 @@ TEST_F(QuickOpenWindowTest, ItListsTheFilesOfTheFolderWithRipgrep) {
     filter("later");
     EXPECT_EQ(rows(), std::vector<std::string>{"later.txt|"});
 }
+
+namespace {
+
+// The popup that Go to File and the command palette share.
+class QuickAccessTest : public QuickOpenWindowTest {
+protected:
+    void SetUp() override {
+        QuickOpenWindowTest::SetUp();
+        create_active_window();
+        ASSERT_TRUE(open("a.txt"));
+        window_->view()->setFocus();
+    }
+    QLineEdit* field() {
+        return pick()->filter_field();
+    }
+    void keys(Qt::Key key, Qt::KeyboardModifiers modifiers = {}) {
+        QTest::keyClick(QApplication::focusWidget(), key, modifiers);
+    }
+    bool shows_commands() {
+        return std::ranges::any_of(
+            rows(), [](const std::string& row) { return row.starts_with("Go to Line/Column..."); });
+    }
+};
+
+} // namespace
+
+TEST_F(QuickAccessTest, TypingTheArrowTurnsTheFilesIntoTheCommandsAndRemovingItTurnsBack) {
+    keys(Qt::Key_P, Qt::ControlModifier);
+    EXPECT_EQ(pick(), window_->command_palette());
+    EXPECT_EQ(field()->text(), "");
+    ASSERT_TRUE(quick_open().is_open());
+    QTest::keyClicks(field(), ">go to line");
+    EXPECT_FALSE(quick_open().is_open());
+    ASSERT_TRUE(shows_commands()) << ::testing::PrintToString(rows());
+    EXPECT_EQ(field()->placeholderText(), "Type the name of a command to run");
+
+    field()->setText("util");
+    ASSERT_TRUE(quick_open().is_open());
+    ASSERT_TRUE(wait_until([&] { return rows() == std::vector<std::string>{"util.cpp|src"}; }));
+    EXPECT_EQ(field()->placeholderText(), "Search files by name");
+
+    // Choosing opens the file, and the focus goes back to the editor.
+    enter();
+    EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "util.cpp");
+    EXPECT_FALSE(pick()->isVisible());
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+}
+
+TEST_F(QuickAccessTest, TheCommandPaletteWithItsArrowRemovedSearchesFilesAndRunsNoCommand) {
+    keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(field()->text(), ">");
+    ASSERT_TRUE(shows_commands());
+    keys(Qt::Key_Backspace);
+    EXPECT_EQ(field()->text(), "");
+    ASSERT_TRUE(quick_open().is_open());
+    EXPECT_EQ(rows(), std::vector<std::string>{"a.txt|"});
+    // Back to the commands, one of which runs as a command and opens no file.
+    QTest::keyClicks(field(), ">go to line");
+    enter();
+    EXPECT_TRUE(window_->go_to_line_pick()->isVisible());
+    EXPECT_EQ(shown_path(), window_->workspace()->folder / "a.txt");
+}
+
+TEST_F(QuickAccessTest, ChoosingAFileRunsNoCommandThatThePaletteListedBefore) {
+    keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    const int tabs = window_->tab_strip()->count();
+    field()->setText("main");
+    ASSERT_TRUE(wait_until([&] { return rows() == std::vector<std::string>{"main.cpp|src"}; }));
+    enter();
+    EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "main.cpp");
+    EXPECT_EQ(window_->tab_strip()->count(), tabs + 1);
+    EXPECT_FALSE(window_->go_to_line_pick()->isVisible());
+    EXPECT_FALSE(pick()->isVisible());
+}
+
+TEST_F(QuickAccessTest, TheKeysSwitchTheOpenPopup) {
+    keys(Qt::Key_P, Qt::ControlModifier);
+    keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_FALSE(quick_open().is_open());
+    EXPECT_EQ(field()->text(), ">");
+    EXPECT_TRUE(shows_commands());
+    keys(Qt::Key_P, Qt::ControlModifier);
+    EXPECT_TRUE(quick_open().is_open());
+    EXPECT_EQ(field()->text(), "");
+    EXPECT_EQ(rows(), std::vector<std::string>{"a.txt|"});
+    keys(Qt::Key_Escape);
+    EXPECT_FALSE(pick()->isVisible());
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+}
+
+TEST_F(QuickAccessTest, TheCursorStaysWhereTheArrowIsTypedOrRemoved) {
+    keys(Qt::Key_P, Qt::ControlModifier);
+    QTest::keyClicks(field(), "line");
+    field()->setCursorPosition(0);
+    QTest::keyClicks(field(), ">");
+    EXPECT_FALSE(quick_open().is_open());
+    EXPECT_EQ(field()->cursorPosition(), 1);
+    keys(Qt::Key_Backspace);
+    EXPECT_TRUE(quick_open().is_open());
+    EXPECT_EQ(field()->text(), "line");
+    EXPECT_EQ(field()->cursorPosition(), 0);
+}
+
+TEST_F(QuickAccessTest, AnotherListStaysWhatItIsWhateverIsTypedAndFiltersAsItDid) {
+    keys(Qt::Key_P, Qt::ControlModifier);
+    keys(Qt::Key_Escape);
+    ASSERT_TRUE(window_->commands().execute("workbench.action.editor.changeLanguageMode"));
+    ASSERT_TRUE(pick()->isVisible());
+    const std::size_t languages = pick()->shown_items().size();
+    QTest::keyClicks(field(), "python");
+    EXPECT_LT(pick()->shown_items().size(), languages);
+    field()->setText(">");
+    EXPECT_FALSE(quick_open().is_open());
+    EXPECT_NE(field()->placeholderText(), "Type the name of a command to run");
+    field()->setText("");
+    EXPECT_FALSE(quick_open().is_open());
+    EXPECT_EQ(pick()->shown_items().size(), languages);
+}
+
+TEST_F(QuickAccessTest, AListThatIsReplacedIsDismissedSoThatAPreviewIsUndone) {
+    const QColor before = window_->colors().color("editor.background");
+    ASSERT_TRUE(window_->commands().execute("workbench.action.selectTheme"));
+    ASSERT_TRUE(pick()->isVisible());
+    // The preview of another theme: some row changes the background.
+    for (std::size_t i = 0;
+         i < pick()->shown_items().size() && window_->colors().color("editor.background") == before;
+         ++i) {
+        keys(Qt::Key_Down);
+    }
+    ASSERT_NE(window_->colors().color("editor.background"), before);
+    keys(Qt::Key_P, Qt::ControlModifier);
+    EXPECT_TRUE(quick_open().is_open());
+    EXPECT_EQ(window_->colors().color("editor.background"), before);
+}

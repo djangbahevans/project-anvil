@@ -4,7 +4,6 @@
 
 #include <QLineEdit>
 #include <QMetaObject>
-#include <QWidget>
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -281,52 +280,52 @@ private:
     std::jthread thread_;
 };
 
-QuickOpen::QuickOpen(QWidget* window, const WorkbenchColors& colors, QObject* parent)
-    : QObject(parent), pick_(new QuickPick(window, colors)) {
-    pick_->set_filtering(false);
-    pick_->set_placeholder(tr("Search files by name"));
-    connect(pick_->filter_field(), &QLineEdit::textChanged, this, [this](const QString& text) {
-        if (!search_) {
-            return;
-        }
-        complete_ = false;
-        search_->set_filter(text.toStdString(), ++serial_);
-        pick_->set_awaiting_items(true);
-    });
-    connect(pick_, &QuickPick::accepted, this, [this](std::size_t item) {
-        const std::optional<core::Uri> uri = uri_of(item);
-        search_.reset();
-        if (uri) {
-            emit chosen(*uri);
-        }
-    });
-    connect(pick_, &QuickPick::cancelled, this, [this] { search_.reset(); });
-}
+QuickOpen::QuickOpen(QuickPick& pick, QObject* parent) : QObject(parent), pick_(&pick) {}
 
-QuickOpen::~QuickOpen() = default;
+QuickOpen::~QuickOpen() {
+    end();
+}
 
 std::optional<core::Uri> QuickOpen::uri_of(std::size_t item) const {
     return item < shown_.size() ? std::optional(shown_[item]) : std::nullopt;
 }
 
-void QuickOpen::open(std::vector<QuickOpenEntry> entries, std::optional<Files> files) {
+void QuickOpen::end() {
+    for (const QMetaObject::Connection& connection : connections_) {
+        disconnect(connection);
+    }
+    connections_.clear();
     search_.reset();
+}
+
+void QuickOpen::set_filter(const QString& text) {
+    complete_ = false;
+    search_->set_filter(text.toStdString(), ++serial_);
+    pick_->set_awaiting_items(true);
+}
+
+void QuickOpen::open(std::vector<QuickOpenEntry> entries, std::optional<Files> files,
+                     const QString& filter) {
+    end();
     complete_ = false;
     reported_ = false;
 
-    // The entries show at once; the thread only has to answer what is typed.
+    // With no filter the entries show at once; the thread only has to answer what is typed.
     std::vector<QuickPickItem> items;
     shown_.clear();
-    for (std::size_t i = 0; i < std::min(entries.size(), max_results); ++i) {
+    for (std::size_t i = 0; filter.isEmpty() && i < std::min(entries.size(), max_results); ++i) {
         items.push_back({.label = QString::fromStdString(entries[i].label),
                          .description = QString::fromStdString(entries[i].description),
                          .detail = {},
                          .keybinding = {}});
         shown_.push_back(entries[i].uri);
     }
-    pick_->set_empty_message(tr("No recently opened files"));
+    pick_->set_filtering(false);
+    pick_->set_ignored_prefix({});
+    pick_->set_placeholder(tr("Search files by name"));
+    pick_->set_empty_message(filter.isEmpty() ? tr("No recently opened files") : tr("Searching…"));
     pick_->set_items(std::move(items));
-    pick_->open();
+    pick_->open(filter);
 
     ++serial_;
     search_ = std::make_unique<Search>(
@@ -335,7 +334,23 @@ void QuickOpen::open(std::vector<QuickOpenEntry> entries, std::optional<Files> f
                 this, [this, results = std::move(results)] { apply(results); },
                 Qt::QueuedConnection);
         });
-    search_->set_filter({}, serial_);
+    connections_ = {
+        connect(pick_->filter_field(), &QLineEdit::textChanged, this, &QuickOpen::set_filter),
+        connect(pick_, &QuickPick::accepted, this,
+                [this](std::size_t item) {
+                    const std::optional<core::Uri> uri = uri_of(item);
+                    end();
+                    if (uri) {
+                        emit chosen(*uri);
+                    }
+                }),
+        connect(pick_, &QuickPick::cancelled, this, [this] { end(); }),
+    };
+    if (filter.isEmpty()) {
+        search_->set_filter({}, serial_);
+    } else {
+        set_filter(filter);
+    }
 }
 
 void QuickOpen::apply(const Results& results) {
