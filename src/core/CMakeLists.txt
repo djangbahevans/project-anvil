@@ -29,6 +29,7 @@ add_library(anvil_core STATIC
   selection.cpp
   smart_select.cpp
   settings.cpp
+  smooth_scroll.cpp
   text.cpp
   text_buffer.cpp
   text_file.cpp

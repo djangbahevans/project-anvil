@@ -46,6 +46,7 @@ add_executable(anvil_core_tests
   core/whitespace_test.cpp
   core/visible_column_test.cpp
   core/wheel_scroll_test.cpp
+  core/smooth_scroll_test.cpp
   core/line_breaks_test.cpp
   core/row_map_test.cpp
   core/row_motion_test.cpp

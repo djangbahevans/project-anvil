@@ -91,6 +91,7 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `editor.scrollPredominantAxis` | A turn of the wheel or touchpad in two directions at once scrolls only in the larger one. Shift turns a vertical turn sideways | `true` |
 | `editor.scrollBeyondLastLine` | The editor scrolls until the last line is at the top when `true`, at the bottom when `false` | `true` |
 | `editor.scrollBeyondLastColumn` | The characters that the editor scrolls past the longest line, 0 or more. Not used where lines wrap at the width of the editor | 4 |
+| `editor.smoothScrolling` | The editor moves to a new scroll position over an eighth of a second instead of jumping there: for a mouse wheel, Page Up and Page Down, and a caret that is shown from out of view. A touchpad, a scroll bar and a drag of the mouse scroll at once | `false` |
 | `editor.renderControlCharacters` | Control characters are drawn as symbols (white on red) when `true` | `true` |
 | `workbench.colorTheme` | The color theme, by id or label: one of the ten that ship with the editor, or one that an extension contributes in `contributes.themes` (the `uiTheme` of the manifest decides its kind) | `"Dark 2026"` |
 | `workbench.editor.focusRecentEditorAfterClose` | Closing the active tab shows the tab that was shown before it when `true`, its right neighbor (the left one for the last tab) when `false` | `true` |

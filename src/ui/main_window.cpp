@@ -2850,8 +2850,7 @@ void MainWindow::show_go_to_line(const QString& text) {
     quick_access_ = QuickAccess::line;
     if (const core::Uri* current = current_uri_ptr()) {
         go_to_line_state_ = {documents_.at(*current), view()->document()->selections(),
-                             view()->horizontalScrollBar()->value(),
-                             view()->verticalScrollBar()->value()};
+                             view()->scroll_target()};
     }
     palette_->set_filtering(false);
     palette_->set_ignored_prefix(":");
@@ -2913,8 +2912,7 @@ void MainWindow::finish_go_to_line(bool keep) {
         return;
     }
     view()->select_ranges(state.selections.all(), state.selections.primary_index());
-    view()->horizontalScrollBar()->setValue(state.scroll_x);
-    view()->verticalScrollBar()->setValue(state.scroll_y);
+    view()->scroll_to(state.scroll);
 }
 
 bool MainWindow::command_enabled(const std::string& id) const {

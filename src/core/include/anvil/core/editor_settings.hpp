@@ -108,6 +108,8 @@ struct EditorSettings {
     bool scroll_beyond_last_line = true;
     // editor.scrollBeyondLastColumn: the characters that the editor scrolls past the longest line
     int scroll_beyond_last_column = 4;
+    // editor.smoothScrolling: the editor moves to a new scroll position instead of jumping there
+    bool smooth_scrolling = false;
 
     // editor.renderWhitespace
     RenderWhitespace render_whitespace = RenderWhitespace::selection;

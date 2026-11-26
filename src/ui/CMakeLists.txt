@@ -43,6 +43,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/quick_open.hpp
   include/anvil/ui/quick_pick.hpp
   include/anvil/ui/resources.hpp
+  include/anvil/ui/scroll_animator.hpp
   include/anvil/ui/scroll_bar.hpp
   include/anvil/ui/seti_icons.hpp
   include/anvil/ui/settings_store.hpp
@@ -66,6 +67,7 @@ add_library(anvil_ui STATIC
   quick_open.cpp
   quick_pick.cpp
   resources.cpp
+  scroll_animator.cpp
   scroll_bar.cpp
   seti_icon_table.hpp
   seti_icons.cpp

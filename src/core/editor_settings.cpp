@@ -102,6 +102,7 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
     for (const auto& [key, field] :
          {std::pair{"editor.comments.insertSpace", &EditorSettings::comments_insert_space},
           std::pair{"editor.scrollBeyondLastLine", &EditorSettings::scroll_beyond_last_line},
+          std::pair{"editor.smoothScrolling", &EditorSettings::smooth_scrolling},
           std::pair{"editor.comments.ignoreEmptyLines",
                     &EditorSettings::comments_ignore_empty_lines},
           std::pair{"zenMode.fullScreen", &EditorSettings::zen_full_screen},

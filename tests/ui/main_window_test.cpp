@@ -34,6 +34,7 @@
 #include <QToolButton>
 #include <QTreeView>
 #include <QUrl>
+#include <QWheelEvent>
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -7460,6 +7461,29 @@ TEST_F(GoToTest, EscapePutsTheCaretAndTheScrollBack) {
     EXPECT_EQ(caret(), (core::Position{30, 2}));
     EXPECT_EQ(window_->view()->verticalScrollBar()->value(), scroll);
     EXPECT_EQ(history_size(), before);
+}
+
+TEST_F(GoToTest, EscapeDuringASmoothMovementGoesWhereTheViewWasGoing) {
+    create_window();
+    open(numbered_lines(400));
+    window_->change_setting("editor.smoothScrolling", true, "Smooth scrolling");
+    QApplication::processEvents();
+    ui::EditorView& view = *window_->view();
+    // A clock that stands still keeps every movement where it began.
+    view.set_scroll_clock([] { return std::int64_t{1000}; });
+    QWheelEvent wheel(QPointF(50, 50), view.viewport()->mapToGlobal(QPointF(50, 50)), QPoint(),
+                      QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(view.viewport(), &wheel);
+    ASSERT_TRUE(view.scrolling());
+    ASSERT_EQ(view.scroll_target().y(), 50);
+
+    window_->commands().execute("workbench.action.gotoLine");
+    type_in_pick("350");
+    ASSERT_GT(view.scroll_target().y(), 50);
+
+    QTest::keyClick(pick()->filter_field(), Qt::Key_Escape);
+    EXPECT_FALSE(view.scrolling());
+    EXPECT_EQ(view.verticalScrollBar()->value(), 50);
 }
 
 TEST_F(GoToTest, EscapeBringsBackEveryCursor) {

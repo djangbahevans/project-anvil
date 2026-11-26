@@ -1,4 +1,5 @@
 #include "anvil/core/log.hpp"
+#include "anvil/core/smooth_scroll.hpp"
 #include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/line_layout.hpp"
@@ -3294,4 +3295,232 @@ TEST_F(ScrollShadowTest, TheShadowFollowsTheZoom) {
     // Six pixels at a factor of 1.2 to the power of 4.
     EXPECT_GT(red(beyond(), 8), 0);
     EXPECT_EQ(red(beyond(), 12), 0);
+}
+
+class SmoothScrollingTest : public ScrollingTest {
+protected:
+    void open_smooth() {
+        settings_.smooth_scrolling = true;
+        open_large();
+        // The scroll bar that painting the long line brought takes its room.
+        QApplication::processEvents();
+        view_.set_scroll_clock([this] { return now_; });
+    }
+
+    // Moves the clock on and lets the view's timer see it.
+    void after(std::int64_t milliseconds) {
+        now_ += milliseconds;
+        QTest::qWait(40);
+    }
+
+    // Where a movement asked for at the start of the clock is after `milliseconds`.
+    int expected_top(int from, int to, std::int64_t milliseconds) const {
+        const core::SmoothScroll movement({0, from}, {0, to}, view_.viewport()->width(),
+                                          view_.viewport()->height(), 0);
+        return movement.at(milliseconds).top;
+    }
+
+    bool touch(const QPoint& pixels, const QPoint& angle, Qt::ScrollPhase phase) {
+        const QPointF at(50, 50);
+        QWheelEvent event(at, view_.viewport()->mapToGlobal(at), pixels, angle, Qt::NoButton,
+                          Qt::NoModifier, phase, false);
+        return QApplication::sendEvent(view_.viewport(), &event);
+    }
+
+    std::size_t end_of_line(std::size_t line) const {
+        return document_->text().line_end(line);
+    }
+    std::size_t start_of_line(std::size_t line) const {
+        return document_->text().line_start(line);
+    }
+
+    std::int64_t now_ = 0;
+};
+
+TEST_F(SmoothScrollingTest, ANotchOfAWheelMovesTheViewOverTime) {
+    open_smooth();
+    wheel({0, -120});
+    EXPECT_TRUE(view_.scrolling());
+    EXPECT_EQ(view_.scroll_target(), QPoint(0, 50));
+    EXPECT_EQ(vertical(), 0);
+    after(20);
+    EXPECT_EQ(vertical(), expected_top(0, 50, 20));
+    EXPECT_GT(vertical(), 0);
+    EXPECT_LT(vertical(), 50);
+    after(40);
+    EXPECT_EQ(vertical(), expected_top(0, 50, 60));
+    after(65);
+    EXPECT_EQ(vertical(), 50);
+    EXPECT_FALSE(view_.scrolling()) << "the timer runs only during a movement";
+}
+
+TEST_F(SmoothScrollingTest, WithTheSettingOffTheViewIsThereAtOnce) {
+    open_large();
+    wheel({0, -120});
+    EXPECT_EQ(vertical(), 50);
+    EXPECT_FALSE(view_.scrolling());
+    view_.select_range(core::Selection::caret(start_of_line(60)));
+    EXPECT_FALSE(view_.scrolling());
+}
+
+TEST_F(SmoothScrollingTest, AMovementEndsByTheClockOfTheSystemToo) {
+    settings_.smooth_scrolling = true;
+    open_large();
+    wheel({0, -120});
+    EXPECT_TRUE(view_.scrolling());
+    ASSERT_TRUE(QTest::qWaitFor([this] { return !view_.scrolling(); }, 5000));
+    EXPECT_EQ(vertical(), 50);
+}
+
+TEST_F(SmoothScrollingTest, ATouchpadScrollsAtOnce) {
+    open_smooth();
+    touch(QPoint(0, -30), QPoint(0, -120), Qt::NoScrollPhase);
+    EXPECT_EQ(vertical(), 50) << "an event with pixels";
+    touch(QPoint(), QPoint(0, -120), Qt::ScrollUpdate);
+    EXPECT_EQ(vertical(), 100) << "an event of a gesture";
+    // Small angles, which a touchpad gives where a platform plugin gives nothing else.
+    for (int i = 0; i < 6; ++i) {
+        touch(QPoint(), QPoint(0, -15), Qt::NoScrollPhase);
+    }
+    EXPECT_FALSE(view_.scrolling());
+    EXPECT_GT(vertical(), 100);
+}
+
+TEST_F(SmoothScrollingTest, NotchesInQuickSuccessionAddUpAndStartFromWhereTheViewIs) {
+    open_smooth();
+    wheel({0, -120});
+    after(20);
+    const int halfway = vertical();
+    wheel({0, -120});
+    EXPECT_EQ(view_.scroll_target().y(), 100);
+    EXPECT_EQ(vertical(), halfway);
+    after(20);
+    const core::SmoothScroll second({0, halfway}, {0, 100}, view_.viewport()->width(),
+                                    view_.viewport()->height(), 20);
+    EXPECT_EQ(vertical(), second.at(40).top);
+    after(125);
+    EXPECT_EQ(vertical(), 100);
+}
+
+TEST_F(SmoothScrollingTest, ATurnThatCannotScrollStartsNothing) {
+    open_smooth();
+    wheel({0, 120});
+    EXPECT_FALSE(view_.scrolling());
+}
+
+TEST_F(SmoothScrollingTest, RevealingAFarCaretMovesThereOverTime) {
+    open_smooth();
+    view_.select_range(core::Selection::caret(start_of_line(80)));
+    const int target = view_.scroll_target().y();
+    EXPECT_EQ(target, 81 * view_.line_height() - view_.viewport()->height());
+    EXPECT_EQ(vertical(), 0);
+    after(20);
+    EXPECT_EQ(vertical(), expected_top(0, target, 20));
+    after(125);
+    EXPECT_EQ(vertical(), target);
+}
+
+TEST_F(SmoothScrollingTest, PageDownIsOneMovementToWhereItEndsWithoutTheSetting) {
+    open_large();
+    key(Qt::Key_PageDown);
+    key(Qt::Key_PageDown);
+    const int without = vertical();
+    ASSERT_GT(without, view_.line_height());
+
+    view_.select_range(core::Selection::caret(0));
+    ASSERT_EQ(vertical(), 0);
+    settings_.smooth_scrolling = true;
+    apply();
+    view_.set_scroll_clock([this] { return now_; });
+    key(Qt::Key_PageDown);
+    key(Qt::Key_PageDown);
+    EXPECT_EQ(vertical(), 0);
+    EXPECT_EQ(view_.scroll_target().y(), without);
+    after(125);
+    EXPECT_EQ(vertical(), without);
+}
+
+TEST_F(SmoothScrollingTest, ARevealOfALineOrLessHappensAtOnce) {
+    open_smooth();
+    const int lines_in_view = view_.viewport()->height() / view_.line_height();
+    // Down to the last line that shows whole, and one more.
+    for (int i = 0; i < lines_in_view; ++i) {
+        key(Qt::Key_Down);
+        ASSERT_FALSE(view_.scrolling()) << i;
+    }
+    EXPECT_EQ(vertical(), (lines_in_view + 1) * view_.line_height() - view_.viewport()->height());
+    key(Qt::Key_Down);
+    EXPECT_FALSE(view_.scrolling());
+}
+
+TEST_F(SmoothScrollingTest, ARevealSidewaysMovesOverTimeAlsoWhenALineIsAllItMovesDown) {
+    open_smooth();
+    view_.select_range(core::Selection::caret(end_of_line(0)));
+    const int far = view_.scroll_target().x();
+    ASSERT_GT(far, 0);
+    EXPECT_EQ(horizontal(), 0);
+    after(125);
+    EXPECT_EQ(horizontal(), far);
+
+    // The last line that shows whole, then one further down and at the left edge.
+    const auto lines_in_view =
+        static_cast<std::size_t>(view_.viewport()->height() / view_.line_height());
+    view_.scroll_to({0, 0});
+    view_.select_range(core::Selection::caret(start_of_line(lines_in_view - 1)));
+    after(125);
+    view_.scroll_to({300, vertical()});
+    const int above = vertical();
+    view_.select_range(core::Selection::caret(start_of_line(lines_in_view)));
+    EXPECT_NE(vertical(), above) << "a line down at once";
+    EXPECT_EQ(horizontal(), 300);
+    EXPECT_TRUE(view_.scrolling());
+    after(125);
+    EXPECT_EQ(horizontal(), 0);
+}
+
+TEST_F(SmoothScrollingTest, WhatElseMovesAScrollBarEndsTheMovement) {
+    open_smooth();
+    wheel({0, -1200});
+    after(20);
+    view_.verticalScrollBar()->setValue(7);
+    EXPECT_FALSE(view_.scrolling());
+    after(125);
+    EXPECT_EQ(vertical(), 7);
+    EXPECT_EQ(view_.scroll_target(), QPoint(0, 7));
+}
+
+TEST_F(SmoothScrollingTest, GoingToAPlaceAtOnceEndsAMovementThatHasNotLeftIt) {
+    open_smooth();
+    wheel({0, -120});
+    view_.scroll_to({0, 0});
+    EXPECT_FALSE(view_.scrolling());
+    after(125);
+    EXPECT_EQ(vertical(), 0);
+}
+
+TEST_F(SmoothScrollingTest, AnotherDocumentEndsTheMovement) {
+    open_smooth();
+    wheel({0, -120});
+    view_.set_document(make_document(std::string(200, '\n')));
+    EXPECT_FALSE(view_.scrolling());
+    after(125);
+    EXPECT_EQ(vertical(), 0);
+}
+
+TEST_F(SmoothScrollingTest, TurningTheSettingOffGoesToTheEndOfTheMovement) {
+    open_smooth();
+    wheel({0, -120});
+    settings_.smooth_scrolling = false;
+    view_.apply_settings(settings_);
+    EXPECT_FALSE(view_.scrolling());
+    EXPECT_EQ(vertical(), 50);
+}
+
+TEST_F(SmoothScrollingTest, ADragOfTheMouseScrollsAtOnce) {
+    open_smooth();
+    mouse(QEvent::MouseButtonPress, QPoint(60, 5));
+    mouse(QEvent::MouseMove, QPoint(60, view_.viewport()->height() + 200));
+    EXPECT_GT(vertical(), view_.line_height());
+    EXPECT_FALSE(view_.scrolling());
+    mouse(QEvent::MouseButtonRelease, QPoint(60, view_.viewport()->height() + 200));
 }
