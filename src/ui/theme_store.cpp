@@ -4,6 +4,8 @@
 #include "anvil/platform/file.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <nlohmann/json.hpp>
 
 namespace anvil::ui {
@@ -94,9 +96,54 @@ std::optional<core::Rgba> own_color(const core::ColorTheme& theme, const Workben
     return std::nullopt;
 }
 
+bool is_high_contrast(core::ThemeKind kind) {
+    return kind == core::ThemeKind::high_contrast_dark ||
+           kind == core::ThemeKind::high_contrast_light;
+}
+
+// The registry's slider of a scroll bar, which high contrast themes derive from their
+// `contrastBorder`.
+std::optional<core::Rgba> slider_default(std::string_view key, const core::ColorTheme& theme,
+                                         core::ThemeKind kind) {
+    const bool rest = key == "scrollbarSlider.background";
+    const bool hover = key == "scrollbarSlider.hoverBackground";
+    if (!rest && !hover && key != "scrollbarSlider.activeBackground") {
+        return std::nullopt;
+    }
+    const bool light = kind == core::ThemeKind::light;
+    if (is_high_contrast(kind)) {
+        const bool light_contrast = kind == core::ThemeKind::high_contrast_light;
+        core::Rgba color = theme.color("contrastBorder")
+                               .value_or(light_contrast ? core::Rgba{0x0f, 0x4a, 0x85, 0xff}
+                                                        : core::Rgba{0x6f, 0xc3, 0xdf, 0xff});
+        const double opacity = rest ? (light_contrast ? 0.4 : 0.6) : hover ? 0.8 : 1.0;
+        color.alpha = static_cast<std::uint8_t>(std::lround(color.alpha * opacity));
+        return color;
+    }
+    if (rest) {
+        return light ? core::Rgba{0x64, 0x64, 0x64, 0x66} : core::Rgba{0x79, 0x79, 0x79, 0x66};
+    }
+    if (hover) {
+        return core::Rgba{0x64, 0x64, 0x64, 0xb3};
+    }
+    return light ? core::Rgba{0x00, 0x00, 0x00, 0x99} : core::Rgba{0xbf, 0xbf, 0xbf, 0x66};
+}
+
 // Defaults of VS Code's registry for keys that the default themes do not set either, by kind of
-// theme. The high contrast themes have none for these.
-std::optional<core::Rgba> registry_default(std::string_view key, core::ThemeKind kind) {
+// theme.
+std::optional<core::Rgba> registry_default(std::string_view key, const core::ColorTheme& theme,
+                                           core::ThemeKind kind) {
+    if (const auto slider = slider_default(key, theme, kind)) {
+        return slider;
+    }
+    if (key == "contrastBorder") {
+        if (kind == core::ThemeKind::high_contrast_dark) {
+            return core::Rgba{0x6f, 0xc3, 0xdf, 0xff};
+        }
+        if (kind == core::ThemeKind::high_contrast_light) {
+            return core::Rgba{0x0f, 0x4a, 0x85, 0xff};
+        }
+    }
     if (key == "editorGroup.border") {
         if (kind == core::ThemeKind::dark) {
             return core::Rgba{.red = 0x44, .green = 0x44, .blue = 0x44, .alpha = 0xff};
@@ -165,7 +212,7 @@ WorkbenchColors::Colors ThemeStore::compose(const Entry& entry, const core::Colo
             color = own_color(*base_theme, key);
         }
         if (!color) {
-            color = registry_default(key.key, entry.kind);
+            color = registry_default(key.key, theme, entry.kind);
         }
         if (color) {
             table.emplace(std::string(key.key), to_qcolor(*color));

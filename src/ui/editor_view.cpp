@@ -3,6 +3,7 @@
 #include "anvil/core/visible_column.hpp"
 #include "anvil/core/zoom.hpp"
 #include "anvil/ui/line_layout.hpp"
+#include "anvil/ui/scroll_bar.hpp"
 #include "anvil/ui/wheel_input.hpp"
 #include "anvil/ui/zoom.hpp"
 
@@ -134,7 +135,24 @@ struct EditorView::ShownLine {
     }
 };
 
+// The square between the two scroll bars, in the color of the editor.
+class EditorView::Corner : public QWidget {
+public:
+    explicit Corner(const EditorView& view) : view_(view) {}
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+
+private:
+    const EditorView& view_;
+};
+
 EditorView::EditorView(QWidget* parent) : QAbstractScrollArea(parent) {
+    setVerticalScrollBar(
+        new ScrollBar(Qt::Vertical, ScrollBar::editor_vertical_width, "editor.background"));
+    setHorizontalScrollBar(
+        new ScrollBar(Qt::Horizontal, ScrollBar::editor_horizontal_height, "editor.background"));
+    setCornerWidget(new Corner(*this));
     apply_settings(core::EditorSettings{});
 
     viewport()->setCursor(Qt::IBeamCursor);
@@ -202,7 +220,9 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     scroll_beyond_last_column_ = settings.scroll_beyond_last_column;
     text_padding_ = core::scale_for_zoom(text_padding_px, settings.zoom_level);
     gutter_padding_ = core::scale_for_zoom(gutter_padding_px, settings.zoom_level);
-    scale_scroll_bars(*this, settings.zoom_level);
+    for (QScrollBar* bar : {verticalScrollBar(), horizontalScrollBar()}) {
+        static_cast<ScrollBar*>(bar)->set_zoom_level(settings.zoom_level);
+    }
     const QFont wanted = font_for(settings.font_family,
                                   core::scale_for_zoom(settings.font_size, settings.zoom_level));
     if (wanted != font()) {
@@ -1378,14 +1398,23 @@ struct EditorView::Colors {
 void EditorView::set_colors(const WorkbenchColors* colors) {
     QObject::disconnect(colors_connection_);
     colors_ = colors;
+    for (QScrollBar* bar : {verticalScrollBar(), horizontalScrollBar()}) {
+        static_cast<ScrollBar*>(bar)->set_colors(colors);
+    }
+    cornerWidget()->update();
     if (colors_) {
         colors_connection_ = connect(colors_, &WorkbenchColors::changed, this, [this] {
             clear_layouts();
             viewport()->update();
+            cornerWidget()->update();
         });
     }
     clear_layouts();
     viewport()->update();
+}
+
+void EditorView::Corner::paintEvent(QPaintEvent*) {
+    QPainter(this).fillRect(rect(), view_.current_colors().background);
 }
 
 EditorView::Colors EditorView::current_colors() const {

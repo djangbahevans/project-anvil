@@ -1,6 +1,10 @@
+#include "anvil/core/log.hpp"
 #include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/line_layout.hpp"
+#include "anvil/ui/resources.hpp"
+#include "anvil/ui/scroll_bar.hpp"
+#include "anvil/ui/theme_store.hpp"
 #include "anvil/ui/wheel_input.hpp"
 
 #include <QApplication>
@@ -3123,4 +3127,56 @@ TEST(WheelInput, TheSwapOfTheAxesThatQtMakesForAltIsUndone) {
         EXPECT_EQ(turn(Qt::AltModifier, platform).x, -1);
         EXPECT_EQ(turn(Qt::AltModifier, platform).y, 0);
     }
+}
+
+TEST_F(ScrollingTest, TheScrollBarsAreTheEditorsOwnInTheColorsOfTheView) {
+    open_large();
+    WorkbenchColors colors{QApplication::palette()};
+    colors.set_colors({{"editor.background", QColor("#102030")},
+                       {"scrollbarSlider.background", QColor("#ff0000")}});
+    view_.set_colors(&colors);
+    QApplication::processEvents();
+    auto* vertical = qobject_cast<ui::ScrollBar*>(view_.verticalScrollBar());
+    auto* horizontal = qobject_cast<ui::ScrollBar*>(view_.horizontalScrollBar());
+    ASSERT_NE(vertical, nullptr);
+    ASSERT_NE(horizontal, nullptr);
+    EXPECT_EQ(vertical->width(), 14);
+    EXPECT_EQ(horizontal->height(), 12);
+    // The bars take their own room, and no more.
+    const auto fills_the_view = [&] {
+        EXPECT_EQ(view_.viewport()->width() + vertical->width(), view_.width());
+        EXPECT_EQ(view_.viewport()->height() + horizontal->height(), view_.height());
+    };
+    fills_the_view();
+    for (const double level : {3.0, -2.0, 0.0}) {
+        settings_.zoom_level = level;
+        apply();
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        fills_the_view();
+    }
+    for (ui::ScrollBar* bar : {vertical, horizontal}) {
+        QEvent left(QEvent::Leave);
+        QApplication::sendEvent(bar, &left);
+        const QImage image = bar->grab().toImage();
+        EXPECT_EQ(image.pixelColor(bar->slider_rect().center()), QColor("#ff0000"));
+        EXPECT_EQ(image.pixelColor(bar->width() - 1, bar->height() - 1), QColor("#102030"));
+    }
+    // The square between the bars.
+    ASSERT_NE(view_.cornerWidget(), nullptr);
+    ASSERT_TRUE(view_.cornerWidget()->isVisible());
+    EXPECT_EQ(view_.cornerWidget()->grab().toImage().pixelColor(5, 5), QColor("#102030"));
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        ui::ThemeStore store(colors, ui::themes_directory(),
+                             std::make_shared<core::RecordingLogger>());
+        view_.verticalScrollBar()->setValue(view_.verticalScrollBar()->maximum() / 3);
+        for (const auto* theme : {"Dark 2026", "Light+", "Dark High Contrast"}) {
+            ASSERT_TRUE(store.select(theme));
+            QApplication::processEvents();
+            view_.grab().save(QString::fromUtf8(directory) + "/scroll_bar_editor_" + theme +
+                              ".png");
+        }
+    }
+    view_.set_colors(nullptr);
 }

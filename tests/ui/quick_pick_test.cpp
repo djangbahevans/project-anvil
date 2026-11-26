@@ -1,5 +1,9 @@
 #include "../timing.hpp"
+#include "anvil/core/log.hpp"
 #include "anvil/ui/quick_pick.hpp"
+#include "anvil/ui/resources.hpp"
+#include "anvil/ui/scroll_bar.hpp"
+#include "anvil/ui/theme_store.hpp"
 
 #include <QAbstractItemModel>
 #include <QApplication>
@@ -661,4 +665,34 @@ TEST_F(QuickPickTest, TheNextRowIsChosenAndTheActiveItemTold) {
     pick_->set_items({});
     EXPECT_EQ(pick_->active_item(), std::nullopt);
     pick_->select_next();
+}
+
+TEST_F(QuickPickTest, TheListHasASlimScrollBarOnTheColorOfThePopup) {
+    colors_.set_colors({{"quickInput.background", QColor("#102030")},
+                        {"scrollbarSlider.background", QColor("#ff0000")}});
+    std::vector<QString> labels;
+    for (int i = 0; i < 80; ++i) {
+        labels.push_back(QString("Item %1").arg(i));
+    }
+    pick_->set_items(items_of(labels));
+    pick_->open();
+    QApplication::processEvents();
+    auto* bar = qobject_cast<anvil::ui::ScrollBar*>(pick_->list()->verticalScrollBar());
+    ASSERT_NE(bar, nullptr);
+    ASSERT_TRUE(bar->isVisible());
+    EXPECT_EQ(bar->width(), anvil::ui::ScrollBar::list_width);
+    QEvent left(QEvent::Leave);
+    QApplication::sendEvent(bar, &left);
+    const QImage image = bar->grab().toImage();
+    EXPECT_EQ(image.pixelColor(5, bar->slider_rect().center().y()), QColor("#ff0000"));
+    EXPECT_EQ(image.pixelColor(5, bar->height() - 1), QColor("#102030"));
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        anvil::ui::ThemeStore store(colors_, anvil::ui::themes_directory(),
+                                    std::make_shared<anvil::core::RecordingLogger>());
+        for (const auto* theme : {"Dark 2026", "Light+"}) {
+            ASSERT_TRUE(store.select(theme));
+            QApplication::processEvents();
+            host_->grab().save(QString::fromUtf8(directory) + "/scroll_bar_pick_" + theme + ".png");
+        }
+    }
 }

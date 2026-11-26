@@ -338,6 +338,54 @@ TEST_F(ThemeStoreTest,
     EXPECT_FALSE(colors_.is_themed("editorGroup.dropBackground"));
 }
 
+TEST_F(ThemeStoreTest, TheSlidersOfTheScrollBarsTakeTheRegistrysColorsUnlessTheThemeSetsThem) {
+    open_shipped();
+    const auto sliders = [this] {
+        return std::vector<QColor>{colors_.color("scrollbarSlider.background"),
+                                   colors_.color("scrollbarSlider.hoverBackground"),
+                                   colors_.color("scrollbarSlider.activeBackground")};
+    };
+    const QColor hover(0x64, 0x64, 0x64, 0xb3);
+    for (const auto* dark : {"Dark Modern", "Dark+"}) {
+        ASSERT_TRUE(store_->select(dark));
+        EXPECT_EQ(sliders(), (std::vector<QColor>{QColor(0x79, 0x79, 0x79, 0x66), hover,
+                                                  QColor(0xbf, 0xbf, 0xbf, 0x66)}))
+            << dark;
+        EXPECT_FALSE(colors_.is_themed("contrastBorder"));
+        EXPECT_FALSE(colors_.is_themed("scrollbar.background"));
+    }
+    ASSERT_TRUE(store_->select("Light+"));
+    EXPECT_EQ(sliders(), (std::vector<QColor>{QColor(0x64, 0x64, 0x64, 0x66), hover,
+                                              QColor(0x00, 0x00, 0x00, 0x99)}));
+
+    ASSERT_TRUE(store_->select("Dark High Contrast"));
+    EXPECT_EQ(colors_.color("contrastBorder"), QColor(0x6f, 0xc3, 0xdf));
+    EXPECT_EQ(sliders(),
+              (std::vector<QColor>{QColor(0x6f, 0xc3, 0xdf, 153), QColor(0x6f, 0xc3, 0xdf, 204),
+                                   QColor(0x6f, 0xc3, 0xdf, 255)}));
+    ASSERT_TRUE(store_->select("Default High Contrast Light"));
+    EXPECT_EQ(colors_.color("contrastBorder"), QColor(0x0f, 0x4a, 0x85));
+    EXPECT_EQ(sliders(),
+              (std::vector<QColor>{QColor(0x0f, 0x4a, 0x85, 102), QColor(0x0f, 0x4a, 0x85, 204),
+                                   QColor(0x0f, 0x4a, 0x85, 255)}));
+
+    ASSERT_TRUE(store_->select("Dark 2026"));
+    EXPECT_EQ(sliders(),
+              (std::vector<QColor>{QColor(0xa8, 0xa9, 0xaa, 0x85), QColor(0xa8, 0xa9, 0xaa, 0x90),
+                                   QColor(0xa8, 0xa9, 0xaa, 0x9c)}));
+}
+
+TEST_F(ThemeStoreTest, TheSlidersOfAHighContrastThemeFollowItsContrastBorder) {
+    write("contrast.json", R"j({"colors": {"contrastBorder": "#ff0000"}})j");
+    open_shipped();
+    store_->add_themes({{.id = "red",
+                         .label = "Red",
+                         .kind = core::ThemeKind::high_contrast_dark,
+                         .file = scratch_ / "contrast.json"}});
+    ASSERT_TRUE(store_->select("red"));
+    EXPECT_EQ(colors_.color("scrollbarSlider.background"), QColor(0xff, 0, 0, 153));
+}
+
 TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {
     open_shipped();
     ASSERT_TRUE(store_->select("Dark 2026"));

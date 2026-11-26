@@ -1,5 +1,7 @@
 #include "anvil/ui/quick_pick.hpp"
 
+#include "anvil/ui/scroll_bar.hpp"
+
 #include <QAbstractListModel>
 #include <QApplication>
 #include <QFontInfo>
@@ -287,6 +289,9 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* bar = new ScrollBar(Qt::Vertical, ScrollBar::list_width, "quickInput.background");
+    bar->set_colors(&colors_);
+    list_->setVerticalScrollBar(bar);
     list_->setItemDelegate(new Delegate(*this, colors_, list_));
     model_ = new Model(items_, this);
     list_->setModel(model_);
@@ -347,7 +352,7 @@ void QuickPick::apply_zoom() {
     filter_->setFont(popup_font);
     empty_->setFont(popup_font);
     list_->setFont(popup_font);
-    scale_scroll_bars(*list_, zoom_ ? zoom_->level() : 0);
+    static_cast<ScrollBar*>(list_->verticalScrollBar())->set_zoom_level(zoom_ ? zoom_->level() : 0);
     const int padding = zoomed(header_padding_px);
     header_layout_->setContentsMargins(padding, padding, padding, zoomed(header_bottom_padding_px));
     empty_->setContentsMargins(zoomed(text_padding_px), 0, zoomed(text_padding_px), 0);
