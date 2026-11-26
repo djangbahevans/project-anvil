@@ -270,6 +270,15 @@ void Panel::set_active_container(std::string_view id) {
     }
 }
 
+void Panel::reset_active_container() {
+    if (active_.empty()) {
+        return;
+    }
+    active_.clear();
+    update_tabs();
+    emit active_container_changed({});
+}
+
 QWidget* Panel::container_widget(std::string_view id) const {
     return stack_->container_widget(id);
 }

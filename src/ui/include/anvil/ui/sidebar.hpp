@@ -42,6 +42,9 @@ public:
     // sidebar or making the container's widget while it is hidden. Nothing happens for an id that
     // is not registered for the sidebar.
     void set_active_container(std::string_view id);
+    // Forgets the active container, so that the sidebar shows the first one when it is next shown.
+    // For a hidden sidebar.
+    void reset_active_container();
 
     // Whether the activity bar may show; it shows while it may and a container is registered.
     void set_activity_bar_allowed(bool allowed);

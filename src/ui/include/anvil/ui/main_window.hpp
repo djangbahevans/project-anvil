@@ -82,7 +82,7 @@ struct MainWindowOptions {
     // The user key bindings file, read at startup and whenever it changes. A missing file means
     // the default bindings alone; empty means no such file at all.
     std::filesystem::path keybindings_file;
-    // The directory with what a window starts with again (ADR 0019): its layout, size and
+    // The directory with what a window starts with again (ADR 0021): its layout, size and
     // position. Empty keeps them for the life of the window only.
     std::filesystem::path state_directory;
     // The ripgrep that lists the files for Go to File; none when there is no ripgrep to be found.
