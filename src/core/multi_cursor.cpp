@@ -1,6 +1,7 @@
 #include "anvil/core/brackets.hpp"
 #include "anvil/core/editing.hpp"
 #include "anvil/core/smart_select.hpp"
+#include "anvil/core/visible_column.hpp"
 
 #include <algorithm>
 
@@ -9,15 +10,15 @@ namespace {
 
 struct Moved {
     std::size_t offset = 0;
-    std::size_t leftover = 0;
+    std::ptrdiff_t leftover = 0;
 };
 
-// Where an end of a selection goes on the line above or below its own. It wants the column it has
-// plus what a short line took away from it before; on a shorter line it stops at the end of the
+// Where an end of a selection goes on the line above or below its own. It wants the visible column
+// it has plus what a line took away from it before; on a shorter line it stops at the end of the
 // line, and what is missing is what it will want again.
-Moved translate(const Text& text, std::size_t offset, std::size_t leftover, bool down) {
+Moved translate(const Text& text, std::size_t offset, std::ptrdiff_t leftover, bool down,
+                std::size_t tab_size) {
     const Position position = text.position_at(offset);
-    const std::size_t wanted = position.column + leftover;
     const bool beyond = down ? position.line + 1 >= text.line_count() : position.line == 0;
     if (beyond) {
         // The edge line has nothing to move to; the end stays, and a caret at the very edge of the
@@ -25,9 +26,16 @@ Moved translate(const Text& text, std::size_t offset, std::size_t leftover, bool
         const bool at_edge = down ? offset == text.size() : offset == 0;
         return {offset, at_edge ? 0 : leftover};
     }
+    const std::size_t start = text.line_start(position.line);
+    const std::string before = text.slice(start, offset - start);
+    const auto wanted = std::max<std::ptrdiff_t>(
+        0, static_cast<std::ptrdiff_t>(visible_column(before, before.size(), tab_size)) + leftover);
     const std::size_t line = down ? position.line + 1 : position.line - 1;
-    const std::size_t target = text.offset_at({line, wanted});
-    return {target, wanted - text.position_at(target).column};
+    const std::string content = text.line(line);
+    const std::size_t column =
+        offset_at_visible_column(content, static_cast<std::size_t>(wanted), tab_size);
+    return {text.line_start(line) + column,
+            wanted - static_cast<std::ptrdiff_t>(visible_column(content, column, tab_size))};
 }
 
 } // namespace
@@ -46,8 +54,8 @@ EditOutcome EditController::add_cursors_vertically(bool down) {
     for (std::size_t i = 0; i < selections.size(); ++i) {
         const Leftover current = known ? leftovers_[i] : Leftover{};
         entries.push_back({selections[i], current});
-        const Moved anchor = translate(text, selections[i].anchor, current.anchor, down);
-        const Moved active = translate(text, selections[i].active, current.active, down);
+        const Moved anchor = translate(text, selections[i].anchor, current.anchor, down, tab_size_);
+        const Moved active = translate(text, selections[i].active, current.active, down, tab_size_);
         entries.push_back({{anchor.offset, active.offset}, {anchor.leftover, active.leftover}});
     }
     std::vector<Selection> all;

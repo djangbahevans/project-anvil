@@ -91,6 +91,7 @@ struct CopiedText {
 // cursors need no special handling.
 //
 // Characters are Unicode code points; a base character with combining marks counts as several.
+// Vertical movement alone goes by visible columns (see visible_column.hpp).
 //
 // The controller keeps the state that is not part of the document: the column that vertical
 // movement tries to return to, and whether the last edit may be joined by the next one into a
@@ -98,6 +99,11 @@ struct CopiedText {
 class EditController {
 public:
     explicit EditController(Document& document) : document_(document) {}
+
+    // The width of a tab stop for visible columns (`editor.tabSize`), at least 1.
+    void set_tab_size(std::size_t tab_size) {
+        tab_size_ = tab_size;
+    }
 
     // --- editing ---
 
@@ -165,8 +171,8 @@ public:
     // --- cursors ---
 
     // Adds, for every selection, a copy of it one line up or down: each end of the copy goes to
-    // the column that end wants on the neighboring line, which is the column it had, or the
-    // column it would have had on a longer line (the width that a short line took away is
+    // the visible column that end wants on the neighboring line, which is the one it had, or the
+    // one it would have had on a longer line (the width that a short line took away is
     // remembered while the cursors are added again and again). At the first line (up) and the
     // last line (down) the copy is the selection itself, so nothing is added.
     EditOutcome add_cursors_vertically(bool down);
@@ -292,17 +298,20 @@ private:
     EditOutcome step_selection(bool expand);
 
     Document& document_;
+    std::size_t tab_size_ = 4;
+    // The visible column that vertical movement of a lone cursor returns to.
     std::optional<std::size_t> goal_column_;
     EditKind last_kind_ = EditKind::none;
     // The document version and selections right after the last joinable edit.
     std::uint64_t last_version_ = 0;
     SelectionSet last_selections_;
-    // How far past the end of a short line each end of each selection wants to be, for the
+    // How many visible columns each end of each selection wants beyond where it is, for the
     // selections in `leftovers_for_`; add_cursors_vertically keeps it so that a cursor added over a
-    // short line goes back to its column on the next long one.
+    // short line goes back to its column on the next long one. It is negative for an end that a tab
+    // or a wide character took past the column it wants.
     struct Leftover {
-        std::size_t anchor = 0;
-        std::size_t active = 0;
+        std::ptrdiff_t anchor = 0;
+        std::ptrdiff_t active = 0;
     };
     SelectionSet leftovers_for_;
     std::vector<Leftover> leftovers_;

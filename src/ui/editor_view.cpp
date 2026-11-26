@@ -1,5 +1,6 @@
 #include "anvil/ui/editor_view.hpp"
 
+#include "anvil/core/visible_column.hpp"
 #include "anvil/core/zoom.hpp"
 #include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/zoom.hpp"
@@ -86,19 +87,6 @@ QFont font_for(const std::string& family_list, int pixel_size) {
     return font;
 }
 
-// The column that the end of `prefix` is shown at, where a tab advances to the next tab stop.
-std::size_t visual_column(std::string_view prefix, std::size_t tab_size) {
-    std::size_t column = 0;
-    for (const char c : prefix) {
-        if (c == '\t') {
-            column += tab_size - column % tab_size;
-        } else if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u) {
-            ++column;
-        }
-    }
-    return column;
-}
-
 bool is_marked_as_line(const QMimeData* data) {
     return data != nullptr && data->hasFormat(line_marker_format) &&
            QJsonDocument::fromJson(data->data(line_marker_format))
@@ -178,6 +166,9 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     const int previous_char_width = char_width_;
 
     tab_size_ = static_cast<std::size_t>(settings.tab_size);
+    if (controller_) {
+        controller_->set_tab_size(tab_size_);
+    }
     insert_spaces_ = settings.insert_spaces;
     render_whitespace_ = settings.render_whitespace;
     render_control_characters_ = settings.render_control_characters;
@@ -210,6 +201,9 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
 void EditorView::set_document(std::shared_ptr<core::Document> document) {
     document_ = std::move(document);
     controller_ = document_ ? std::make_unique<core::EditController>(*document_) : nullptr;
+    if (controller_) {
+        controller_->set_tab_size(tab_size_);
+    }
     max_line_width_ = 0;
     highlights_.clear();
     clear_layouts();
@@ -828,7 +822,8 @@ void EditorView::insert_tab() {
     const core::Text& text = document_->text();
     const std::size_t caret = document_->selections().primary().active;
     const std::size_t line_start = text.line_start(text.position_at(caret).line);
-    const std::size_t column = visual_column(text.slice(line_start, caret - line_start), tab_size_);
+    const std::string before = text.slice(line_start, caret - line_start);
+    const std::size_t column = core::visible_column(before, before.size(), tab_size_);
     apply(controller_->type(std::string(tab_size_ - column % tab_size_, ' ')));
 }
 

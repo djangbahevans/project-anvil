@@ -30,6 +30,13 @@ Anvil includes the following material from other projects. Each keeps its own li
 - **Copyright:** Copyright (c) Microsoft Corporation.
 - **License:** MIT. The text is in `resources/themes/LICENSE-vscode.txt`.
 
+## Visual Studio Code grapheme clusters
+
+- **What:** the table of grapheme cluster break classes in `src/core/grapheme_table.hpp`, which is generated from the data of `src/vs/base/common/strings.ts`, the rules in `src/core/visible_column.cpp` that apply it, ported from the same file and from `cursorColumns.ts`, and the cases in `tests/core/data/cursor_column_cases.json` that record how the editor counts columns and moves a caret.
+- **From:** Visual Studio Code (https://github.com/microsoft/vscode), at the release pinned in `scripts/fetch-vscode.sh`.
+- **Copyright:** Copyright (c) Microsoft Corporation.
+- **License:** MIT. The text is in `resources/themes/LICENSE-vscode.txt`.
+
 ## tree-sitter
 
 - **What:** the runtime library (`lib/src`, `lib/include`), compiled into the core library when `.deps/tree-sitter` exists. Nothing is copied into this repository. The runtime includes a few headers of ICU in `lib/src/unicode`, (Copyright (c) 1991-2019 Unicode, Inc.) under the Unicode license that the `LICENSE` file next to them holds.

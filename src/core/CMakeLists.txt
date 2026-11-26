@@ -36,6 +36,7 @@ add_library(anvil_core STATIC
   uri.cpp
   workspace.cpp
   utf.cpp
+  visible_column.cpp
   zoom.cpp
   when_expression.cpp
   whitespace.cpp

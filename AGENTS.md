@@ -76,7 +76,7 @@ Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, syntax highlighting of the open documents, view containers with the activity bar, sidebar and panel, status bar, title bar and window frame, tab strip, splitter, editor area and its groups, main window, extension host bridge |
 | `tools/exthost-probe` | a Node script that plays the editor toward the extension host, and fixture extensions |
 | `resources` | files the editor ships with: VS Code's default color themes, with their license |
-| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the file name comparer, the token theme matcher and the key binding parser, generating the key, icon and menu tables, copying the color themes, fetching the tree-sitter sources, formatting, setting and reading the relations between issues |
+| `scripts` | fetching VS Code, generating proxy ids, recording the results of the fuzzy scorer, the file name comparer, the token theme matcher, the key binding parser and the visible columns, generating the key, icon, menu and grapheme tables, copying the color themes, fetching the tree-sitter sources, formatting, setting and reading the relations between issues |
 
 ## Conventions
 

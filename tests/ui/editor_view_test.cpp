@@ -768,6 +768,31 @@ TEST_F(EditorViewTest, TabCountsATabCharacterAsAdvancingToTheNextTabStop) {
     EXPECT_EQ(text(), "\tab  ");
 }
 
+TEST_F(EditorViewTest, TabCountsAWideCharacterAsTwoColumns) {
+    open("\xE4\xB8\xAD");
+    view_.apply_settings(settings(14, 4, true));
+    view_.select_range(core::Selection::caret(3));
+    key(Qt::Key_Tab);
+    EXPECT_EQ(text(), "\xE4\xB8\xAD  ");
+}
+
+TEST_F(EditorViewTest, UpAndDownKeepTheVisibleColumnWithTheTabSizeOfTheSettings) {
+    open("\ta\nabcdefghij");
+    view_.apply_settings(settings(14, 8));
+    view_.select_range(core::Selection::caret(1));
+    key(Qt::Key_Down);
+    EXPECT_EQ(primary(), core::Selection::caret(11));
+    // A document shown after the settings were applied gets the tab size too.
+    open("\ta\nabcdefghij");
+    view_.select_range(core::Selection::caret(1));
+    key(Qt::Key_Down);
+    EXPECT_EQ(primary(), core::Selection::caret(11));
+    view_.apply_settings(settings(14, 2));
+    view_.select_range(core::Selection::caret(1));
+    key(Qt::Key_Down);
+    EXPECT_EQ(primary(), core::Selection::caret(5));
+}
+
 TEST_F(EditorViewTest, TabInsertsATabCharacterWhenSpacesAreTurnedOff) {
     for (const std::size_t caret : {0u, 1u, 2u, 3u}) {
         open("abc");

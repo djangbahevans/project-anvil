@@ -305,10 +305,33 @@ TEST(EditControllerMove, UpOnTheFirstLineGoesToTheStartAndDownOnTheLastToTheEnd)
     EXPECT_EQ(editor.primary(), Selection::caret(5));
 }
 
-TEST(EditControllerMove, VerticalMovementCountsUtf16Columns) {
-    Editor editor(std::string("x") + astral + "y\nabcd", {Selection::caret(5)});
+TEST(EditControllerMove, VerticalMovementKeepsTheVisibleColumnAcrossATab) {
+    Editor editor("\tab\n    cd", {Selection::caret(2)});
     editor.controller.move(Motion::down);
-    EXPECT_EQ(editor.primary(), Selection::caret(10)); // column 3 of "abcd", which starts at byte 7
+    EXPECT_EQ(editor.primary(), Selection::caret(9)) << "after the c, visible column 5";
+    editor.controller.move(Motion::up);
+    EXPECT_EQ(editor.primary(), Selection::caret(2));
+}
+
+TEST(EditControllerMove, TheTabSizeSetsTheVisibleColumns) {
+    Editor editor("\ta\nabcdefghij", {Selection::caret(1)});
+    editor.controller.set_tab_size(8);
+    editor.controller.move(Motion::down);
+    EXPECT_EQ(editor.primary(), Selection::caret(11));
+}
+
+TEST(EditControllerMove, TheColumnReturnedToAfterAShortLineIsAVisibleColumn) {
+    Editor editor("\t\tx\n\nabcdefghij", {Selection::caret(2)});
+    editor.controller.move(Motion::down);
+    editor.controller.move(Motion::down);
+    EXPECT_EQ(editor.primary(), Selection::caret(13)); // visible column 8 of the last line
+}
+
+TEST(EditControllerMove, SeveralCursorsEachKeepTheirOwnVisibleColumn) {
+    Editor editor("\ta\n\tb\n    cd\nabcdefgh", {Selection::caret(2), Selection::caret(4)});
+    editor.controller.move(Motion::down);
+    EXPECT_EQ(editor.selections(),
+              (std::vector<Selection>{Selection::caret(5), Selection::caret(10)}));
 }
 
 TEST(EditControllerMove, LineAndDocumentBoundaries) {

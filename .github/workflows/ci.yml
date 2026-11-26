@@ -106,6 +106,11 @@ jobs:
           node scripts/generate-language-comments.mjs --check
           node scripts/generate-comment-cases.mjs --check
 
+      - name: Check the grapheme table and the recorded cursor column cases
+        run: |
+          node scripts/generate-grapheme-table.mjs --check
+          node scripts/generate-cursor-column-cases.mjs --check
+
       - name: Check the menu table
         run: node scripts/generate-menus.mjs --check
 
