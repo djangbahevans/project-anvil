@@ -26,8 +26,9 @@ struct WorkbenchColorKey {
     // When that is not set either, the color of this role of the palette; with NoRole, `fixed`.
     QPalette::ColorRole role;
     QRgb fixed;
-    // VS Code gives the key no default: a part draws what it colors only when a theme sets it, and
-    // the default theme does not stand in for a theme that leaves it out.
+    // The default theme does not stand in for a theme that leaves the key out. VS Code gives such a
+    // key no default, so that a part draws what it colors only when a theme sets it, or a default
+    // of its own, which the theme store supplies.
     bool optional = false;
 };
 

@@ -7,6 +7,7 @@
 #include "anvil/ui/main_window.hpp"
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/project_links.hpp"
+#include "anvil/ui/scroll_bar.hpp"
 #include "anvil/ui/splitter.hpp"
 
 #include <QAction>
@@ -10236,13 +10237,14 @@ TEST_F(ZoomWholeWindowTest, TheFindBarTheSplitAreaAndTheNativeMenuBarFollowTheLe
 
 TEST_F(ZoomWholeWindowTest, TheEditorsScrollBarsAndPaddingFollowTheLevel) {
     start_shown_with("{}");
-    const int bar = window_->view()->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
     for (const double level : {-2.0, 0.0, 3.0}) {
         window_->change_setting("window.zoomLevel", static_cast<int>(level), "Zoom");
         QApplication::processEvents();
         SCOPED_TRACE(level);
-        EXPECT_EQ(window_->view()->verticalScrollBar()->width(), window_->zoom().scaled(bar));
-        EXPECT_EQ(window_->view()->horizontalScrollBar()->height(), window_->zoom().scaled(bar));
+        EXPECT_EQ(window_->view()->verticalScrollBar()->width(),
+                  window_->zoom().scaled(ui::ScrollBar::editor_vertical_width));
+        EXPECT_EQ(window_->view()->horizontalScrollBar()->height(),
+                  window_->zoom().scaled(ui::ScrollBar::editor_horizontal_height));
         EXPECT_EQ(window_->view()->text_padding(), window_->zoom().scaled(6));
         EXPECT_EQ(window_->view()->gutter_padding(), window_->zoom().scaled(8));
     }

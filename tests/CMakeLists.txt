@@ -185,6 +185,7 @@ if(TARGET anvil_ui)
     ui/quick_pick_test.cpp
     ui/resources_test.cpp
     ui/settings_store_test.cpp
+    ui/scroll_bar_test.cpp
     ui/sidebar_test.cpp
     ui/splitter_test.cpp
     ui/status_bar_test.cpp

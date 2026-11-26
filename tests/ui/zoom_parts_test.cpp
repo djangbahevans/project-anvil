@@ -6,6 +6,7 @@
 #include "anvil/ui/menu_style.hpp"
 #include "anvil/ui/panel.hpp"
 #include "anvil/ui/quick_pick.hpp"
+#include "anvil/ui/scroll_bar.hpp"
 #include "anvil/ui/sidebar.hpp"
 #include "anvil/ui/splitter.hpp"
 #include "anvil/ui/status_bar.hpp"
@@ -662,7 +663,7 @@ TEST_F(QuickPickZoomTest, TheRowsTheWidthAndTheFontAreTheSizesAtLevelZeroScaled)
         EXPECT_NEAR(pick_->filter_field()->font().pointSizeF(), base_points_ * zoom_.factor(),
                     0.01);
         EXPECT_EQ(pick_->list()->verticalScrollBar()->maximumWidth(),
-                  zoom_.scaled(pick_->style()->pixelMetric(QStyle::PM_ScrollBarExtent)));
+                  zoom_.scaled(anvil::ui::ScrollBar::list_width));
         const int blur = zoom_.scaled(20);
         bool shadow = false;
         for (const QWidget* sibling : host_->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {

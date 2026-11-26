@@ -220,6 +220,7 @@ protected:
     bool focusNextPrevChild(bool next) override;
 
 private:
+    class Corner;
     struct ShownLine;
     // A place in the text that stays put while the lines are wrapped differently.
     struct TextPlace {
