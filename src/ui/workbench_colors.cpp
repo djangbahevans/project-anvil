@@ -170,6 +170,8 @@ constexpr WorkbenchColorKey table[] = {
     chained("sash.hoverBorder", "Border of a splitter handle that is hovered or dragged.",
             "focusBorder", QPalette::Highlight),
     optional_color("scrollbar.background", "Track of the scroll bars.", QPalette::Window),
+    optional_color("scrollbar.shadow", "Shadow at the top of the editor while it is scrolled down.",
+                   QPalette::Shadow),
     optional_color("scrollbarSlider.activeBackground",
                    "Slider of a scroll bar while it is dragged.", QPalette::Dark),
     optional_color("scrollbarSlider.background", "Slider of a scroll bar.", QPalette::Mid),

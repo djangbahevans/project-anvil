@@ -3180,3 +3180,118 @@ TEST_F(ScrollingTest, TheScrollBarsAreTheEditorsOwnInTheColorsOfTheView) {
     }
     view_.set_colors(nullptr);
 }
+
+class ScrollShadowTest : public ScrollingTest {
+protected:
+    ScrollShadowTest() {
+        set_shadow(QColor(255, 0, 0));
+        view_.set_colors(&colors_);
+        open_large();
+    }
+    ~ScrollShadowTest() override {
+        view_.set_colors(nullptr);
+    }
+
+    void set_shadow(std::optional<QColor> shadow) {
+        WorkbenchColors::Colors theme{{"editor.background", background},
+                                      {"editorGutter.background", background},
+                                      {"editor.lineHighlightBackground", background}};
+        if (shadow) {
+            theme.emplace("scrollbar.shadow", *shadow);
+        }
+        colors_.set_colors(theme);
+    }
+
+    void scroll_to(int vertical, int horizontal = 0) {
+        view_.verticalScrollBar()->setValue(vertical);
+        view_.horizontalScrollBar()->setValue(horizontal);
+    }
+
+    // The red of the background at (x, y), which only the shadow raises.
+    int red(int x, int y) {
+        return view_.viewport()->grab().toImage().pixelColor(x, y).red();
+    }
+    // A column in the gutter with no line number, and one right of all text.
+    int gutter() const {
+        return 1;
+    }
+    int beyond() const {
+        return view_.viewport()->width() - 2;
+    }
+
+    const QColor background{0, 0, 100};
+    WorkbenchColors colors_{QApplication::palette()};
+};
+
+TEST_F(ScrollShadowTest, AViewScrolledDownHasAShadowThatFadesFromTheTopEdge) {
+    scroll_to(400);
+    for (const int x : {gutter(), beyond()}) {
+        EXPECT_NEAR(red(x, 0), 117, 12) << "half the color, less what half a pixel down loses";
+        for (int y = 1; y < 6; ++y) {
+            EXPECT_LT(red(x, y), red(x, y - 1)) << x << " " << y;
+        }
+        EXPECT_GT(red(x, 3), 10);
+        EXPECT_EQ(red(x, 6), 0) << "nothing below the shadow";
+    }
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        ui::ThemeStore store(colors_, ui::themes_directory(),
+                             std::make_shared<core::RecordingLogger>());
+        for (const auto* theme : {"Dark 2026", "Dark Modern", "Light+"}) {
+            ASSERT_TRUE(store.select(theme));
+            QApplication::processEvents();
+            view_.grab().save(QString::fromUtf8(directory) + "/scroll_shadow_" + theme + ".png");
+        }
+    }
+}
+
+TEST_F(ScrollShadowTest, TheStartOfTheDocumentHasNoShadow) {
+    EXPECT_EQ(red(gutter(), 0), 0);
+    EXPECT_EQ(red(beyond(), 0), 0);
+    scroll_to(1);
+    EXPECT_GT(red(beyond(), 0), 0);
+    scroll_to(0);
+    EXPECT_EQ(red(beyond(), 0), 0);
+}
+
+TEST_F(ScrollShadowTest, ScrollingSidewaysDrawsNone) {
+    scroll_to(0, 300);
+    ASSERT_EQ(horizontal(), 300);
+    for (const int x : {gutter(), beyond()}) {
+        EXPECT_EQ(red(x, 0), 0);
+        EXPECT_EQ(red(x, view_.viewport()->height() / 2), 0);
+    }
+    scroll_to(400, 300);
+    EXPECT_GT(red(beyond(), 0), 0);
+    EXPECT_EQ(red(beyond(), view_.viewport()->height() / 2), 0) << "none at the left edge";
+    EXPECT_EQ(red(view_.cursor_rect(0).x() - view_.text_padding() / 2 + 300,
+                  view_.viewport()->height() / 2),
+              0);
+}
+
+TEST_F(ScrollShadowTest, TheShadowHasTheAlphaOfTheThemesColor) {
+    scroll_to(400);
+    const int opaque = red(beyond(), 0);
+    set_shadow(QColor(255, 0, 0, 128));
+    EXPECT_NEAR(red(beyond(), 0), opaque / 2, 2);
+    set_shadow(QColor(255, 0, 0, 0));
+    EXPECT_EQ(red(beyond(), 0), 0);
+}
+
+TEST_F(ScrollShadowTest, AThemeWithoutTheColorDrawsNone) {
+    scroll_to(400);
+    set_shadow(std::nullopt);
+    EXPECT_EQ(red(beyond(), 0), 0);
+    EXPECT_EQ(view_.viewport()->grab().toImage().pixelColor(beyond(), 0), background);
+    view_.set_colors(nullptr);
+    EXPECT_EQ(view_.viewport()->grab().toImage().pixelColor(beyond(), 0).rgb(),
+              view_.palette().color(QPalette::Base).rgb());
+}
+
+TEST_F(ScrollShadowTest, TheShadowFollowsTheZoom) {
+    settings_.zoom_level = 4;
+    apply();
+    scroll_to(400);
+    // Six pixels at a factor of 1.2 to the power of 4.
+    EXPECT_GT(red(beyond(), 8), 0);
+    EXPECT_EQ(red(beyond(), 12), 0);
+}

@@ -19,6 +19,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLinearGradient>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -38,6 +39,7 @@ QColor to_color(const core::Rgba& color) {
 
 constexpr int caret_width = 2;
 constexpr int text_padding_px = 6;
+constexpr int shadow_height_px = 6;
 constexpr int gutter_padding_px = 8;
 const QColor match_highlight(255, 190, 0, 90);
 // VS Code draws a control character in white on this red, whatever the theme.
@@ -219,6 +221,7 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     scroll_beyond_last_line_ = settings.scroll_beyond_last_line;
     scroll_beyond_last_column_ = settings.scroll_beyond_last_column;
     text_padding_ = core::scale_for_zoom(text_padding_px, settings.zoom_level);
+    shadow_height_ = core::scale_for_zoom(shadow_height_px, settings.zoom_level);
     gutter_padding_ = core::scale_for_zoom(gutter_padding_px, settings.zoom_level);
     for (QScrollBar* bar : {verticalScrollBar(), horizontalScrollBar()}) {
         static_cast<ScrollBar*>(bar)->set_zoom_level(settings.zoom_level);
@@ -1393,6 +1396,8 @@ struct EditorView::Colors {
     QColor find_match;
     QColor find_highlight;
     QColor whitespace;
+    // Invalid when no theme gives the editor a shadow.
+    QColor shadow;
 };
 
 void EditorView::set_colors(const WorkbenchColors* colors) {
@@ -1431,7 +1436,8 @@ EditorView::Colors EditorView::current_colors() const {
                 palette.color(QPalette::Window),
                 match_highlight,
                 match_highlight,
-                palette.color(QPalette::PlaceholderText)};
+                palette.color(QPalette::PlaceholderText),
+                QColor()};
     }
     const QColor foreground = colors_->color("editor.foreground");
     return {colors_->color("editor.background"),
@@ -1447,7 +1453,8 @@ EditorView::Colors EditorView::current_colors() const {
             colors_->color("editorGutter.background"),
             colors_->color("editor.findMatchBackground"),
             colors_->color("editor.findMatchHighlightBackground"),
-            colors_->color("editorWhitespace.foreground")};
+            colors_->color("editorWhitespace.foreground"),
+            colors_->is_themed("scrollbar.shadow") ? colors_->color("scrollbar.shadow") : QColor()};
 }
 
 void EditorView::draw_whitespace(QPainter& painter, ShownLine& line, std::size_t row,
@@ -1478,6 +1485,18 @@ void EditorView::draw_whitespace(QPainter& painter, ShownLine& line, std::size_t
         const QChar mark = units[*column] == u'\t' ? QChar(0x2192) : QChar(0xB7);
         painter.drawText(QRect(x, y, char_width_, line_height_), Qt::AlignCenter, QString(mark));
     }
+}
+
+void EditorView::draw_scroll_shadow(QPainter& painter, const QColor& color) const {
+    QLinearGradient fade(0, 0, 0, shadow_height_);
+    // The falloff of VS Code's blurred inset shadow.
+    for (const auto& [at, strength] : {std::pair{0.0, 0.5}, std::pair{1.0 / 3, 0.25},
+                                       std::pair{2.0 / 3, 0.09}, std::pair{1.0, 0.0}}) {
+        QColor stop = color;
+        stop.setAlphaF(static_cast<float>(color.alphaF() * strength));
+        fade.setColorAt(at, stop);
+    }
+    painter.fillRect(QRect(0, 0, viewport()->width(), shadow_height_), fade);
 }
 
 void EditorView::paintEvent(QPaintEvent*) {
@@ -1655,6 +1674,10 @@ void EditorView::paintEvent(QPaintEvent*) {
         // From the top, like the text, so that numbers and text stand on one baseline.
         painter.drawText(QRect(0, y + text_top_, gutter - gutter_padding_, line_height_),
                          Qt::AlignRight | Qt::AlignTop, QString::number(line + 1));
+    }
+
+    if (scroll_y > 0 && colors.shadow.isValid()) {
+        draw_scroll_shadow(painter, colors.shadow);
     }
 
     if (widest != max_line_width_) {

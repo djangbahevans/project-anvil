@@ -46,7 +46,7 @@ public:
 
     // Takes the colors of the editor from the workbench colors, which must outlive the view, and
     // repaints when they change; null returns to the palette of the widget. The keys read are
-    // `editor.background`, `editor.foreground`, `editor.selectionBackground`,
+    // `scrollbar.shadow`, `editor.background`, `editor.foreground`, `editor.selectionBackground`,
     // `editor.lineHighlightBackground`, `editorLineNumber.foreground`,
     // `editorLineNumber.activeForeground`, `editorCursor.foreground`, `editorGutter.background`,
     // `editor.findMatchBackground` and `editor.findMatchHighlightBackground`. Text under a
@@ -235,6 +235,8 @@ private:
     // Whether `modifiers` hold the modifier that adds a cursor, and one of the others.
     bool has_multi_cursor_modifier(Qt::KeyboardModifiers modifiers) const;
     bool has_other_modifier(Qt::KeyboardModifiers modifiers) const;
+    // The shade along the top edge that says there is text above.
+    void draw_scroll_shadow(QPainter& painter, const QColor& color) const;
     // Draws the marks for the spaces and tabs of the line that `render_whitespace_` asks for.
     // A number that differs when the spans of the highlighter on `line` differ.
     std::size_t span_digest(std::size_t line) const;
@@ -327,6 +329,7 @@ private:
     std::shared_ptr<core::Document> document_;
     std::unique_ptr<core::EditController> controller_;
     int text_padding_ = 6;
+    int shadow_height_ = 6;
     int gutter_padding_ = 8;
     int line_height_ = 19;
     // The space above the text in its line, which centers it.

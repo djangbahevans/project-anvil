@@ -160,6 +160,14 @@ std::optional<core::Rgba> registry_default(std::string_view key, const core::Col
             return core::Rgba{.red = 0x26, .green = 0x77, .blue = 0xcb, .alpha = 0x2e};
         }
     }
+    if (key == "scrollbar.shadow") {
+        if (kind == core::ThemeKind::dark) {
+            return core::Rgba{.red = 0, .green = 0, .blue = 0, .alpha = 0xff};
+        }
+        if (kind == core::ThemeKind::light) {
+            return core::Rgba{.red = 0xdd, .green = 0xdd, .blue = 0xdd, .alpha = 0xff};
+        }
+    }
     if (key == "widget.shadow") {
         if (kind == core::ThemeKind::dark) {
             return core::Rgba{.red = 0, .green = 0, .blue = 0, .alpha = 0x5c};
