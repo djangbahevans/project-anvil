@@ -103,6 +103,18 @@ constexpr WorkbenchColorKey table[] = {
     from_palette("input.foreground", "Text of an input field.", QPalette::Text),
     from_palette("input.placeholderForeground", "Placeholder text of an input field.",
                  QPalette::PlaceholderText),
+    fixed_color("inputValidation.errorBackground",
+                "Background of the message under an input field that holds a value that is not "
+                "accepted.",
+                qRgb(0x5a, 0x1d, 0x1d)),
+    fixed_color("inputValidation.errorBorder",
+                "Border of the message under an input field that holds a value that is not "
+                "accepted.",
+                qRgb(0xbe, 0x11, 0x00)),
+    fixed_color("inputValidation.errorForeground",
+                "Text of the message under an input field that holds a value that is not "
+                "accepted.",
+                qRgb(0xff, 0xff, 0xff)),
     from_palette("list.activeSelectionBackground",
                  "Background of the selected row of a list or tree that has the keyboard focus.",
                  QPalette::Highlight),

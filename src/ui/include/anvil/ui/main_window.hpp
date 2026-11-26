@@ -68,6 +68,9 @@ struct MainWindowOptions {
     // Starts the watch of the Explorer's folder; the platform's watcher when unset. Tests replace
     // it to see how the window reports a watch that fails.
     std::optional<DirectoryWatchFactory> explorer_watch;
+    // The trash and the question before a delete in the Explorer; the system's when unset. Tests
+    // replace them so that they touch neither the user's trash nor a dialog.
+    std::optional<ExplorerActions> explorer_actions;
     // Receives the extension host's messages; discarded when unset.
     std::shared_ptr<core::Logger> logger;
     // The user settings file, read at startup and whenever it changes. A missing file means the
@@ -162,6 +165,9 @@ public:
     EditorArea* editor_area() {
         return area_;
     }
+    // The context menu of the explorer for the row that is selected, which the explorer shows when
+    // the user asks for it. Its actions carry the id of their command in their data.
+    std::unique_ptr<QMenu> explorer_context_menu();
     workbench::EditorLayout& editor_layout() {
         return layout_;
     }
@@ -288,6 +294,21 @@ private:
     void apply_file_associations();
     // Registers the explorer as the first container of the sidebar.
     void register_explorer();
+    // Gives the explorer `explorer.confirmDelete` and `files.enableTrash`.
+    void apply_explorer_settings();
+    // Shows the explorer, for a command that works on it, and returns it.
+    ExplorerView* show_explorer();
+    // The items of the explorer's context menu, for the row that is selected. The menu runs the
+    // commands of the explorer.
+    std::unique_ptr<QMenu> build_explorer_menu();
+    // Opens the file manager on the folder of a file or folder: the selected row of the explorer
+    // when it has the focus, otherwise the file of the active editor.
+    void reveal_in_file_manager();
+    void reveal_path(const std::filesystem::path& path);
+    // The explorer made, renamed or deleted files: the documents of the files follow, in the tabs
+    // and for extensions.
+    void explorer_renamed(const std::filesystem::path& from, const std::filesystem::path& to);
+    void explorer_deleted(const std::vector<std::filesystem::path>& paths);
     // Reads `files.exclude` and, when it changed, gives it to the explorer.
     void apply_file_excludes();
     // Builds the comment tokens of the registered languages from the built-in table and from the

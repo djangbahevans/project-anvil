@@ -201,6 +201,10 @@ const std::vector<Exempt> exempt_calls = {
     {"workbench.cpp", "panel_minimum()", "panel_minimum() scales it"},
     {"quick_pick.cpp", "setFixedWidth(std::max(0, width))", "made of a width that is scaled"},
     {"title_bar.cpp", "setPixelSize(size)", "the callers pass the glyph size scaled"},
+    {"explorer_view.cpp", "setFixedWidth(width)",
+     "the width of the viewport, from where the field is, or the width of the field"},
+    {"explorer_view.cpp", "setFixedHeight(problem_->heightForWidth(width))",
+     "the height of the text of the label in its font, which is scaled"},
 };
 
 TEST(ZoomSourcesTest, EveryCallThatGivesASizeInPixelsReadsItThroughTheZoomOrSaysWhyNot) {

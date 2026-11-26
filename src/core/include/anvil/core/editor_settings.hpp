@@ -122,6 +122,11 @@ struct EditorSettings {
     // zenMode.hideStatusBar, zenMode.hideActivityBar: Zen Mode hides the part
     bool zen_hide_status_bar = true;
     bool zen_hide_activity_bar = true;
+    // explorer.confirmDelete: the Explorer asks before it deletes
+    bool explorer_confirm_delete = true;
+    // files.enableTrash: the Explorer moves what it deletes to the trash; without it a delete is
+    // for good
+    bool enable_trash = true;
 
     friend bool operator==(const EditorSettings&, const EditorSettings&) = default;
 

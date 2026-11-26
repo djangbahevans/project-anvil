@@ -88,6 +88,8 @@ public:
         ErrorRole,
         // Whether the row is the "Loading…" row of a directory that is being read, as a bool.
         PlaceholderRole,
+        // Whether the row is the row of a new file or folder that is being named, as a bool.
+        PendingRole,
     };
 
     // The entries that are inserted in one step.
@@ -130,6 +132,22 @@ public:
         return watch_ != nullptr;
     }
 
+    // Reads `directory` again now, when it has rows, instead of when the watch reports a change;
+    // for the operations that the explorer makes itself.
+    void reload(const std::filesystem::path& directory);
+
+    // Whether all the entries of `directory`, which is invalid for the folder itself, are in the
+    // model, so that a new entry can be added to it.
+    bool is_read(const QModelIndex& directory) const;
+    // Adds the first row of `directory` for a file, or a folder, that is being named. The row has
+    // an empty name and no path, is editable and is not an entry of the disk: what reads the
+    // directory again leaves it where it is. The directory must be read (`is_read`). Replaces the
+    // pending row that there was, and returns the index of the new one.
+    QModelIndex add_pending_entry(const QModelIndex& directory, bool folder);
+    void remove_pending_entry();
+    // The pending row, or an invalid index.
+    QModelIndex pending_entry() const;
+
     std::filesystem::path path_of(const QModelIndex& index) const;
     bool is_directory(const QModelIndex& index) const;
     // The row of a path whose parent directories have been read; invalid for any other.
@@ -146,6 +164,8 @@ public:
     Qt::ItemFlags flags(const QModelIndex& index) const override;
 
 signals:
+    // All the entries of `directory`, which is invalid for the folder itself, have been inserted.
+    void directory_read(const QModelIndex& directory);
     // The watch could not start or lost events, as a sentence for the status bar. After lost
     // events the open directories were read again.
     void watch_problem(const QString& message);
@@ -208,6 +228,8 @@ private:
     // While `begin_load` is in the call of the runner.
     bool starting_ = false;
     std::unique_ptr<Node> root_;
+    // The row of a new entry that is being named, which belongs to the children of its parent.
+    Node* pending_ = nullptr;
 };
 
 } // namespace anvil::ui

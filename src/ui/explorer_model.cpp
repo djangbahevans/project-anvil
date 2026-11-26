@@ -28,6 +28,9 @@ struct ExplorerModel::Node {
     bool dirty = false;
     // The "Loading…" row of a directory that is loading.
     bool placeholder = false;
+    // The row of a new entry that is being named, and whether it is for a folder.
+    bool pending = false;
+    bool pending_folder = false;
     std::vector<std::unique_ptr<Node>> children;
 };
 
@@ -282,6 +285,7 @@ void ExplorerModel::insert_batch(std::uint64_t id) {
         directory.dirty = false;
         refresh(directory);
     }
+    emit directory_read(index_of_node(&directory));
 }
 
 void ExplorerModel::cancel_node(Node& directory) {
@@ -341,6 +345,7 @@ void ExplorerModel::cancel_loading(const QModelIndex& directory) {
 void ExplorerModel::set_folder(std::optional<std::filesystem::path> folder) {
     cancel_all();
     beginResetModel();
+    pending_ = nullptr;
     folder_ = std::move(folder);
     root_ = std::make_unique<Node>();
     tree_.reset();
@@ -469,6 +474,57 @@ ExplorerModel::Node* ExplorerModel::find_directory(const std::filesystem::path& 
     return node->state != State::unread && node->entry.is_directory ? node : nullptr;
 }
 
+void ExplorerModel::reload(const std::filesystem::path& directory) {
+    if (Node* node = find_directory(directory)) {
+        if (node->state == State::read) {
+            refresh(*node);
+        } else {
+            node->dirty = true;
+        }
+    }
+}
+
+bool ExplorerModel::is_read(const QModelIndex& directory) const {
+    const Node* node = node_of(directory);
+    return tree_ && node->entry.is_directory && node->state == State::read;
+}
+
+QModelIndex ExplorerModel::add_pending_entry(const QModelIndex& directory, bool folder) {
+    remove_pending_entry();
+    Node& parent = *node_of(directory);
+    auto node = std::make_unique<Node>();
+    node->parent = &parent;
+    node->pending = true;
+    node->pending_folder = folder;
+    pending_ = node.get();
+    beginInsertRows(directory, 0, 0);
+    parent.children.insert(parent.children.begin(), std::move(node));
+    for (std::size_t row = 0; row < parent.children.size(); ++row) {
+        parent.children[row]->row = static_cast<int>(row);
+    }
+    endInsertRows();
+    return index_of_node(pending_);
+}
+
+void ExplorerModel::remove_pending_entry() {
+    if (pending_ == nullptr) {
+        return;
+    }
+    Node& parent = *pending_->parent;
+    const int row = pending_->row;
+    pending_ = nullptr;
+    beginRemoveRows(index_of_node(&parent), row, row);
+    parent.children.erase(parent.children.begin() + row);
+    for (std::size_t i = static_cast<std::size_t>(row); i < parent.children.size(); ++i) {
+        parent.children[i]->row = static_cast<int>(i);
+    }
+    endRemoveRows();
+}
+
+QModelIndex ExplorerModel::pending_entry() const {
+    return index_of_node(pending_);
+}
+
 void ExplorerModel::process_file_events() {
     if (!watch_) {
         return;
@@ -516,6 +572,9 @@ void ExplorerModel::synchronize(Node& directory) {
 
     // Rows that are gone or changed go in runs, from the end, so that a burst is a few signals.
     const auto kept = [&](const Node& node) {
+        if (node.pending) {
+            return true;
+        }
         const auto same = by_name.find(node.entry.name);
         return same != by_name.end() && *same->second == node.entry;
     };
@@ -531,6 +590,12 @@ void ExplorerModel::synchronize(Node& directory) {
         for (std::size_t row = begin; row < end; ++row) {
             drop_loads_below(*directory.children[row]);
             unwatch_below(directory.children[row]->path);
+            for (const Node* up = pending_; up != nullptr; up = up->parent) {
+                if (up == directory.children[row].get()) {
+                    pending_ = nullptr;
+                    break;
+                }
+            }
         }
         beginRemoveRows(parent, static_cast<int>(begin), static_cast<int>(end) - 1);
         directory.children.erase(directory.children.begin() + static_cast<std::ptrdiff_t>(begin),
@@ -543,6 +608,9 @@ void ExplorerModel::synchronize(Node& directory) {
     // What is left is in the order of `fresh`, so the new entries are the gaps.
     std::size_t at = 0;
     for (std::size_t i = 0; i < fresh.size();) {
+        while (at < directory.children.size() && directory.children[at]->pending) {
+            ++at;
+        }
         if (at < directory.children.size() && directory.children[at]->entry.name == fresh[i].name) {
             ++at;
             ++i;
@@ -645,6 +713,13 @@ QVariant ExplorerModel::data(const QModelIndex& index, int role) const {
         return {};
     }
     const Node& node = *node_of(index);
+    if (node.pending) {
+        return role == Qt::DisplayRole   ? QVariant(QString())
+               : role == PendingRole     ? QVariant(true)
+               : role == IsDirectoryRole ? QVariant(node.pending_folder)
+               : role == PlaceholderRole ? QVariant(false)
+                                         : QVariant();
+    }
     if (node.placeholder) {
         return role == Qt::DisplayRole   ? QVariant(QString::fromStdString(node.entry.name))
                : role == PlaceholderRole ? QVariant(true)
@@ -655,6 +730,7 @@ QVariant ExplorerModel::data(const QModelIndex& index, int role) const {
     case Qt::DisplayRole:
         return QString::fromStdString(node.entry.name);
     case PlaceholderRole:
+    case PendingRole:
         return false;
     case Qt::ToolTipRole: {
         const Error* error = tree_ ? tree_->error(node.path) : nullptr;
@@ -677,7 +753,7 @@ Qt::ItemFlags ExplorerModel::flags(const QModelIndex& index) const {
     if (!index.isValid() || node_of(index)->placeholder) {
         return Qt::NoItemFlags;
     }
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;
 }
 
 } // namespace anvil::ui
