@@ -121,6 +121,31 @@ TEST(RowMap, SeveralEditsComputeOnlyTheLinesTheyTouch) {
     expect_rows(map, document.text(), 902);
 }
 
+TEST(RowMap, ARedoneGroupOfEditsListsThemFromTheTopOfTheTextDown) {
+    std::string lines;
+    for (int i = 0; i < 1000; ++i) {
+        lines += "some words\n";
+    }
+    Document document = document_of(lines);
+    RowMap map(document.text(), {4, 12, 2});
+    const auto type_at = [&](std::size_t line, bool join) {
+        const std::size_t offset = document.text().line_start(line);
+        const Edit edit{offset, offset, "more words\nand "};
+        map.apply(document.apply_edits(std::span(&edit, 1), {.join_previous = join}).value(),
+                  document.text());
+    };
+    type_at(100, false);
+    type_at(900, true);
+    map.apply(document.undo().value().value(), document.text());
+    expect_rows(map, document.text(), 100);
+    const DocumentChange redone = document.redo().value().value();
+    ASSERT_EQ(redone.changes.size(), 2u);
+    ASSERT_LT(redone.changes[0].range.start.line, redone.changes[1].range.start.line);
+    map.apply(redone, document.text());
+    expect_rows(map, document.text(), 100);
+    expect_rows(map, document.text(), 901);
+}
+
 TEST(RowMap, RandomEditsLeaveTheRowsOfAMapComputedAnew) {
     std::mt19937 random(7);
     const auto below = [&random](std::size_t bound) {
