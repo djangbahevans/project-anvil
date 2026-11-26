@@ -188,6 +188,7 @@ if(TARGET anvil_ui)
     ui/scroll_bar_test.cpp
     ui/sidebar_test.cpp
     ui/splitter_test.cpp
+    ui/seti_icons_test.cpp
     ui/status_bar_test.cpp
     ui/tab_strip_test.cpp
     ui/theme_store_test.cpp

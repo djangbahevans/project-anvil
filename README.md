@@ -176,3 +176,5 @@ Anvil is released under the [MIT License](LICENSE). The extension host it runs c
 The color themes in `resources/themes` are VS Code's default themes, copied unchanged from its `theme-defaults` extension under the VS Code MIT license (`resources/themes/LICENSE-vscode.txt`); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The default theme is the `workbench.colorTheme` setting's default, `Dark 2026`, VS Code's default in the pinned release.
 
 The icons are from VS Code's [Codicons](https://github.com/microsoft/vscode-codicons), Copyright (c) Microsoft Corporation, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The font is embedded unchanged; the license text is `resources/codicons/LICENSE-codicons.txt`.
+
+The icons of languages are those of VS Code's Seti file icon theme, from [Seti UI](https://github.com/jesseweed/seti-ui), Copyright (c) 2014 Jesse Weed, under the MIT license. The font is embedded unchanged; the notice is `resources/seti/LICENSE-seti.txt`.

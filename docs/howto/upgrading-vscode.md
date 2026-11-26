@@ -82,6 +82,14 @@ The Codicons font, its license text and the table of icon names and code points 
 node scripts/generate-codicons.mjs
 ```
 
-## 8. Update the documentation
+## 8. Refresh the Seti icons
+
+The Seti font, its notice and the table of the icons of the languages come from the `theme-seti` extension in the checkout, and tests fail when the font or the table differs from it. Regenerate them and review the diff. The script stops for a definition that is not a glyph with a color, and the table follows the rules by which VS Code turns the theme into a style sheet (`fileIconThemeData.ts`), so a change there is one to port.
+
+```sh
+node scripts/generate-seti-icons.mjs
+```
+
+## 9. Update the documentation
 
 Update the version in `docs/extension-host-protocol.md` and every fact in it that changed, and the version in `README.md` where it appears.
