@@ -1269,3 +1269,99 @@ TEST_F(TabStripTest, ADropIndicatorOverASingleTabIsAtItsLeftEdgeBeforeItAndAtThe
     EXPECT_EQ(pixel(image, QPoint(599, 10)), line);
     EXPECT_NE(pixel(image, QPoint(0, 10)), line);
 }
+
+// --- icons ---
+
+namespace {
+
+// The default file icon, red on a dark theme and blue on a light one.
+const SetiIcon test_icon{{0xE023, 0xFFFF0000}, {0xE023, 0xFF0000FF}};
+const QString long_title(40, QLatin1Char('H'));
+
+class TabStripIconTest : public TabStripTest {
+protected:
+    void SetUp() override {
+        TabStripTest::SetUp();
+        theme(anvil::core::ThemeKind::dark);
+        strip_->resize(900, TabStrip::height_pixels);
+        strip_->add_tab({.title = long_title, .icon = test_icon});
+        strip_->add_tab({.title = long_title});
+        QApplication::processEvents();
+    }
+    void theme(anvil::core::ThemeKind kind) {
+        WorkbenchColors::Colors colors;
+        for (const char* key :
+             {"tab.activeBackground", "tab.inactiveBackground", "editorGroupHeader.tabsBackground",
+              "tab.border", "tab.activeBorderTop"}) {
+            colors[key] = QColor(0, 0, 0);
+        }
+        for (const char* key : {"tab.activeForeground", "tab.inactiveForeground"}) {
+            colors[key] = QColor(0, 255, 0);
+        }
+        colors_.set_theme(colors, nullptr, kind);
+    }
+    // The first column of the tab, from its left, with a pixel mostly of one channel, or -1.
+    int first_column(int tab, int channel) const {
+        const QImage image = strip_->grab().toImage();
+        const qreal ratio = image.devicePixelRatio();
+        const QRect area = strip_->tab_rect(tab);
+        for (int x = static_cast<int>(area.left() * ratio);
+             x < static_cast<int>(area.right() * ratio) && x < image.width(); ++x) {
+            for (int y = 0; y < image.height(); ++y) {
+                const QColor color = image.pixelColor(x, y);
+                const int channels[] = {color.red(), color.green(), color.blue()};
+                const int others = channels[0] + channels[1] + channels[2] - channels[channel];
+                if (channels[channel] > 150 && others < 80) {
+                    return static_cast<int>(x / ratio) - area.left();
+                }
+            }
+        }
+        return -1;
+    }
+    static constexpr int red = 0;
+    static constexpr int green = 1;
+    static constexpr int blue = 2;
+};
+
+} // namespace
+
+TEST_F(TabStripIconTest, TheIconIsBeforeTheTitleWhichMakesRoomForIt) {
+    const int icon = first_column(0, red);
+    ASSERT_GE(icon, TabStrip::title_padding - 4);
+    EXPECT_LT(icon, TabStrip::title_padding + TabStrip::icon_width);
+    EXPECT_EQ(first_column(1, red), -1);
+    // The titles are the same, so that only the column of the icon tells them apart.
+    EXPECT_EQ(first_column(0, green) - first_column(1, green), 22);
+    EXPECT_EQ(strip_->tab_rect(0).width() - strip_->tab_rect(1).width(), 22);
+}
+
+TEST_F(TabStripIconTest, TheIconIsThatOfTheKindOfTheTheme) {
+    ASSERT_GE(first_column(0, red), 0);
+    EXPECT_EQ(first_column(0, blue), -1);
+    theme(anvil::core::ThemeKind::light);
+    QApplication::processEvents();
+    EXPECT_GE(first_column(0, blue), 0);
+    EXPECT_EQ(first_column(0, red), -1);
+}
+
+TEST_F(TabStripIconTest, ATabGivenAnotherIconIsPaintedAgainAndLaysOut) {
+    PaintCounter paints;
+    strip_->installEventFilter(&paints);
+    strip_->set_tab(1, {.title = long_title});
+    QApplication::processEvents();
+    EXPECT_EQ(paints.count, 0);
+
+    const int width = strip_->tab_rect(1).width();
+    strip_->set_tab(1, {.title = long_title, .icon = test_icon});
+    QApplication::processEvents();
+    EXPECT_GT(paints.count, 0);
+    EXPECT_EQ(strip_->tab_rect(1).width(), width + 22);
+
+    paints.count = 0;
+    SetiIcon other = test_icon;
+    other.dark.color = 0xFF00FFFF;
+    strip_->set_tab(1, {.title = long_title, .icon = other});
+    QApplication::processEvents();
+    EXPECT_GT(paints.count, 0);
+    strip_->removeEventFilter(&paints);
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/ui/painted_accessibility.hpp"
+#include "anvil/ui/seti_icons.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/ui/zoom.hpp"
 
@@ -9,6 +10,7 @@
 #include <QWidget>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class QMenu;
@@ -17,13 +19,13 @@ namespace anvil::ui {
 
 // The strip of tabs above an editor: VS Code's tab strip, painted by the widget itself.
 //
-// A tab shows a title, and on its right a close button that is a dot while the tab is dirty. The
-// selected tab has its own background and a line on top. The close button of the selected tab is
-// always there; that of another tab shows while the mouse is over the tab, and a dirty tab keeps a
-// dot there that turns into the close button when the mouse is over it. A middle click closes a
-// tab, a drag moves it, and a context menu offers closing the other tabs, the tabs to the right and
-// the saved tabs, and copying the path. Tabs that do not fit scroll horizontally, by wheel, and the
-// selected tab is kept in view.
+// A tab shows the icon of its file, if it has one, and a title, and on its right a close button
+// that is a dot while the tab is dirty. The selected tab has its own background and a line on top.
+// The close button of the selected tab is always there; that of another tab shows while the mouse
+// is over the tab, and a dirty tab keeps a dot there that turns into the close button when the
+// mouse is over it. A middle click closes a tab, a drag moves it, and a context menu offers closing
+// the other tabs, the tabs to the right and the saved tabs, and copying the path. Tabs that do not
+// fit scroll horizontally, by wheel, and the selected tab is kept in view.
 //
 // The strip is a view: only what the user does emits a signal. Changing the model through
 // `add_tab`, `remove_tab`, `set_tab`, `move_tab` and `set_current_index` does not.
@@ -38,6 +40,9 @@ public:
     static constexpr int minimum_tab_width = 120;
     // Space before the title, and the width of the area of the close button after it.
     static constexpr int title_padding = 10;
+    // The column of an icon before the title, and the space after it.
+    static constexpr int icon_width = 16;
+    static constexpr int icon_gap = 6;
     static constexpr int action_width = 28;
     static constexpr int close_button_size = 16;
 
@@ -48,6 +53,8 @@ public:
         bool dirty = false;
         // Whether "Copy Path" has a path to copy.
         bool has_path = false;
+        // Drawn before the title, in the color for the kind of the theme.
+        std::optional<SetiIcon> icon = std::nullopt;
 
         bool operator==(const Tab&) const = default;
     };
@@ -185,6 +192,10 @@ private:
     // not see.
     int accessible_index(int tab) const;
     void measure(Entry& entry) const;
+    // The room that a tab makes for its icon.
+    int icon_column(const Tab& tab) const {
+        return tab.icon ? zoomed(icon_width) + zoomed(icon_gap) : 0;
+    }
     int zoomed(int size) const {
         return scaled_by(zoom_, size);
     }

@@ -132,10 +132,13 @@ void TabStrip::set_tab(int index, Tab tab) {
         return;
     }
     const bool retitled = entry.tab.title != tab.title;
+    const bool iconed = entry.tab.icon.has_value() != tab.icon.has_value();
     const bool visible_in_strip = !single_ || index == current_;
     entry.tab = std::move(tab);
     if (retitled) {
         measure(entry);
+    }
+    if (retitled || iconed) {
         layout_valid_ = false;
     }
     update();
@@ -260,8 +263,9 @@ void TabStrip::ensure_layout() const {
     int x = 0;
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         Entry& entry = entries_[i];
-        const int natural = std::max(tab_min_width(), zoomed(title_padding) + entry.title_width +
-                                                          1 + zoomed(action_width));
+        const int natural =
+            std::max(tab_min_width(), zoomed(title_padding) + icon_column(entry.tab) +
+                                          entry.title_width + 1 + zoomed(action_width));
         if (single_) {
             entry.x = 0;
             entry.width = static_cast<int>(i) == current_ ? std::max(natural, width()) : 0;
@@ -406,9 +410,25 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
         : focused_ ? "tab.inactiveForeground"
                    : "tab.unfocusedInactiveForeground";
     const QColor foreground = colors_.color(foreground_key);
+    const int title_left = area.left() + zoomed(title_padding);
+    if (const QString family = seti_font_family(); entry.tab.icon && !family.isEmpty()) {
+        const SetiGlyph glyph =
+            colors_.kind() == core::ThemeKind::light ? entry.tab.icon->light : entry.tab.icon->dark;
+        painter.save();
+        QFont icon_font(family);
+        const int icon_pixels = zoomed(font_pixels) * seti_font_percent / 100;
+        icon_font.setPixelSize(icon_pixels);
+        painter.setFont(icon_font);
+        painter.setPen(QColor::fromRgba(glyph.color));
+        // Wider than the column, so that a glyph that fills its square is not cut.
+        const int width = zoomed(icon_width);
+        painter.drawText(QRect(title_left - width / 2, 0, 2 * width, strip_height()),
+                         Qt::AlignCenter, QString(QChar(glyph.code)));
+        painter.restore();
+    }
     painter.setPen(foreground);
     painter.drawText(
-        QRect(area.left() + zoomed(title_padding), 0, entry.title_width + 2, strip_height()),
+        QRect(title_left + icon_column(entry.tab), 0, entry.title_width + 2, strip_height()),
         Qt::AlignVCenter | Qt::AlignLeft, entry.tab.title);
 
     const bool on_button = hovered && hovered_button_;

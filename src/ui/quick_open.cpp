@@ -317,7 +317,8 @@ void QuickOpen::open(std::vector<QuickOpenEntry> entries, std::optional<Files> f
         items.push_back({.label = QString::fromStdString(entries[i].label),
                          .description = QString::fromStdString(entries[i].description),
                          .detail = {},
-                         .keybinding = {}});
+                         .keybinding = {},
+                         .icon = icon_of(entries[i].uri)});
         shown_.push_back(entries[i].uri);
     }
     pick_->set_filtering(false);
@@ -377,7 +378,8 @@ void QuickOpen::apply(const Results& results) {
                          .detail = {},
                          .keybinding = {},
                          .label_match = match.label_match,
-                         .description_match = match.description_match});
+                         .description_match = match.description_match,
+                         .icon = icon_of(match.uri)});
         uris.push_back(match.uri);
     }
     complete_ = !results.listing;
