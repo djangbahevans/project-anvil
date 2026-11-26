@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace anvil::workbench {
 
@@ -34,6 +35,7 @@ public:
     std::optional<bool> boolean(StateScope scope, std::string_view key) const;
     std::optional<std::int64_t> integer(StateScope scope, std::string_view key) const;
     std::optional<std::string> string(StateScope scope, std::string_view key) const;
+    std::optional<std::vector<std::string>> strings(StateScope scope, std::string_view key) const;
 
     // A value that the store has already is not a change: it is not written, and so does not
     // replace what another process wrote.

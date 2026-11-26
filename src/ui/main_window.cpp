@@ -44,6 +44,9 @@
 namespace anvil::ui {
 namespace {
 
+// The folders that are expanded in the explorer, in the state of the workspace.
+constexpr const char* expanded_folders_key = "explorer.expandedFolders";
+
 constexpr const char* position_item_id = "status.editor.position";
 constexpr const char* language_item_id = "status.editor.language";
 constexpr const char* host_item_id = "status.extensionHost";
@@ -409,6 +412,13 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         return WindowStateKeeper::PartsShown{.sidebar = zen_.sidebar_was_visible,
                                              .panel = zen_.panel_was_visible};
     });
+    state_keeper_->set_content_capture([this](workbench::StateStore& store) {
+        // An explorer that was never shown has nothing to say about what is expanded.
+        if (explorer_ && explorer_->shows_folder()) {
+            store.set(workbench::StateScope::workspace, expanded_folders_key,
+                      explorer_->expanded_folders());
+        }
+    });
     state_keeper_->restore();
 }
 
@@ -506,13 +516,29 @@ void MainWindow::register_explorer() {
         view->set_excludes(file_excludes_);
         view->set_confirm_delete(settings_->editor().explorer_confirm_delete);
         view->set_trash_enabled(settings_->editor().enable_trash);
-        view->set_workspace(
-            options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
-            options_.workspace ? QString::fromStdString(options_.workspace->name) : QString());
+        connect(view, &ExplorerView::expanded_folders_changed, this, [this] {
+            if (state_keeper_) {
+                state_keeper_->schedule();
+            }
+        });
+        show_workspace_in(*view);
         explorer_ = view;
         return view;
     };
     view_containers_.add(std::move(explorer));
+}
+
+void MainWindow::show_workspace_in(ExplorerView& explorer) {
+    explorer.set_workspace(
+        options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
+        options_.workspace ? QString::fromStdString(options_.workspace->name) : QString());
+    if (!state_) {
+        return;
+    }
+    if (const auto folders =
+            state_->strings(workbench::StateScope::workspace, expanded_folders_key)) {
+        explorer.restore_expanded(*folders);
+    }
 }
 
 void MainWindow::apply_explorer_settings() {
@@ -654,6 +680,11 @@ void MainWindow::explorer_deleted(const std::vector<std::filesystem::path>& path
 void MainWindow::workspace_changed() {
     state_keeper_->set_workspace(options_.workspace ? std::optional(options_.workspace->id)
                                                     : std::nullopt);
+    // At once: the view still shows the folder that was left, and the store holds the new one's
+    // state.
+    if (explorer_) {
+        show_workspace_in(*explorer_);
+    }
     if (options_.extension_host) {
         core::NullLogger discarded;
         core::Logger& logger = options_.logger ? *options_.logger : discarded;
@@ -679,11 +710,6 @@ void MainWindow::workspace_changed() {
             read_extension_keybindings(logger);
             add_extension_themes();
         }
-    }
-    if (explorer_) {
-        explorer_->set_workspace(
-            options_.workspace ? std::optional(options_.workspace->folder) : std::nullopt,
-            options_.workspace ? QString::fromStdString(options_.workspace->name) : QString());
     }
     if (title_bar_) {
         title_bar_->set_command_center_text(workspace_label());

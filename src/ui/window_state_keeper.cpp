@@ -96,6 +96,14 @@ void WindowStateKeeper::set_parts_outside_mode(
     parts_outside_mode_ = std::move(outside_mode);
 }
 
+void WindowStateKeeper::set_content_capture(std::function<void(workbench::StateStore&)> capture) {
+    content_capture_ = std::move(capture);
+}
+
+void WindowStateKeeper::schedule() {
+    timer_.start();
+}
+
 void WindowStateKeeper::restore() {
     // The window first, so that the parts are laid out in the size they were saved in.
     restore_geometry();
@@ -157,7 +165,7 @@ void WindowStateKeeper::restore_layout() {
 }
 
 void WindowStateKeeper::watch() {
-    const auto changed = [this] { timer_.start(); };
+    const auto changed = [this] { schedule(); };
     connect(&workbench_, &Workbench::visibility_changed, this, changed);
     connect(&workbench_, &Workbench::maximized_changed, this, changed);
     connect(&workbench_, &Workbench::panel_position_changed, this, changed);
@@ -170,7 +178,7 @@ void WindowStateKeeper::watch() {
 bool WindowStateKeeper::eventFilter(QObject* watched, QEvent* event) {
     if (watched == &window_ && (event->type() == QEvent::Move || event->type() == QEvent::Resize ||
                                 event->type() == QEvent::WindowStateChange)) {
-        timer_.start();
+        schedule();
     }
     return QObject::eventFilter(watched, event);
 }
@@ -210,6 +218,10 @@ void WindowStateKeeper::capture() {
         store_.set(StateScope::global, window_height_key, place.height());
     }
     store_.set(StateScope::global, window_maximized_key, states.testFlag(Qt::WindowMaximized));
+
+    if (content_capture_) {
+        content_capture_(store_);
+    }
 }
 
 void WindowStateKeeper::save() {

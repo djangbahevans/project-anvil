@@ -15,6 +15,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
+#include <string>
 #include <vector>
 
 class QVBoxLayout;
@@ -111,6 +113,15 @@ public:
     // The folder that the rows would be dropped into, while a drag is over a place that takes them.
     std::optional<std::filesystem::path> drop_target() const;
 
+    // The folders that are expanded, as paths relative to the folder of the workspace with forward
+    // slashes, sorted. They include those below a collapsed folder, and those of
+    // `restore_expanded` that have not been reached.
+    std::vector<std::string> expanded_folders() const;
+    // Expands these folders of the workspace, each when its row arrives: one below a collapsed
+    // folder is listed and expanded only once the user has expanded that folder. A folder that is
+    // gone is dropped when the folder above it has been read. `set_workspace` forgets them.
+    void restore_expanded(const std::vector<std::string>& folders);
+
     // The commands. A new file or folder goes into the selected folder, into the folder of the
     // selected file, or into the folder of the workspace when nothing is selected. A directory
     // that has not been read is expanded first.
@@ -154,6 +165,8 @@ public:
     }
 
 signals:
+    // What `expanded_folders` returns may have changed.
+    void expanded_folders_changed();
     // A file or folder was made; the window opens a file.
     void created(const QString& path, bool directory);
     // An item was renamed, or a folder with its content.
@@ -192,6 +205,11 @@ private:
 
     void apply_colors();
     void apply_zoom();
+    std::string relative_path(const QModelIndex& directory) const;
+    void collect_expanded(const QModelIndex& directory, std::set<std::string>& folders) const;
+    // Expands the folders of `unreached_` among the rows of `directory`, which is invalid for the
+    // folder of the workspace, and drops those that the rows show to be gone.
+    void expand_reached(const QModelIndex& directory);
     const Zoom* zoom_ = nullptr;
     int base_font_pixels_ = 0;
     QVBoxLayout* empty_layout_ = nullptr;
@@ -230,6 +248,8 @@ private:
     QLabel* message_ = nullptr;
     QPushButton* open_folder_ = nullptr;
     ExplorerActions actions_;
+    // The folders to expand whose rows have not arrived.
+    std::set<std::string> unreached_;
     bool confirm_delete_ = true;
     bool trash_enabled_ = true;
     std::function<bool(const std::filesystem::path&)> unsaved_changes_;

@@ -2,6 +2,7 @@
 
 #include "anvil/platform/file.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <system_error>
 #include <utility>
@@ -60,6 +61,16 @@ std::optional<std::string> StateStore::string(StateScope scope, std::string_view
         return std::nullopt;
     }
     return value->get<std::string>();
+}
+
+std::optional<std::vector<std::string>> StateStore::strings(StateScope scope,
+                                                            std::string_view key) const {
+    const nlohmann::json* value = find(scope, key);
+    if (!value || !value->is_array() ||
+        !std::ranges::all_of(*value, [](const nlohmann::json& item) { return item.is_string(); })) {
+        return std::nullopt;
+    }
+    return value->get<std::vector<std::string>>();
 }
 
 void StateStore::set(StateScope scope, std::string_view key, nlohmann::json value) {

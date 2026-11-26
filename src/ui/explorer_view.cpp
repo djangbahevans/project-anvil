@@ -694,6 +694,9 @@ ExplorerView::ExplorerView(const WorkbenchColors& colors, QWidget* parent,
         }
     });
     connect(model_, &ExplorerModel::directory_read, this, [this] { continue_new(); });
+    connect(model_, &ExplorerModel::directory_read, this, &ExplorerView::expand_reached);
+    connect(tree_, &QTreeView::expanded, this, [this] { emit expanded_folders_changed(); });
+    connect(tree_, &QTreeView::collapsed, this, [this] { emit expanded_folders_changed(); });
     tree->set_drag_handlers(
         {.sources = [this](const QModelIndexList& rows) { return paths_of(rows); },
          .folder = [this](const std::vector<std::filesystem::path>& sources,
@@ -793,6 +796,7 @@ void ExplorerView::set_workspace(std::optional<std::filesystem::path> folder, co
     const bool has_folder = folder.has_value();
     finish_editing();
     new_request_.reset();
+    unreached_.clear();
     model_->set_folder(std::move(folder));
     header_->set_text(name);
     pages_->setCurrentIndex(has_folder ? 1 : 0);
@@ -814,6 +818,88 @@ std::string file_name_of(const std::filesystem::path& path) {
 }
 
 } // namespace
+
+std::string ExplorerView::relative_path(const QModelIndex& directory) const {
+    return model_->path_of(directory).lexically_relative(*model_->folder()).generic_string();
+}
+
+std::vector<std::string> ExplorerView::expanded_folders() const {
+    std::set<std::string> folders = unreached_;
+    if (model_->folder()) {
+        collect_expanded({}, folders);
+    }
+    return {folders.begin(), folders.end()};
+}
+
+void ExplorerView::collect_expanded(const QModelIndex& directory,
+                                    std::set<std::string>& folders) const {
+    for (int row = 0; row < model_->rowCount(directory); ++row) {
+        const QModelIndex index = model_->index(row, 0, directory);
+        if (!is_real_row(*model_, index) || !model_->is_directory(index)) {
+            continue;
+        }
+        if (tree_->isExpanded(index)) {
+            folders.insert(relative_path(index));
+        }
+        collect_expanded(index, folders);
+    }
+}
+
+void ExplorerView::restore_expanded(const std::vector<std::string>& folders) {
+    unreached_.clear();
+    if (!model_->folder()) {
+        return;
+    }
+    for (const std::string& folder : folders) {
+        const std::filesystem::path path(folder);
+        // What was saved names a folder below the workspace's, in its shortest form.
+        if (path.is_relative() && path.has_filename() && path.lexically_normal() == path &&
+            *path.begin() != "." && *path.begin() != "..") {
+            unreached_.insert(path.generic_string());
+        }
+    }
+    expand_reached({});
+}
+
+void ExplorerView::expand_reached(const QModelIndex& directory) {
+    if (unreached_.empty() || !model_->is_read(directory)) {
+        return;
+    }
+    std::set<std::string> directories;
+    for (int row = 0; row < model_->rowCount(directory); ++row) {
+        const QModelIndex index = model_->index(row, 0, directory);
+        if (!is_real_row(*model_, index) || !model_->is_directory(index)) {
+            continue;
+        }
+        directories.insert(file_name_of(model_->path_of(index)));
+        if (unreached_.erase(relative_path(index)) > 0) {
+            tree_->expand(index);
+        }
+        expand_reached(index);
+    }
+
+    const std::string prefix = directory.isValid() ? relative_path(directory) + "/" : std::string();
+    const std::filesystem::path path =
+        directory.isValid() ? model_->path_of(directory) : *model_->folder();
+    // A folder without a row can still be there, hidden by `files.exclude` or not readable.
+    const auto dropped = std::erase_if(unreached_, [&](const std::string& folder) {
+        if (!folder.starts_with(prefix)) {
+            return false;
+        }
+        const std::string name =
+            folder.substr(prefix.size(), folder.find('/', prefix.size()) - prefix.size());
+        if (directories.contains(name)) {
+            return false;
+        }
+        std::error_code error;
+        const std::filesystem::file_type type = std::filesystem::status(path / name, error).type();
+        return type == std::filesystem::file_type::not_found ||
+               (!error && type != std::filesystem::file_type::directory);
+    });
+    if (dropped > 0) {
+        emit expanded_folders_changed();
+    }
+}
 
 std::vector<std::filesystem::path> ExplorerView::selected_paths() const {
     return paths_of(tree_->selectionModel()->selectedRows());

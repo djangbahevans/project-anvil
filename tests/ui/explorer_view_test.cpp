@@ -2131,3 +2131,143 @@ TEST_F(ExplorerFindLoadingTest, TheLoadingRowIsNotFoundAndTheEntriesAreFoundOnce
     QTest::keyClick(tree(), 'm');
     EXPECT_EQ(current_name(), "main.cpp");
 }
+
+namespace {
+
+class ExplorerExpandedTest : public ExplorerViewTest {
+protected:
+    // Lets every listing arrive, also those that a listing leads to.
+    void settle() {
+        for (int i = 0; i < 20; ++i) {
+            QApplication::processEvents();
+        }
+        ASSERT_FALSE(view_->model()->loading());
+    }
+    bool is_expanded(const char* path) const {
+        const QModelIndex index = index_of(path);
+        return index.isValid() && tree()->isExpanded(index);
+    }
+};
+
+} // namespace
+
+TEST_F(ExplorerExpandedTest, TheExpandedFoldersAreRelativeSortedAndIncludeThoseBelowACollapsedOne) {
+    EXPECT_TRUE(view_->expanded_folders().empty());
+    open_workspace();
+    EXPECT_TRUE(view_->expanded_folders().empty());
+    expand(index_of("/w/src"));
+    expand(index_of("/w/src/util"));
+    expand(index_of("/w/docs"));
+    EXPECT_EQ(view_->expanded_folders(), (Names{"docs", "src", "src/util"}));
+    tree()->collapse(index_of("/w/src"));
+    EXPECT_EQ(view_->expanded_folders(), (Names{"docs", "src/util"}));
+}
+
+TEST_F(ExplorerExpandedTest, ARestoreExpandsLevelByLevelAndListsEachDirectoryOnce) {
+    view_->set_workspace(std::filesystem::path("/w"), "w");
+    view_->restore_expanded({"src", "src/util"});
+    // Nothing has arrived, so nothing was reached.
+    EXPECT_EQ(view_->expanded_folders(), (Names{"src", "src/util"}));
+    settle();
+    EXPECT_TRUE(is_expanded("/w/src"));
+    EXPECT_TRUE(is_expanded("/w/src/util"));
+    EXPECT_FALSE(is_expanded("/w/docs"));
+    EXPECT_EQ(files_.listings("/w"), 1);
+    EXPECT_EQ(files_.listings("/w/src"), 1);
+    EXPECT_EQ(files_.listings("/w/src/util"), 1);
+    EXPECT_EQ(files_.listings("/w/docs"), 0);
+    EXPECT_EQ(view_->expanded_folders(), (Names{"src", "src/util"}));
+}
+
+TEST_F(ExplorerExpandedTest, AFolderBelowACollapsedOneIsExpandedWhenThatOneIs) {
+    open_workspace();
+    settle();
+    view_->restore_expanded({"src/util"});
+    settle();
+    EXPECT_EQ(files_.listings("/w/src"), 0);
+    EXPECT_EQ(view_->expanded_folders(), Names{"src/util"});
+
+    expand(index_of("/w/src"));
+    settle();
+    EXPECT_TRUE(is_expanded("/w/src/util"));
+    EXPECT_EQ(files_.listings("/w/src/util"), 1);
+    EXPECT_EQ(view_->expanded_folders(), (Names{"src", "src/util"}));
+}
+
+TEST_F(ExplorerExpandedTest, ARestoreReachesIntoFoldersThatHaveBeenReadAlready) {
+    open_workspace();
+    expand(index_of("/w/src"));
+    view_->restore_expanded({"src/util"});
+    settle();
+    EXPECT_TRUE(is_expanded("/w/src/util"));
+}
+
+TEST_F(ExplorerExpandedTest, AFolderThatTheUserCollapsesStaysCollapsed) {
+    view_->set_workspace(std::filesystem::path("/w"), "w");
+    view_->restore_expanded({"src"});
+    settle();
+    tree()->collapse(index_of("/w/src"));
+    expand(index_of("/w/docs"));
+    settle();
+    EXPECT_FALSE(is_expanded("/w/src"));
+    EXPECT_EQ(view_->expanded_folders(), Names{"docs"});
+}
+
+TEST_F(ExplorerExpandedTest, GoneFoldersAreDroppedOnceTheFolderAboveIsRead) {
+    QSignalSpy changed(view_.get(), &ExplorerView::expanded_folders_changed);
+    view_->set_workspace(std::filesystem::path("/w"), "w");
+    view_->restore_expanded({"gone", "gone/deeper", "src/nothing", "zeta.txt"});
+    settle();
+    // `src` has not been read, so what is saved below it stays.
+    EXPECT_EQ(view_->expanded_folders(), Names{"src/nothing"});
+    EXPECT_GE(changed.size(), 1);
+    expand(index_of("/w/src"));
+    settle();
+    EXPECT_EQ(view_->expanded_folders(), Names{"src"});
+}
+
+TEST_F(ExplorerExpandedTest, SavedPathsThatAreNotBelowTheFolderAreIgnored) {
+    view_->set_workspace(std::filesystem::path("/w"), "w");
+    view_->restore_expanded(
+        {"", ".", "..", "../x", "/w/src", "./src", "src/", "src/../docs", "docs"});
+    EXPECT_EQ(view_->expanded_folders(), Names{"docs"});
+}
+
+TEST_F(ExplorerExpandedTest, AnotherFolderForgetsWhatWasToBeRestored) {
+    view_->set_workspace(std::filesystem::path("/w"), "w");
+    view_->restore_expanded({"src/util"});
+    view_->set_workspace(std::filesystem::path("/w/docs"), "docs");
+    // At once: a listing of the new folder would drop what it does not have anyway.
+    EXPECT_TRUE(view_->expanded_folders().empty());
+    view_->set_workspace(std::nullopt, QString());
+    view_->restore_expanded({"src"});
+    EXPECT_TRUE(view_->expanded_folders().empty());
+}
+
+TEST_F(ExplorerExpandedTest, ExpandingAndCollapsingAreReported) {
+    open_workspace();
+    QSignalSpy changed(view_.get(), &ExplorerView::expanded_folders_changed);
+    expand(index_of("/w/src"));
+    EXPECT_EQ(changed.size(), 1);
+    tree()->collapse(index_of("/w/src"));
+    EXPECT_EQ(changed.size(), 2);
+}
+
+TEST_F(ExplorerExpandedTest, AFolderThatIsThereWithoutARowStaysSaved) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / ("anvil-expanded-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(root / ".git" / "objects");
+    std::filesystem::create_directories(root / "src");
+    std::ofstream(root / "was-a-folder") << "now a file";
+    ExplorerView view(*colors_, nullptr, platform_directory_lister(), watch_factory(),
+                      immediate_listing_runner());
+    view.show();
+    view.set_workspace(root, "root");
+    view.restore_expanded({".git", ".git/objects", "src", "was-a-folder"});
+    for (int i = 0; i < 20; ++i) {
+        QApplication::processEvents();
+    }
+    EXPECT_FALSE(view.model()->index_of(root / ".git").isValid());
+    EXPECT_EQ(view.expanded_folders(), (Names{".git", ".git/objects", "src"}));
+    std::filesystem::remove_all(root);
+}
