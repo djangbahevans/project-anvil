@@ -2,6 +2,7 @@
 
 #include "anvil/core/file_tree.hpp"
 #include "anvil/ui/explorer_model.hpp"
+#include "anvil/ui/seti_icons.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/ui/zoom.hpp"
 
@@ -59,6 +60,8 @@ ExplorerActions default_explorer_actions();
 // Open Folder button instead.
 //
 // The tree is a `QTreeView` over an `ExplorerModel`, drawn with the colors of the theme (`list.*`).
+// A file has the icon of the Seti file icon theme where a folder has its twistie, so that their
+// names line up.
 // A directory is read on a worker thread: while it is, it shows a "Loading…" row, and collapsing it
 // stops the reading (see `ExplorerModel`).
 // It follows the disk: files and folders that other programs create, delete and rename in the
@@ -95,6 +98,15 @@ public:
     void set_workspace(std::optional<std::filesystem::path> folder, const QString& name);
     // Applies the patterns of `files.exclude`; what is open stays open.
     void set_excludes(core::FileExcludes excludes);
+
+    // The language id of a file, which gives its icon where its name does not. It is asked while
+    // rows are painted.
+    using FileLanguage = std::function<std::string(const std::filesystem::path&)>;
+    void set_file_language(FileLanguage language);
+    // Paints the icons again, after the language of a file may have changed.
+    void refresh_icons();
+    // The icon that a row has with the theme of now; none for a folder.
+    std::optional<SetiGlyph> file_icon(const QModelIndex& row) const;
 
     // The zoom that the sizes of the view (rows, indentation, twisties, paddings, font) are read
     // through, which must outlive the view; the view follows it when it changes. Null means level

@@ -11846,3 +11846,103 @@ TEST_F(LanguageActivationTest, OpeningAFileOfTheLanguageStartsTheExtensionsThatW
         return active("activation-language") && active("activation-language-contribution");
     }));
 }
+
+namespace {
+
+class ExplorerIconWindowTest : public ExplorerWindowTest {
+protected:
+    void SetUp() override {
+        ExplorerWindowTest::SetUp();
+        const auto folder = scratch_ / "project";
+        std::filesystem::create_directories(folder / "src");
+        for (const auto& [name, text] : std::initializer_list<std::pair<const char*, const char*>>{
+                 {"run", "#!/usr/bin/env python3\n"},
+                 {"data.zzz", "x"},
+                 {"main.py", "x"},
+                 {"app.ts", "x"},
+                 {"view.spec.ts", "x"},
+                 {"Dockerfile", "x"},
+                 {"README.md", "x"},
+                 {"TODO.md", "x"},
+                 {"package.json", "x"},
+                 {"notes.txt", "x"}}) {
+            EXPECT_TRUE(platform::write_file(folder / name, text).has_value());
+        }
+        workspace_ = *core::Workspace::open(folder);
+        settings_file_ = write("settings.json", "{}");
+    }
+
+    // The glyph of the row of a file of the folder.
+    std::optional<ui::SetiGlyph> glyph_of(const char* name) {
+        const QModelIndex row = explorer_->model()->index_of(workspace_->folder / name);
+        EXPECT_TRUE(row.isValid()) << name;
+        return explorer_->file_icon(row);
+    }
+    // In the colors of the theme of the window, which is a dark one.
+    static ui::SetiGlyph of(const char* language) {
+        return ui::seti_icon(language).dark;
+    }
+
+    ui::ExplorerView* explorer_ = nullptr;
+};
+
+} // namespace
+
+TEST_F(ExplorerIconWindowTest, AFileHasTheIconOfTheLanguageThatItsPathGives) {
+    create_window();
+    explorer_ = show_explorer();
+    EXPECT_EQ(glyph_of("main.py"), of("python"));
+    EXPECT_EQ(glyph_of("app.ts"), of("typescript"));
+    EXPECT_EQ(glyph_of("data.zzz"), ui::seti_default_icon().dark);
+    EXPECT_EQ(glyph_of("src"), std::nullopt);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->resize(700, 420);
+        QApplication::processEvents();
+        window_->grab().save(QString::fromUtf8(directory) + "/explorer_icons_dark.png");
+        window_->commands().execute("workbench.action.selectTheme");
+        ui::QuickPick* pick = window_->command_palette();
+        QTest::keyClicks(pick->filter_field(), "Light 2026");
+        QTest::keyClick(pick->filter_field(), Qt::Key_Return);
+        QApplication::processEvents();
+        window_->grab().save(QString::fromUtf8(directory) + "/explorer_icons_light.png");
+    }
+}
+
+TEST_F(ExplorerIconWindowTest, AnOpenDocumentGivesItsFileTheIconOfItsLanguage) {
+    create_window();
+    explorer_ = show_explorer();
+    // Only the first line says what the script is, which is read when the file is opened.
+    ASSERT_EQ(glyph_of("run"), ui::seti_default_icon().dark);
+    ASSERT_TRUE(window_->open_file(QString::fromStdString((workspace_->folder / "run").string())));
+    EXPECT_EQ(glyph_of("run"), of("python"));
+
+    window_->commands().execute("workbench.action.editor.changeLanguageMode");
+    ui::QuickPick* pick = window_->command_palette();
+    QTest::keyClicks(pick->filter_field(), "typescript");
+    QTest::keyClick(pick->filter_field(), Qt::Key_Return);
+    QApplication::processEvents();
+    EXPECT_EQ(glyph_of("run"), of("typescript"));
+
+    // Closed, the file is again what its path says it is.
+    ASSERT_TRUE(window_->commands().execute("workbench.action.closeActiveEditor"));
+    EXPECT_EQ(glyph_of("run"), ui::seti_default_icon().dark);
+}
+
+TEST_F(ExplorerIconWindowTest, AChangeOfTheFileAssociationsPaintsTheIconsAgain) {
+    create_window();
+    explorer_ = show_explorer();
+    ASSERT_EQ(glyph_of("data.zzz"), ui::seti_default_icon().dark);
+    struct Paints : QObject {
+        int count = 0;
+        bool eventFilter(QObject*, QEvent* event) override {
+            count += event->type() == QEvent::Paint ? 1 : 0;
+            return false;
+        }
+    } paints;
+    QTest::qWait(200);
+    explorer_->tree()->viewport()->installEventFilter(&paints);
+    write("settings.json", R"({"files.associations": {"*.zzz": "python"}})");
+    ASSERT_TRUE(wait_until([&] { return glyph_of("data.zzz") == of("python"); }));
+    EXPECT_TRUE(wait_until([&] { return paints.count > 0; }));
+    explorer_->tree()->viewport()->removeEventFilter(&paints);
+}

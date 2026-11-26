@@ -528,6 +528,8 @@ void MainWindow::register_explorer() {
         connect(view, &ExplorerView::watch_problem, this,
                 [this](const QString& message) { status_bar_->show_message(message, 15000); });
         view->set_zoom(&zoom_);
+        view->set_file_language(
+            [this](const std::filesystem::path& path) { return language_of_file(path); });
         view->set_unsaved_changes_check(
             [this](const std::filesystem::path& path) { return has_unsaved_changes_within(path); });
         view->set_excludes(file_excludes_);
@@ -1092,6 +1094,23 @@ std::string MainWindow::resolve_language(const core::Uri& uri, std::string_view 
     return languages_.language_for(file ? file->generic_string() : uri.path, first_line);
 }
 
+std::string MainWindow::language_of_file(const std::filesystem::path& path) {
+    const core::Uri uri = core::Uri::file(path);
+    if (documents_.contains(uri)) {
+        if (const std::string& id = language_of_document(uri).id;
+            id != core::LanguageRegistry::plaintext_id) {
+            return id;
+        }
+    }
+    return resolve_language(uri, {});
+}
+
+void MainWindow::refresh_file_icons() {
+    if (explorer_) {
+        explorer_->refresh_icons();
+    }
+}
+
 MainWindow::DocumentLanguage MainWindow::describe_language(const std::string& id) const {
     const core::Language* language = languages_.language(id);
     const std::string& name = language && language->name ? *language->name : id;
@@ -1127,6 +1146,7 @@ void MainWindow::refresh_document_languages() {
     }
     area_->refresh_highlighters();
     update_status();
+    refresh_file_icons();
 }
 
 std::shared_ptr<const core::Highlighter> MainWindow::highlighter_of(const core::Uri& uri) {
@@ -1287,6 +1307,7 @@ void MainWindow::choose_language(const core::Uri& uri, const std::string& id) {
     document_languages_.insert_or_assign(uri, describe_language(id));
     bridge_.language_changed(uri, id);
     area_->refresh_highlighters();
+    refresh_file_icons();
     update_status();
 }
 
@@ -1300,6 +1321,7 @@ void MainWindow::auto_detect_language(const core::Uri& uri) {
     document_languages_.insert_or_assign(uri, describe_language(id));
     bridge_.language_changed(uri, id);
     area_->refresh_highlighters();
+    refresh_file_icons();
     update_status();
 }
 
@@ -2087,6 +2109,7 @@ void MainWindow::show_keybindings_reference() {
 
 void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Document> document) {
     documents_.try_emplace(uri, std::move(document));
+    refresh_file_icons();
     layout_.show(uri);
     focus_current_editor();
 }
@@ -2145,6 +2168,7 @@ bool MainWindow::reopen(const workbench::ClosedEditor& closed) {
             return false;
         }
         documents_.try_emplace(uri, document);
+        refresh_file_icons();
         layout_.open(group, uri);
     } else {
         add_untitled_document(group);
@@ -2236,6 +2260,7 @@ void MainWindow::release_document(const core::Uri& uri) {
     forget_document_language(uri);
     wrap_overrides_.erase(documents_.at(uri));
     documents_.erase(uri);
+    refresh_file_icons();
 }
 
 bool MainWindow::close_document(std::size_t index) {
@@ -2666,6 +2691,7 @@ void MainWindow::rekey_document(const core::Uri& uri, const core::Uri& new_uri,
     } else if (chosen) {
         bridge_.language_changed(new_uri, *chosen);
     }
+    refresh_file_icons();
     history_.replace_uri(uri, new_uri);
     std::erase(recent_documents_, new_uri);
     std::ranges::replace(recent_documents_, uri, new_uri);

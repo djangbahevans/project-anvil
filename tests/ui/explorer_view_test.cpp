@@ -2473,3 +2473,194 @@ TEST(ExplorerMoveQuestionTest, TheBoxHasAMoveButtonCancelAndDoNotAskAgain) {
         }
     }
 }
+
+// --- file icons ---
+
+namespace {
+
+class ExplorerIconTest : public ExplorerViewTest {
+protected:
+    void SetUp() override {
+        ExplorerViewTest::SetUp();
+        files_.set("/w", {dir("src"), file("readme"), file("notes.zzz")});
+        files_.set("/w/src", {file("main.zzz")});
+        theme(core::ThemeKind::dark);
+        open_workspace();
+    }
+    void theme(core::ThemeKind kind) {
+        WorkbenchColors::Colors colors;
+        for (const char* key :
+             {"sideBar.background", "list.hoverBackground", "list.activeSelectionBackground",
+              "list.inactiveSelectionBackground"}) {
+            colors[key] = QColor(0, 0, 0);
+        }
+        for (const char* key :
+             {"sideBar.foreground", "list.hoverForeground", "list.activeSelectionForeground",
+              "list.inactiveSelectionForeground"}) {
+            colors[key] = QColor(0, 255, 0);
+        }
+        colors_->set_theme(colors, nullptr, kind);
+    }
+
+    // The columns of the row, in view coordinates, whose pixels pass: the first and the last.
+    template <class Pass> std::pair<int, int> columns(const QModelIndex& row, Pass pass) const {
+        QCoreApplication::processEvents();
+        const QImage image = tree()->viewport()->grab().toImage();
+        const qreal ratio = image.devicePixelRatio();
+        const QRect rect = tree()->visualRect(row);
+        std::pair<int, int> found{-1, -1};
+        for (int x = 0; x < image.width(); ++x) {
+            for (int y = static_cast<int>(rect.top() * ratio);
+                 y < static_cast<int>(rect.bottom() * ratio) && y < image.height(); ++y) {
+                if (pass(image.pixelColor(x, y))) {
+                    const int column = static_cast<int>(x / ratio);
+                    if (found.first < 0) {
+                        found.first = column;
+                    }
+                    found.second = column;
+                    break;
+                }
+            }
+        }
+        return found;
+    }
+    static bool label(const QColor& color) {
+        return color.green() > 150 && color.red() < 60 && color.blue() < 60;
+    }
+    static bool lit(const QColor& color) {
+        return color.red() + color.green() + color.blue() > 120;
+    }
+    // How much more blue than red there is in what is drawn in the column before the label. An
+    // average, because the edges of a glyph can have fringes of other colors.
+    int blueness(const QModelIndex& row) const {
+        QCoreApplication::processEvents();
+        const QImage image = tree()->viewport()->grab().toImage();
+        const qreal ratio = image.devicePixelRatio();
+        const QRect rect = tree()->visualRect(row);
+        long sum = 0;
+        long count = 0;
+        for (int x = 0; x < static_cast<int>(18 * ratio); ++x) {
+            for (int y = static_cast<int>(rect.top() * ratio);
+                 y < static_cast<int>(rect.bottom() * ratio); ++y) {
+                if (const QColor color = image.pixelColor(x, y); lit(color)) {
+                    sum += color.blue() - color.red();
+                    ++count;
+                }
+            }
+        }
+        return count == 0 ? 0 : static_cast<int>(sum / count);
+    }
+};
+
+} // namespace
+
+TEST_F(ExplorerIconTest, AFileHasTheIconOfItsNameAndAFolderHasNone) {
+    expand(index_of("/w/src"));
+    EXPECT_EQ(view_->file_icon(index_of("/w/readme")), seti_file_icon("readme", "").dark);
+    EXPECT_EQ(view_->file_icon(index_of("/w/notes.zzz")), seti_default_icon().dark);
+    EXPECT_EQ(view_->file_icon(index_of("/w/src")), std::nullopt);
+    EXPECT_EQ(view_->file_icon(QModelIndex()), std::nullopt);
+}
+
+TEST_F(ExplorerIconTest, TheLanguageIsAskedForOnlyWhereTheNameDoesNotDecide) {
+    std::vector<std::filesystem::path> asked;
+    view_->set_file_language([&](const std::filesystem::path& path) {
+        asked.push_back(path);
+        return std::string("python");
+    });
+    EXPECT_EQ(view_->file_icon(index_of("/w/readme")), seti_file_icon("readme", "").dark);
+    asked.clear();
+    EXPECT_EQ(view_->file_icon(index_of("/w/readme")), seti_file_icon("readme", "").dark);
+    EXPECT_TRUE(asked.empty());
+    EXPECT_EQ(view_->file_icon(index_of("/w/notes.zzz")), seti_icon("python").dark);
+    EXPECT_EQ(asked, (std::vector<std::filesystem::path>{"/w/notes.zzz"}));
+}
+
+TEST_F(ExplorerIconTest, TheIconsAreThoseOfTheKindOfTheTheme) {
+    const QModelIndex row = index_of("/w/readme");
+    const SetiIcon wanted = seti_file_icon("readme", "");
+    theme(core::ThemeKind::light);
+    EXPECT_EQ(view_->file_icon(row), wanted.light);
+    theme(core::ThemeKind::high_contrast_light);
+    EXPECT_EQ(view_->file_icon(row), wanted.dark);
+}
+
+TEST_F(ExplorerIconTest, TheIconIsWhereAFolderHasItsTwistieAndTheNamesLineUp) {
+    const QModelIndex folder = index_of("/w/src");
+    const QModelIndex readme_row = index_of("/w/readme");
+    // The icon of `readme` is blue, and the default one and the twistie are not.
+    EXPECT_GT(blueness(readme_row), 60);
+    EXPECT_LT(std::abs(blueness(index_of("/w/notes.zzz"))), 30);
+    EXPECT_LT(columns(readme_row, lit).first, 8);
+    // The first level: 16 px of the column and 6 px, then the name, for a file as for a folder.
+    EXPECT_NEAR(columns(readme_row, label).first, 22, 2);
+    EXPECT_EQ(tree()->visualRect(folder).left(), tree()->visualRect(readme_row).left());
+}
+
+TEST_F(ExplorerIconTest, TheIconGrowsWithTheZoom) {
+    // The columns of the icon: what is drawn before the name begins.
+    const auto width = [&] {
+        const QModelIndex row = index_of("/w/readme");
+        const int text = columns(row, label).first;
+        const QImage image = tree()->viewport()->grab().toImage();
+        const qreal ratio = image.devicePixelRatio();
+        const QRect rect = tree()->visualRect(row);
+        int first = -1;
+        int last = -1;
+        for (int x = 0; x < static_cast<int>((text - 1) * ratio); ++x) {
+            for (int y = static_cast<int>(rect.top() * ratio);
+                 y < static_cast<int>(rect.bottom() * ratio); ++y) {
+                if (lit(image.pixelColor(x, y))) {
+                    first = first < 0 ? x : first;
+                    last = x;
+                }
+            }
+        }
+        return last - first;
+    };
+    const int before = width();
+    ASSERT_GT(before, 5);
+    Zoom zoom;
+    zoom.set_level(4);
+    view_->set_zoom(&zoom);
+    QApplication::processEvents();
+    EXPECT_GT(width(), before * 3 / 2);
+    view_->set_zoom(nullptr);
+}
+
+TEST_F(ExplorerIconTest, APressOnTheIconSelectsTheFile) {
+    const QModelIndex readme_row = index_of("/w/readme");
+    const QRect rect = tree()->visualRect(readme_row);
+    QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      QPoint(rect.left() - 5, rect.center().y()));
+    EXPECT_EQ(current_name(), "readme");
+}
+
+TEST_F(ExplorerDragTest, ADragThatStartsOnTheIconOfAFileMovesIt) {
+    const QRect rect = view_->tree()->visualRect(row_of(root_ / "a.txt"));
+    const QPoint start(rect.left() - 5, rect.center().y());
+    const QPoint to = on(root_ / "docs");
+    press(start);
+    move(start + QPoint(0, QApplication::startDragDistance() + 1));
+    move(to);
+    release(to);
+    settle();
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, ARenamedFileHasTheIconOfItsNewName) {
+    const auto theme_icon = [&](const std::filesystem::path& path) {
+        return view_->file_icon(row_of(path));
+    };
+    const bool light = colors_->kind() == core::ThemeKind::light;
+    const SetiIcon readme = seti_file_icon("readme", "");
+    ASSERT_EQ(theme_icon(root_ / "a.txt"),
+              light ? seti_default_icon().light : seti_default_icon().dark);
+    view_->tree()->setCurrentIndex(row_of(root_ / "a.txt"));
+    view_->rename_selected();
+    ASSERT_TRUE(view_->is_editing());
+    view_->name_editor()->setText("readme");
+    QTest::keyClick(view_->name_editor(), Qt::Key_Return);
+    settle();
+    EXPECT_EQ(theme_icon(root_ / "readme"), light ? readme.light : readme.dark);
+}
