@@ -62,14 +62,7 @@ qreal LineLayout::x_of(std::size_t column) {
 
 std::size_t LineLayout::column_at(std::size_t row, qreal x) {
     const qreal indent = left(row);
-    std::size_t column = begin(row) + this->row(row).column_at(x - indent);
-    if (row + 1 < row_count() && column >= end(row) && column > begin(row)) {
-        column = end(row) - 1;
-        if (column > begin(row) && text_[static_cast<qsizetype>(column)].isLowSurrogate()) {
-            --column;
-        }
-    }
-    return column;
+    return begin(row) + this->row(row).column_at(x - indent);
 }
 
 } // namespace anvil::ui

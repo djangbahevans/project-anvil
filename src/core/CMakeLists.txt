@@ -39,6 +39,7 @@ add_library(anvil_core STATIC
   visible_column.cpp
   line_breaks.cpp
   row_map.cpp
+  row_motion.cpp
   zoom.cpp
   when_expression.cpp
   whitespace.cpp

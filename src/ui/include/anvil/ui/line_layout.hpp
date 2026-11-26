@@ -56,8 +56,7 @@ public:
     ChunkedLine& row(std::size_t row);
     // Where `column` is, on row row_of(column).
     qreal x_of(std::size_t column);
-    // The column of row `row` nearest to `x`. On a row that the line goes on from, the last place
-    // is before the last character, since the end of the row is the start of the next.
+    // The column of row `row` nearest to `x`, which is end(row) past the end of the row.
     std::size_t column_at(std::size_t row, qreal x);
 
 private:

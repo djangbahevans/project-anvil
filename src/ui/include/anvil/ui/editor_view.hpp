@@ -275,8 +275,17 @@ private:
     std::size_t row_count() const;
     std::size_t first_row(std::size_t line) const;
     std::size_t line_of_row(std::size_t row) const;
-    // The byte offset on row `row` nearest to `x`, counted from the left edge of the rows.
-    std::size_t offset_at_row(std::size_t row, qreal x) const;
+    // A place that the pointer can be on: an offset, and whether it is the end of a row that the
+    // line goes on from.
+    struct Hit {
+        std::size_t offset = 0;
+        bool row_end = false;
+    };
+    Hit hit_at(const QPoint& point) const;
+    // The place on row `row` nearest to `x`, counted from the left edge of the rows.
+    Hit hit_at_row(std::size_t row, qreal x) const;
+    // The row of the line that shows the caret at `offset`, whose column is `column`.
+    std::size_t caret_part(const ShownLine& line, std::size_t column, std::size_t offset) const;
     void apply(const core::EditOutcome& outcome);
     void move_by_page(bool down, bool extend);
     void update_metrics();

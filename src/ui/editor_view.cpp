@@ -213,6 +213,7 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     controller_ = document_ ? std::make_unique<core::EditController>(*document_) : nullptr;
     if (controller_) {
         controller_->set_tab_size(tab_size_);
+        controller_->set_row_source([this] { return rows(); });
     }
     max_line_width_ = 0;
     highlights_.clear();
@@ -636,28 +637,46 @@ QRect EditorView::cursor_rect(std::size_t offset) const {
     sync_rows();
     const core::Position position = document_->text().position_at(offset);
     const auto layout = layout_line(position.line);
-    const int x = text_origin_x() + static_cast<int>(layout->text.x_of(position.column));
-    const std::size_t row = first_row(position.line) + layout->text.row_of(position.column);
+    const std::size_t part = caret_part(*layout, position.column, offset);
+    const int x =
+        text_origin_x() +
+        static_cast<int>(layout->text.left(part) +
+                         layout->text.row(part).x_of(position.column - layout->text.begin(part)));
+    const std::size_t row = first_row(position.line) + part;
     const int y = static_cast<int>(row) * line_height_ - verticalScrollBar()->value();
     return QRect(x, y, caret_width, line_height_);
 }
 
 std::size_t EditorView::offset_at(const QPoint& point) const {
+    return hit_at(point).offset;
+}
+
+EditorView::Hit EditorView::hit_at(const QPoint& point) const {
     if (!document_) {
-        return 0;
+        return {};
     }
     sync_rows();
     const int y = std::max(0, point.y() + verticalScrollBar()->value());
     const std::size_t row =
         std::min<std::size_t>(static_cast<std::size_t>(y / line_height_), row_count() - 1);
-    return offset_at_row(row, point.x() - text_origin_x());
+    return hit_at_row(row, point.x() - text_origin_x());
 }
 
-std::size_t EditorView::offset_at_row(std::size_t row, qreal x) const {
+EditorView::Hit EditorView::hit_at_row(std::size_t row, qreal x) const {
     const std::size_t line = line_of_row(row);
     const auto layout = layout_line(line);
-    const std::size_t column = layout->text.column_at(row - first_row(line), x);
-    return document_->text().offset_at({line, column});
+    const std::size_t part = row - first_row(line);
+    const std::size_t column = layout->text.column_at(part, x);
+    return {document_->text().offset_at({line, column}),
+            part + 1 < layout->text.row_count() && column == layout->text.end(part)};
+}
+
+std::size_t EditorView::caret_part(const ShownLine& line, std::size_t column,
+                                   std::size_t offset) const {
+    const std::size_t part = line.text.row_of(column);
+    const bool earlier =
+        part > 0 && column == line.text.begin(part) && controller_ && controller_->ends_row(offset);
+    return earlier ? part - 1 : part;
 }
 
 void EditorView::update_scroll_bars() {
@@ -679,7 +698,7 @@ void EditorView::ensure_cursor_visible() {
     const std::size_t active = document_->selections().primary().active;
     const core::Position position = document_->text().position_at(active);
     const auto layout = layout_line(position.line);
-    const std::size_t part = layout->text.row_of(position.column);
+    const std::size_t part = caret_part(*layout, position.column, active);
     const int top = static_cast<int>(first_row(position.line) + part) * line_height_;
     QScrollBar* vertical = verticalScrollBar();
     if (top < vertical->value()) {
@@ -1129,10 +1148,16 @@ void EditorView::select_column_to(const QPoint& viewport_point) {
     const std::size_t from = row_at(drag_origin_.y());
     const std::size_t to = row_at(point.y());
     std::vector<core::Selection> ranges;
+    std::vector<std::size_t> row_ends;
     for (std::size_t row = std::min(from, to); row <= std::max(from, to); ++row) {
-        ranges.push_back({offset_at_row(row, drag_origin_.x()), offset_at_row(row, point.x())});
+        const Hit active = hit_at_row(row, point.x());
+        ranges.push_back({hit_at_row(row, drag_origin_.x()).offset, active.offset});
+        if (active.row_end) {
+            row_ends.push_back(active.offset);
+        }
     }
-    apply(controller_->select_ranges(std::move(ranges), to - std::min(from, to)));
+    apply(controller_->select_ranges(std::move(ranges), to - std::min(from, to),
+                                     std::move(row_ends)));
 }
 
 void EditorView::mousePressEvent(QMouseEvent* event) {
@@ -1142,11 +1167,11 @@ void EditorView::mousePressEvent(QMouseEvent* event) {
     }
     setFocus();
     const QPoint point = event->position().toPoint();
-    const std::size_t offset = offset_at(point);
+    const Hit hit = hit_at(point);
     if (since_double_click_.isValid() &&
         since_double_click_.elapsed() < QApplication::doubleClickInterval()) {
         since_double_click_.invalidate();
-        apply(controller_->select_line_at(offset)); // third click
+        apply(controller_->select_line_at(hit.offset)); // third click
         return;
     }
     const Qt::KeyboardModifiers modifiers = event->modifiers();
@@ -1166,13 +1191,13 @@ void EditorView::mousePressEvent(QMouseEvent* event) {
         } else if (shift) {
             grow_rectangle();
         } else {
-            apply(controller_->add_caret(offset));
+            apply(controller_->add_caret(hit.offset, hit.row_end));
             mouse_drag_ = MouseDrag::extend_added_cursor;
         }
     } else if (shift && (column_selection_ || modifiers.testFlag(Qt::AltModifier))) {
         grow_rectangle();
     } else {
-        apply(controller_->set_caret(offset, shift));
+        apply(controller_->set_caret(hit.offset, shift, hit.row_end));
     }
 }
 
@@ -1189,7 +1214,8 @@ void EditorView::mouseMoveEvent(QMouseEvent* event) {
     if (column) {
         select_column_to(point);
     } else {
-        apply(controller_->set_caret(offset_at(point), true));
+        const Hit hit = hit_at(point);
+        apply(controller_->set_caret(hit.offset, true, hit.row_end));
     }
 }
 
@@ -1486,7 +1512,7 @@ void EditorView::paintEvent(QPaintEvent*) {
                 }
                 const std::size_t column = text.utf16_offset(selection.active) - line_units;
                 // A caret off screen would only have the part it is in laid out for nothing.
-                if (layout->text.row_of(column) != part || column < shown.first ||
+                if (caret_part(*layout, column, selection.active) != part || column < shown.first ||
                     column > shown.second) {
                     continue;
                 }

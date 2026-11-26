@@ -2,10 +2,12 @@
 
 #include "anvil/core/document.hpp"
 #include "anvil/core/language_comments.hpp"
+#include "anvil/core/row_map.hpp"
 #include "anvil/core/search.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -91,7 +93,8 @@ struct CopiedText {
 // cursors need no special handling.
 //
 // Characters are Unicode code points; a base character with combining marks counts as several.
-// Vertical movement alone goes by visible columns (see visible_column.hpp).
+// Vertical movement alone goes by visible columns (see visible_column.hpp). While the lines of a
+// view wrap, vertical movement, Home and End go by its rows (see set_row_source).
 //
 // The controller keeps the state that is not part of the document: the column that vertical
 // movement tries to return to, and whether the last edit may be joined by the next one into a
@@ -104,6 +107,16 @@ public:
     void set_tab_size(std::size_t tab_size) {
         tab_size_ = tab_size;
     }
+
+    // The rows of the view that the commands are for, asked for when a command needs them; null
+    // while its lines do not wrap.
+    void set_row_source(std::function<const RowMap*()> rows) {
+        row_source_ = std::move(rows);
+    }
+    // Where a line wraps, an offset is both the end of one row and the start of the next. True
+    // for the active end of a selection that is at the end of the earlier row, which End and
+    // moving there leave it at until the selections or the text change by other means.
+    bool ends_row(std::size_t offset) const;
 
     // --- editing ---
 
@@ -155,14 +168,17 @@ public:
     // to a character boundary.
     EditOutcome select(Selection range);
     // Makes `ranges` the selections, with the one at index `primary` primary. Offsets move back to
-    // a character boundary, and ranges that overlap are merged.
-    EditOutcome select_ranges(std::vector<Selection> ranges, std::size_t primary = 0);
+    // a character boundary, and ranges that overlap are merged. `row_ends` are the active ends
+    // that are at the end of a row (see ends_row).
+    EditOutcome select_ranges(std::vector<Selection> ranges, std::size_t primary = 0,
+                              std::vector<std::size_t> row_ends = {});
     // Places a single caret, or with `extend` moves the active end of the primary selection.
-    EditOutcome set_caret(std::size_t offset, bool extend = false);
+    // `row_end` puts it at the end of the earlier row where the line wraps there.
+    EditOutcome set_caret(std::size_t offset, bool extend = false, bool row_end = false);
     // Drops every selection but the primary one, which keeps its extent.
     EditOutcome keep_primary_selection();
     // Adds a caret without removing the others.
-    EditOutcome add_caret(std::size_t offset);
+    EditOutcome add_caret(std::size_t offset, bool row_end = false);
     // Selects the word at `offset`, or the run of punctuation or spaces there.
     EditOutcome select_word_at(std::size_t offset);
     // Selects the whole line containing `offset`, including its line break.
@@ -288,7 +304,9 @@ private:
         selections_only,
     };
     EditOutcome delete_with(DeleteMode mode);
-    EditOutcome adopt(SelectionSet selections);
+    EditOutcome adopt(SelectionSet selections, std::vector<std::size_t> row_ends = {});
+    // The active ends at the end of a row, while the selections are those they were given for.
+    std::vector<std::size_t> current_row_ends() const;
     // Applies the edits as one undo step that never joins typing, and makes `selections` the
     // selections with the one at index `primary` primary. Without edits only the selections change.
     EditOutcome apply_line_edit(std::vector<Edit> edits, std::vector<Selection> selections,
@@ -329,6 +347,14 @@ private:
         std::vector<SmartSelectStep> steps;
     };
     std::optional<SmartSelectState> smart_select_;
+    std::function<const RowMap*()> row_source_;
+    // Sorted offsets, valid while the document is at `version` with `selections`.
+    struct RowEnds {
+        std::uint64_t version = 0;
+        SelectionSet selections;
+        std::vector<std::size_t> offsets;
+    };
+    RowEnds row_ends_;
 };
 
 } // namespace anvil::core

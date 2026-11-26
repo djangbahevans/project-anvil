@@ -2388,9 +2388,15 @@ TEST_F(WrapTest, ClicksActOnTheRowUnderThePointer) {
     open_wrapped(words(12));
     click(27);
     EXPECT_EQ(primary(), core::Selection::caret(27));
-    // Past the end of a row that goes on, the caret stays on the row.
+    // Past the end of a row that goes on, the caret is at the end of that row.
     const QPoint past(view_.viewport()->width() - 5, view_.line_height() / 2);
-    EXPECT_EQ(view_.offset_at(past), 19U);
+    EXPECT_EQ(view_.offset_at(past), 20U);
+    mouse(QEvent::MouseButtonPress, past);
+    mouse(QEvent::MouseButtonRelease, past);
+    EXPECT_EQ(primary(), core::Selection::caret(20));
+    EXPECT_EQ(row_of(20), 0);
+    EXPECT_GT(left_of(20), left_of(19));
+    QTest::qWait(QApplication::doubleClickInterval() + 20);
     // Past the end of the last row, it goes to the end of the line.
     EXPECT_EQ(view_.offset_at(QPoint(past.x(), 2 * view_.line_height() + 3)), 60U);
 
@@ -2742,4 +2748,78 @@ TEST_F(SyntaxHighlightingTest, ARefreshPaintsEveryRowOfAWrappedLine) {
     EXPECT_EQ(counter.painted.boundingRect().top(), 0);
     EXPECT_EQ(counter.painted.boundingRect().height(),
               static_cast<int>(rows) * view_.line_height());
+}
+
+TEST_F(WrapTest, TheArrowKeysHomeAndEndGoByRows) {
+    open_wrapped(words(12) + "\nlast");
+    view_.select_range(core::Selection::caret(3));
+    key(Qt::Key_Down);
+    EXPECT_EQ(primary(), core::Selection::caret(23));
+    key(Qt::Key_End);
+    EXPECT_EQ(primary(), core::Selection::caret(40));
+    EXPECT_EQ(row_of(40), 1) << "the end of the row, not the start of the next";
+    key(Qt::Key_Home);
+    EXPECT_EQ(primary(), core::Selection::caret(20));
+    EXPECT_EQ(row_of(20), 1);
+    key(Qt::Key_Up);
+    EXPECT_EQ(primary(), core::Selection::caret(0));
+    // Typing at the end of a row inserts where the line breaks.
+    key(Qt::Key_End);
+    type("x");
+    EXPECT_EQ(text().substr(19, 3), " xw");
+}
+
+TEST_F(WrapTest, TheCaretAtTheEndOfARowIsDrawnThereAlone) {
+    open_wrapped(words(16));
+    set_selections({core::Selection::caret(0), core::Selection::caret(79)});
+    const QImage without = paint();
+    view_.select_ranges(
+        {core::Selection::caret(0), core::Selection::caret(21), core::Selection::caret(79)}, 1);
+    paint();
+    key(Qt::Key_End);
+    ASSERT_EQ(primary(), core::Selection::caret(40));
+    EXPECT_EQ(changed_rows(without, paint()), (std::set<int>{0, 1, 3}))
+        << "End moved each caret to the end of its row";
+}
+
+TEST_F(WrapTest, PageDownMovesByRows) {
+    open_wrapped(words(600));
+    view_.select_range(core::Selection::caret(2));
+    key(Qt::Key_PageDown);
+    const int page = view_.viewport()->height() / view_.line_height() - 1;
+    EXPECT_EQ(primary(), core::Selection::caret(2 + 20 * static_cast<std::size_t>(page)));
+    key(Qt::Key_PageUp);
+    EXPECT_EQ(primary(), core::Selection::caret(2));
+}
+
+TEST_F(WrapTest, DraggingPastTheEndOfARowSelectsToItsEnd) {
+    open_wrapped(words(12));
+    const QPoint past(view_.viewport()->width() - 5, view_.line_height() * 3 / 2);
+    mouse(QEvent::MouseButtonPress, view_.cursor_rect(3).center());
+    mouse(QEvent::MouseMove, past);
+    mouse(QEvent::MouseButtonRelease, past);
+    EXPECT_EQ(primary(), (core::Selection{3, 40}));
+    EXPECT_EQ(row_of(40), 1);
+}
+
+TEST_F(WrapTest, AColumnSelectionPastTheRowsEndsLeavesEachCaretOnItsRow) {
+    open_wrapped(words(12));
+    settings_.column_selection = true;
+    view_.apply_settings(settings_);
+    const int right = view_.viewport()->width() - 5;
+    mouse(QEvent::MouseButtonPress, view_.cursor_rect(2).center());
+    mouse(QEvent::MouseMove, QPoint(right, view_.line_height() * 3 / 2));
+    mouse(QEvent::MouseButtonRelease, QPoint(right, view_.line_height() * 3 / 2));
+    ASSERT_EQ(document_->selections().all(), (std::vector<core::Selection>{{2, 20}, {22, 40}}));
+    EXPECT_EQ(row_of(20), 0);
+    EXPECT_EQ(row_of(40), 1);
+}
+
+TEST_F(WrapTest, EndOnTheLastRowInViewDoesNotScroll) {
+    open_wrapped(words(600));
+    const int rows = view_.viewport()->height() / view_.line_height();
+    view_.select_range(core::Selection::caret(static_cast<std::size_t>(rows - 1) * 20 + 2));
+    ASSERT_EQ(view_.verticalScrollBar()->value(), 0);
+    key(Qt::Key_End);
+    EXPECT_EQ(view_.verticalScrollBar()->value(), 0);
 }
