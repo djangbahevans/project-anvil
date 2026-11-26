@@ -133,6 +133,18 @@ TEST_F(TabStripZoomTest, ALongTitleMakesATabAsWideAsItsPaddingTitleAndButtonArea
     }
 }
 
+TEST_F(TabStripZoomTest, TheColumnOfAnIconIsScaled) {
+    const QString title(60, QLatin1Char('m'));
+    strip_->add_tab({.title = title, .icon = SetiIcon{{0xE023, 0xFFFFFFFF}, {0xE023, 0xFF000000}}});
+    strip_->add_tab({.title = title});
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        SCOPED_TRACE(level);
+        EXPECT_EQ(strip_->tab_rect(3).width() - strip_->tab_rect(4).width(),
+                  zoom_.scaled(TabStrip::icon_width) + zoom_.scaled(TabStrip::icon_gap));
+    }
+}
+
 TEST_F(TabStripZoomTest, TheTabsLayOutAgainWhenTheZoomChangesWithoutBeingRecreated) {
     const int before = strip_->tab_rect(1).left();
     TabStrip* same = strip_.get();
