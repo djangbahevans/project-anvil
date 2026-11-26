@@ -1,3 +1,4 @@
+#include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
 
 #include <QApplication>
@@ -2103,6 +2104,15 @@ TEST_F(LongLineTest, AWideCharacterLineKeepsTheCaretInViewAtItsEnd) {
     key(Qt::Key_End);
     paint();
     EXPECT_TRUE(shows(document_->text().size()));
+}
+
+TEST_F(LongLineTest, ACaretJustPastTheEndOfAPartStaysInViewWhenThePartBeforeItIsMeasured) {
+    open(wide_line(8'000));
+    // The jump lands past two parts that nothing has measured, with one of them left of the caret.
+    const std::size_t offset = offset_of_line(0, 2 * anvil::ui::ChunkedLine::chunk_length + 5);
+    caret_to(offset);
+    paint();
+    EXPECT_TRUE(shows(offset));
 }
 
 TEST_F(LongLineTest, TypingInAWideCharacterLineDoesNotMoveTheTextBeforeTheCaret) {

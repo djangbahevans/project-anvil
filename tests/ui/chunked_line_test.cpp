@@ -139,6 +139,12 @@ TEST(ChunkedLineTest, AMonospaceLineWithoutWideCharactersIsPlacedBeforeItIsLaidO
     EXPECT_NEAR(line.width(), whole.width(), 1.0);
 }
 
+TEST(ChunkedLineTest, TheWidthOfALineOfOneChunkIsMeasured) {
+    const QString text(40, QChar(0x4E2D));
+    ChunkedLine line(text, {}, style());
+    EXPECT_NEAR(line.width(), WholeLine(text, style()).width(), 0.5);
+}
+
 TEST(ChunkedLineTest, APointInALineThatIsWiderThanEstimatedFindsItsColumn) {
     const QString text(200, QChar(0x4E2D));
     const WholeLine whole(text, style());
