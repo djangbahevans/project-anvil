@@ -136,7 +136,6 @@ const std::map<std::string, std::string> not_sizes = {
     {"explorer_model.cpp:poll_interval_ms", "a time"},
     {"explorer_view.cpp:hover_expand_ms", "a time"},
     {"include/anvil/ui/editor_area.hpp:centered_margin_ratio", "a ratio of the width of the area"},
-    {"include/anvil/ui/editor_view.hpp:max_line_characters", "a count of characters"},
     {"include/anvil/ui/explorer_model.hpp:batch_size", "a count of entries"},
     {"include/anvil/ui/menu_style.hpp:frame_width", "the 1 px frame of a menu, a hairline"},
     {"include/anvil/ui/quick_pick.hpp:max_visible_rows", "a count of rows"},

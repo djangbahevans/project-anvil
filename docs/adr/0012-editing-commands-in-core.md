@@ -19,5 +19,5 @@ The behavior of an editor, what typing, backspace, arrow keys, Home and End do w
 
 - Editing behavior has unit tests that run in milliseconds without a display; the view's tests only need to show that events reach the controller and that the result is painted.
 - A second front end, such as a terminal view or a test driver, can reuse the commands.
-- The layouts of the most recently used lines are cached, so that painting and hit testing do not lay out the same line again. Laying out one very long line is slow, so the view cuts lines off at 5000 characters.
+- The layouts of the most recently used lines are cached, so that painting and hit testing do not lay out the same line again. A long line is laid out in parts, so that its cost follows what is shown and not its length.
 - Cursor motion over combining sequences differs from most editors until graphemes are supported.
