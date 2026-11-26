@@ -386,6 +386,24 @@ TEST_F(ThemeStoreTest, TheSlidersOfAHighContrastThemeFollowItsContrastBorder) {
     EXPECT_EQ(colors_.color("scrollbarSlider.background"), QColor(0xff, 0, 0, 153));
 }
 
+TEST_F(ThemeStoreTest, TheShadowOfAScrolledEditorTakesTheRegistrysColorUnlessTheThemeSetsOne) {
+    open_shipped();
+    for (const auto* dark : {"Dark Modern", "Dark+"}) {
+        ASSERT_TRUE(store_->select(dark));
+        EXPECT_EQ(colors_.color("scrollbar.shadow"), QColor("#000000")) << dark;
+    }
+    ASSERT_TRUE(store_->select("Light+"));
+    EXPECT_EQ(colors_.color("scrollbar.shadow"), QColor("#dddddd"));
+    ASSERT_TRUE(store_->select("Dark 2026"));
+    EXPECT_EQ(colors_.color("scrollbar.shadow"), QColor(0x19, 0x1b, 0x1d, 0x4d));
+    ASSERT_TRUE(store_->select("Light 2026"));
+    EXPECT_EQ(colors_.color("scrollbar.shadow").alpha(), 0);
+    for (const auto* contrast : {"Dark High Contrast", "Default High Contrast Light"}) {
+        ASSERT_TRUE(store_->select(contrast));
+        EXPECT_FALSE(colors_.is_themed("scrollbar.shadow")) << contrast;
+    }
+}
+
 TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {
     open_shipped();
     ASSERT_TRUE(store_->select("Dark 2026"));

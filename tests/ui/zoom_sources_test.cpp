@@ -44,6 +44,7 @@ std::vector<Source> sources() {
 const std::set<std::string> level_zero_sizes = {
     "activity_bar.cpp:indicator_width",
     "editor_view.cpp:gutter_padding_px",
+    "editor_view.cpp:shadow_height_px",
     "editor_view.cpp:text_padding_px",
     "explorer_view.cpp:button_horizontal_padding",
     "explorer_view.cpp:button_vertical_padding",
