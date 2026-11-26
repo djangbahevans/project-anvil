@@ -33,3 +33,4 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0015](0015-custom-title-bar.md) | Custom title bar on Linux and Windows, native frame and global menu on macOS | Accepted |
 | [0016](0016-opening-a-folder-restarts-the-extension-host.md) | Opening or closing a folder restarts the extension host | Accepted |
 | [0017](0017-commands-change-settings-by-editing-the-file.md) | Commands change settings by editing the settings file in place | Accepted |
+| [0018](0018-word-wrap-by-rows.md) | Word wrap breaks lines into rows by columns, computed in the core | Proposed |
