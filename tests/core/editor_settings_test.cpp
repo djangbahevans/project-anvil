@@ -288,6 +288,21 @@ TEST(EditorSettings, WhitespaceIsRenderedInSelectionsAndControlCharactersAreShow
     EXPECT_FALSE(read(R"j({"editor.renderControlCharacters": false})j")->render_control_characters);
 }
 
+TEST(EditorSettings, LinesDoNotWrapUnlessTheSettingsSayWhere) {
+    using anvil::core::WordWrap;
+    EXPECT_EQ(read("{}")->word_wrap, WordWrap::off);
+    EXPECT_EQ(read("{}")->word_wrap_column, 80);
+    EXPECT_EQ(read(R"j({"editor.wordWrap": "on"})j")->word_wrap, WordWrap::on);
+    EXPECT_EQ(read(R"j({"editor.wordWrap": "off"})j")->word_wrap, WordWrap::off);
+    EXPECT_EQ(read(R"j({"editor": {"wordWrap": "wordWrapColumn"}})j")->word_wrap,
+              WordWrap::word_wrap_column);
+    EXPECT_EQ(read(R"j({"editor.wordWrap": "bounded"})j")->word_wrap, WordWrap::bounded);
+    EXPECT_EQ(read(R"j({"editor.wordWrapColumn": 120})j")->word_wrap_column, 120);
+    EXPECT_EQ(read(R"j({"editor.wordWrapColumn": 0})j")->word_wrap_column, 1);
+    EXPECT_EQ(read(R"j({"editor.wordWrapColumn": 1e12})j")->word_wrap_column,
+              anvil::core::EditorSettings::max_word_wrap_column);
+}
+
 TEST(EditorSettings,
      TheMultiCursorModifierIsAltAndColumnSelectionIsOffUnlessTheSettingsSayOtherwise) {
     using anvil::core::MultiCursorModifier;
@@ -320,6 +335,9 @@ TEST(EditorSettings, ValuesOfTheWrongTypeFail) {
              {R"j({"editor.renderWhitespace": true})j", "editor.renderWhitespace"},
              {R"j({"editor.renderWhitespace": "All"})j", "editor.renderWhitespace"},
              {R"j({"editor.renderControlCharacters": "yes"})j", "editor.renderControlCharacters"},
+             {R"j({"editor.wordWrap": true})j", "editor.wordWrap"},
+             {R"j({"editor.wordWrap": "On"})j", "editor.wordWrap"},
+             {R"j({"editor.wordWrapColumn": "80"})j", "editor.wordWrapColumn"},
              {R"j({"editor.multiCursorModifier": "ctrl"})j", "editor.multiCursorModifier"},
              {R"j({"editor.multiCursorModifier": 1})j", "editor.multiCursorModifier"},
              {R"j({"editor.columnSelection": "yes"})j", "editor.columnSelection"},

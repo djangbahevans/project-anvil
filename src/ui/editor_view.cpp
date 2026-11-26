@@ -232,14 +232,27 @@ void EditorView::set_wrapping(Wrapping wrapping, std::size_t column) {
         return;
     }
     const TextPlace place = top_place();
+    set_wrap_mode(wrapping, column);
+    horizontalScrollBar()->setValue(0);
+    reflow(place, 0);
+}
+
+void EditorView::set_wrap_mode(Wrapping wrapping, std::size_t column) {
     wrapping_ = wrapping;
-    wrap_column_ = column;
+    wrap_column_ = std::max<std::size_t>(column, 1);
     // The scroll bar of wrapped text is always there: its coming and going would change the width
     // that the rows are made for.
     setVerticalScrollBarPolicy(wrapping == Wrapping::off ? Qt::ScrollBarAsNeeded
                                                          : Qt::ScrollBarAlwaysOn);
-    horizontalScrollBar()->setValue(0);
-    reflow(place, 0);
+}
+
+void EditorView::set_document(std::shared_ptr<core::Document> document, Wrapping wrapping,
+                              std::size_t column) {
+    // Layouts and rows of the document shown now are of no use to the next one.
+    rows_.reset();
+    clear_layouts();
+    set_wrap_mode(wrapping, column);
+    set_document(std::move(document));
 }
 
 const core::RowMap* EditorView::rows() const {

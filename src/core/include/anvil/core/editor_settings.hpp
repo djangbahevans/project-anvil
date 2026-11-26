@@ -33,6 +33,10 @@ enum class AutoSave { off, after_delay, on_focus_change, on_window_change };
 // editor.renderWhitespace: which spaces and tabs the editor draws a mark for.
 enum class RenderWhitespace { none, boundary, selection, trailing, all };
 
+// editor.wordWrap: where the lines of the editor wrap: nowhere, at the width of the view, at
+// editor.wordWrapColumn, or at the smaller of the two.
+enum class WordWrap { off, on, word_wrap_column, bounded };
+
 // editor.multiCursorModifier: the key that makes a click add a cursor. `ctrl_cmd` is Ctrl, or Cmd
 // on macOS.
 enum class MultiCursorModifier { alt, ctrl_cmd };
@@ -53,6 +57,7 @@ struct EditorSettings {
     static constexpr int min_font_size = 6;
     static constexpr int max_font_size = 100;
     static constexpr int max_tab_size = 1024;
+    static constexpr int max_word_wrap_column = 1 << 30;
     static constexpr int max_auto_save_delay = 24 * 60 * 60 * 1000;
 
     // editor.fontFamily
@@ -84,6 +89,11 @@ struct EditorSettings {
     // files.autoSaveDelay, in milliseconds: how long after its last change a document is saved
     // when `auto_save` is `after_delay`
     int auto_save_delay = 1000;
+
+    // editor.wordWrap
+    WordWrap word_wrap = WordWrap::off;
+    // editor.wordWrapColumn
+    int word_wrap_column = 80;
 
     // editor.renderWhitespace
     RenderWhitespace render_whitespace = RenderWhitespace::selection;
@@ -134,7 +144,9 @@ struct EditorSettings {
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
     // 6-100, zoom level to -8-8, tab size to 1-1024: the upper bound keeps a typo from making Tab
-    // insert gigabytes; the auto save delay to 0 ms-24 h). A value of the wrong type, a `files.eol`
+    // insert gigabytes; the word wrap column to 1-2^30; the auto save delay to 0 ms-24 h). A value
+    // of the wrong type, an `editor.wordWrap` that is not "off", "on", "wordWrapColumn" or
+    // "bounded", a `files.eol`
     // that is not one of "\n", "\r\n" and "auto", an `editor.multiCursorModifier` that is not "alt"
     // or "ctrlCmd", an `editor.renderWhitespace` that is not "none", "boundary", "selection",
     // "trailing" or "all", a `files.autoSave` that is not "off", "afterDelay", "onFocusChange" or

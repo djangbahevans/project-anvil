@@ -277,6 +277,10 @@ private:
     void run_bound_command(const std::string& command, const nlohmann::json* args);
     // The context keys that the `when` clauses of the menus read.
     core::ContextKeys menu_context() const;
+    EditorArea::Wrapping wrapping_of(const std::shared_ptr<core::Document>& document) const;
+    // View > Word Wrap: wraps the shown document when it does not wrap and the reverse, or removes
+    // the override that an earlier use made.
+    void toggle_word_wrap();
     // Fills `menu` with `items`. An item runs its command and shows its key binding, and is
     // disabled while no command has its id.
     void populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items);
@@ -589,6 +593,9 @@ private:
     workbench::EditorLayout layout_;
     std::unique_ptr<LayoutWatcher> watcher_;
     EditorArea* area_ = nullptr;
+    // The documents that View > Word Wrap overrides `editor.wordWrap` for, and whether each
+    // wraps. Nothing of it is saved.
+    std::map<std::shared_ptr<core::Document>, bool> wrap_overrides_;
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
     workbench::NavigationHistory history_;
