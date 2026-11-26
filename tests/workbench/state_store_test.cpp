@@ -162,6 +162,17 @@ TEST_F(StateStoreTest, AValueOfAnotherTypeIsNoValue) {
     EXPECT_EQ(state.integer(StateScope::global, "number"), 7);
 }
 
+TEST_F(StateStoreTest, AListOfStringsReadsBackAndAnythingElseIsNone) {
+    write_text(global_file(),
+               R"({"list": ["b", "a"], "empty": [], "mixed": ["a", 1], "text": "a"})");
+    const StateStore state = store();
+    EXPECT_EQ(state.strings(StateScope::global, "list"), (std::vector<std::string>{"b", "a"}));
+    EXPECT_EQ(state.strings(StateScope::global, "empty"), std::vector<std::string>{});
+    EXPECT_FALSE(state.strings(StateScope::global, "mixed").has_value());
+    EXPECT_FALSE(state.strings(StateScope::global, "text").has_value());
+    EXPECT_FALSE(state.strings(StateScope::global, "missing").has_value());
+}
+
 TEST_F(StateStoreTest, ADamagedFileIsReadAsEmptyLoggedOnceAndReplaced) {
     for (const std::string& damaged : {std::string("{\"key\": "), std::string("[1, 2]"),
                                        std::string("\xFF\xFE"), std::string()}) {
