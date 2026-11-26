@@ -546,7 +546,7 @@ void ExplorerView::apply_zoom() {
 }
 
 ExplorerView::~ExplorerView() {
-    destroying_ = true;
+    *alive_ = false;
 }
 
 void ExplorerView::apply_colors() {
@@ -706,8 +706,8 @@ void ExplorerView::begin_editing(Edit kind, const QModelIndex& row, std::filesys
         }
     }
     // The tree deletes the field when its row goes, which ends the editing.
-    connect(editor_, &QObject::destroyed, this, [this, serial] {
-        if (serial == edit_serial_ && !destroying_) {
+    connect(editor_, &QObject::destroyed, this, [this, serial, alive = alive_] {
+        if (*alive && serial == edit_serial_) {
             editing_.reset();
             model_->remove_pending_entry();
         }

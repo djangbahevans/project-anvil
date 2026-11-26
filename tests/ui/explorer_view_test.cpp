@@ -1650,3 +1650,29 @@ TEST_F(ExplorerOperationsTest, ThePendingRowSurvivesTheDirectoryBeingReadAgain) 
     EXPECT_EQ(names_under({}).size(), 6u);
     EXPECT_EQ(names_under({}).front(), "");
 }
+
+TEST_F(ExplorerOperationsTest, TheReasonShowsUnderTheFieldAndTheTreeIsDrawnWhileNaming) {
+    select(root_ / "src");
+    view_->new_file();
+    settle();
+    ASSERT_TRUE(view_->is_editing());
+    view_->name_editor()->setText("main.cpp");
+    QApplication::processEvents();
+    ASSERT_FALSE(view_->name_problem().isEmpty());
+
+    QLabel* reason = nullptr;
+    for (QLabel* label : view_->tree()->viewport()->findChildren<QLabel*>()) {
+        reason = label;
+    }
+    ASSERT_NE(reason, nullptr);
+    EXPECT_TRUE(reason->isVisible());
+    EXPECT_GT(reason->geometry().top(), view_->name_editor()->geometry().bottom());
+    EXPECT_EQ(reason->x(), view_->name_editor()->x());
+    EXPECT_LE(reason->geometry().right(), view_->tree()->viewport()->width());
+
+    const QImage image = view_->grab().toImage();
+    ASSERT_GT(image.width(), 100);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/explorer_naming.png");
+    }
+}

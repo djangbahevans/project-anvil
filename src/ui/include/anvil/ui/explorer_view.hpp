@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -202,8 +203,9 @@ private:
     QPointer<NameEditor> editor_;
     // Tells the fields apart, so that one that is going away does not end the next.
     std::uint64_t edit_serial_ = 0;
-    // The children are deleted after the destructor body, the field among them.
-    bool destroying_ = false;
+    // The children are deleted after the destructor body, the field among them, and its handler
+    // must not touch a view that is going: it reads this flag, which outlives the view.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
 } // namespace anvil::ui
