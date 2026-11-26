@@ -1,5 +1,9 @@
 #include "../timing.hpp"
+#include "anvil/core/log.hpp"
 #include "anvil/ui/explorer_view.hpp"
+#include "anvil/ui/resources.hpp"
+#include "anvil/ui/scroll_bar.hpp"
+#include "anvil/ui/theme_store.hpp"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -2663,4 +2667,42 @@ TEST_F(ExplorerDragTest, ARenamedFileHasTheIconOfItsNewName) {
     QTest::keyClick(view_->name_editor(), Qt::Key_Return);
     settle();
     EXPECT_EQ(theme_icon(root_ / "readme"), light ? readme.light : readme.dark);
+}
+
+TEST_F(ExplorerViewTest, TheTreeHasASlimScrollBarInTheColorsOfTheSideBar) {
+    std::vector<core::FileTreeEntry> many;
+    for (int i = 0; i < 80; ++i) {
+        many.push_back(file(("file" + std::to_string(i) + ".txt").c_str()));
+    }
+    files_.set("/w", many);
+    colors_->set_colors({{"sideBar.background", QColor("#102030")},
+                         {"scrollbarSlider.background", QColor("#ff0000")}});
+    open_workspace();
+    auto* bar = qobject_cast<ui::ScrollBar*>(tree()->verticalScrollBar());
+    ASSERT_NE(bar, nullptr);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return bar->isVisible(); }));
+    EXPECT_EQ(bar->width(), ui::ScrollBar::list_width);
+    // The bar takes its own room beside the rows, and no more.
+    EXPECT_EQ(tree()->viewport()->width() + bar->width(), tree()->width());
+    QEvent left(QEvent::Leave);
+    QApplication::sendEvent(bar, &left);
+    const auto pixel = [&](int y) { return bar->grab().toImage().pixelColor(5, y); };
+    EXPECT_EQ(pixel(bar->slider_rect().center().y()), QColor("#ff0000"));
+    EXPECT_EQ(pixel(bar->height() - 1), QColor("#102030"));
+
+    colors_->set_colors({{"sideBar.background", QColor("#405060")},
+                         {"scrollbarSlider.background", QColor("#00ff00")}});
+    EXPECT_EQ(pixel(bar->slider_rect().center().y()), QColor("#00ff00"));
+    EXPECT_EQ(pixel(bar->height() - 1), QColor("#405060"));
+
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        ui::ThemeStore store(*colors_, ui::themes_directory(),
+                             std::make_shared<core::RecordingLogger>());
+        for (const auto* theme : {"Dark 2026", "Light+"}) {
+            ASSERT_TRUE(store.select(theme));
+            QApplication::processEvents();
+            view_->grab().save(QString::fromUtf8(directory) + "/scroll_bar_explorer_" + theme +
+                               ".png");
+        }
+    }
 }
