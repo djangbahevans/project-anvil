@@ -86,6 +86,11 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `editor.renderWhitespace` | Which spaces and tabs get a mark (a dot for a space, an arrow for a tab, in `editorWhitespace.foreground`): `"none"`, `"boundary"` (all but a single space between words), `"selection"` (inside selections), `"trailing"` (at the end of the line) or `"all"` | `"selection"` |
 | `editor.wordWrap` | Where long lines wrap: `"off"` (nowhere), `"on"` (at the width of the editor), `"wordWrapColumn"` (at `editor.wordWrapColumn`) or `"bounded"` (at the smaller of the two). View > Word Wrap (Alt+Z) turns wrapping on or off for one file until it is closed, without changing the setting | `"off"` |
 | `editor.wordWrapColumn` | The column that `"wordWrapColumn"` and `"bounded"` wrap at, an integer of at least 1 | 80 |
+| `editor.mouseWheelScrollSensitivity` | Multiplies how far a turn of the mouse wheel scrolls the editor, 50 pixels a notch at 1. A negative number reverses the direction, and 0 stands for 1 | 1 |
+| `editor.fastScrollSensitivity` | Multiplies the sensitivity while Alt is held; 0 or less stands for 5 | 5 |
+| `editor.scrollPredominantAxis` | A turn of the wheel or touchpad in two directions at once scrolls only in the larger one. Shift turns a vertical turn sideways | `true` |
+| `editor.scrollBeyondLastLine` | The editor scrolls until the last line is at the top when `true`, at the bottom when `false` | `true` |
+| `editor.scrollBeyondLastColumn` | The characters that the editor scrolls past the longest line, 0 or more. Not used where lines wrap at the width of the editor | 4 |
 | `editor.renderControlCharacters` | Control characters are drawn as symbols (white on red) when `true` | `true` |
 | `workbench.colorTheme` | The color theme, by id or label: one of the ten that ship with the editor, or one that an extension contributes in `contributes.themes` (the `uiTheme` of the manifest decides its kind) | `"Dark 2026"` |
 | `workbench.editor.focusRecentEditorAfterClose` | Closing the active tab shows the tab that was shown before it when `true`, its right neighbor (the left one for the last tab) when `false` | `true` |

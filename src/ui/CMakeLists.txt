@@ -78,6 +78,7 @@ add_library(anvil_ui STATIC
   window_state_keeper.cpp
   workbench.cpp
   workbench_colors.cpp
+  wheel_input.cpp
   zoom.cpp
 )
 add_library(anvil::ui ALIAS anvil_ui)

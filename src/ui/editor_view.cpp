@@ -3,6 +3,7 @@
 #include "anvil/core/visible_column.hpp"
 #include "anvil/core/zoom.hpp"
 #include "anvil/ui/line_layout.hpp"
+#include "anvil/ui/wheel_input.hpp"
 #include "anvil/ui/zoom.hpp"
 
 #include <QApplication>
@@ -23,6 +24,7 @@
 #include <QScrollBar>
 #include <QTextLayout>
 #include <QTextOption>
+#include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
@@ -195,6 +197,9 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     render_control_characters_ = settings.render_control_characters;
     multi_cursor_modifier_ = settings.multi_cursor_modifier;
     column_selection_ = settings.column_selection;
+    wheel_ = settings.wheel;
+    scroll_beyond_last_line_ = settings.scroll_beyond_last_line;
+    scroll_beyond_last_column_ = settings.scroll_beyond_last_column;
     text_padding_ = core::scale_for_zoom(text_padding_px, settings.zoom_level);
     gutter_padding_ = core::scale_for_zoom(gutter_padding_px, settings.zoom_level);
     scale_scroll_bars(*this, settings.zoom_level);
@@ -491,7 +496,11 @@ int EditorView::text_width() const {
 int EditorView::scroll_width(qreal end) const {
     // Wrapped rows that fit need no scrolling, not even for the room after them.
     const int width = static_cast<int>(end);
-    return wrapping_ == Wrapping::off || width > text_width() ? width + char_width_ : 0;
+    return !wraps_at_view() || width > text_width() ? width : 0;
+}
+
+bool EditorView::wraps_at_view() const {
+    return wrapping_ == Wrapping::view || wrapping_ == Wrapping::bounded;
 }
 
 QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenTheme& token_theme,
@@ -708,11 +717,20 @@ std::size_t EditorView::caret_part(const ShownLine& line, std::size_t column,
 void EditorView::update_scroll_bars() {
     sync_rows();
     const int rows = static_cast<int>(row_count());
-    verticalScrollBar()->setRange(
-        0, std::max(0, rows * line_height_ - viewport()->height() + line_height_));
+    const int bottom = scroll_beyond_last_line_ ? (rows - 1) * line_height_
+                                                : rows * line_height_ - viewport()->height();
+    verticalScrollBar()->setRange(0, std::max(0, bottom));
     verticalScrollBar()->setPageStep(viewport()->height());
     const int available = text_width();
-    horizontalScrollBar()->setRange(0, std::max(0, max_line_width_ - available));
+    // VS Code counts no columns beyond the last one while lines wrap at the width of the view.
+    // The caret after the longest line needs room in any case.
+    const std::int64_t beyond =
+        wraps_at_view() ? char_width_
+                        : std::max<std::int64_t>(
+                              std::int64_t{scroll_beyond_last_column_} * char_width_, caret_width);
+    const std::int64_t end = max_line_width_ + beyond - available;
+    horizontalScrollBar()->setRange(
+        0, static_cast<int>(std::clamp<std::int64_t>(end, 0, std::numeric_limits<int>::max())));
     horizontalScrollBar()->setPageStep(available);
 }
 
@@ -1285,6 +1303,29 @@ QVariant EditorView::inputMethodQuery(Qt::InputMethodQuery query) const {
     default:
         return QAbstractScrollArea::inputMethodQuery(query);
     }
+}
+
+void EditorView::wheelEvent(QWheelEvent* event) {
+#if defined(Q_OS_MACOS)
+    constexpr bool macos = true;
+#else
+    constexpr bool macos = false;
+#endif
+    const core::ScrollDistance distance =
+        core::wheel_scroll(wheel_turn(*event, QGuiApplication::platformName()),
+                           {.alt = event->modifiers().testFlag(Qt::AltModifier),
+                            .shift = event->modifiers().testFlag(Qt::ShiftModifier)},
+                           macos, wheel_);
+    const auto scroll = [](QScrollBar* bar, int pixels) {
+        if (pixels != 0) {
+            bar->setValue(static_cast<int>(std::clamp<std::int64_t>(
+                std::int64_t{bar->value()} + pixels, bar->minimum(), bar->maximum())));
+        }
+    };
+    scroll(horizontalScrollBar(), distance.x);
+    scroll(verticalScrollBar(), distance.y);
+    // The wheel over the editor never scrolls what is around it.
+    event->accept();
 }
 
 void EditorView::resizeEvent(QResizeEvent* event) {

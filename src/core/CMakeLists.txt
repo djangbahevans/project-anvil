@@ -37,6 +37,7 @@ add_library(anvil_core STATIC
   workspace.cpp
   utf.cpp
   visible_column.cpp
+  wheel_scroll.cpp
   line_breaks.cpp
   row_map.cpp
   row_motion.cpp
