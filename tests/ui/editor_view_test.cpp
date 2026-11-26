@@ -2607,3 +2607,22 @@ TEST_F(WrapTest, APaintOfAVeryLongLineLaysOutTheRowsInView) {
     EXPECT_LE(built_by([&] { paint(); }), lines_in_view() + 2);
     EXPECT_EQ(built_by([&] { paint(); }), 0U);
 }
+
+TEST_F(WrapTest, ScreenshotOfWrappedCode) {
+    open("// Wrapped lines keep the indent of their first row, and break after punctuation or "
+         "spaces rather than inside a word.\n"
+         "int main(int argc, char** argv) {\n"
+         "    const auto message = format_the_greeting(argv[0], \"hello there\", argc > 1 ? "
+         "argv[1] : \"world\", options);\n"
+         "\tif (message.empty()) return report_a_failure_to_the_user(message, errno);\t// tabs\n"
+         "    https://example.com/a/very/long/path/that/has/no/spaces?query=1&other=2&third=3\n"
+         "}\n");
+    view_.set_wrapping(Wrapping::view);
+    set_selections({core::Selection{150, 235}});
+    const QImage image = paint();
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/editor_view_wrapped_code.png");
+    }
+}
