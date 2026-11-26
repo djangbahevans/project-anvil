@@ -28,6 +28,31 @@ std::optional<int> Process::wait(std::chrono::milliseconds) {
     return std::nullopt;
 }
 
+std::expected<std::size_t, Error> Process::write_input(std::span<const std::byte>,
+                                                       std::chrono::milliseconds) {
+    return std::unexpected(
+        Error{ErrorCode::unsupported, "starting processes is not implemented on Windows"});
+}
+
+void Process::close_input() {}
+
+std::expected<ReadResult, Error> Process::read_output(std::span<std::byte>,
+                                                      std::chrono::milliseconds) {
+    return std::unexpected(
+        Error{ErrorCode::unsupported, "starting processes is not implemented on Windows"});
+}
+
+std::expected<ReadResult, Error> Process::read_error(std::span<std::byte>,
+                                                     std::chrono::milliseconds) {
+    return std::unexpected(
+        Error{ErrorCode::unsupported, "starting processes is not implemented on Windows"});
+}
+
+std::expected<bool, Error> Process::wait_for_output(std::chrono::milliseconds) {
+    return std::unexpected(
+        Error{ErrorCode::unsupported, "starting processes is not implemented on Windows"});
+}
+
 void Process::terminate() {}
 void Process::kill() {}
 
