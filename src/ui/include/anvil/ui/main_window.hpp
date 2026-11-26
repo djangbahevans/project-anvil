@@ -233,9 +233,6 @@ public:
     QuickPick* command_palette() {
         return palette_;
     }
-    QuickPick* go_to_line_pick() {
-        return go_to_line_;
-    }
     QuickOpen* quick_open() {
         return quick_open_.get();
     }
@@ -340,11 +337,12 @@ private:
     // Go to File: opens the quick pick over the files of the workspace folder, or over the open
     // documents without one. Run again while it is open, it chooses the next row.
     void show_quick_open();
-    // The two uses of the popup of quick access, as in VS Code, where `>` at the start of the text
-    // turns a search for files into the command palette and removing it turns back.
+    // Quick access is one popup, as in VS Code, whose use the first character of the text says:
+    // `>` the command palette, `:` Go to Line/Column and anything else a search for files.
     void show_files(const QString& filter);
     void follow_quick_access_text(const QString& text);
-    // Ends the list that `pick_from` shows, when another use takes the popup over.
+    // Ends what the popup shows when another use takes it over: a list of `pick_from` is
+    // dismissed, and Go to Line/Column puts the caret back.
     void dismiss_pick();
     // The documents that the window has shown, in the form that quick open offers them.
     std::vector<QuickOpenEntry> recent_entries(bool open_only) const;
@@ -502,7 +500,7 @@ private:
     void show_command_palette(const QString& text = QStringLiteral(">"));
     // Opens Go to Line/Column over the shown document: the caret follows the text typed, Enter
     // keeps it and Escape puts the caret and the scroll position back.
-    void show_go_to_line();
+    void show_go_to_line(const QString& text = QStringLiteral(":"));
     void preview_go_to_line();
     void finish_go_to_line(bool keep);
     // Runs the command the user chose in the palette, found by the id captured when it was chosen.
@@ -577,14 +575,13 @@ private:
     Sidebar* sidebar_ = nullptr;
     Panel* panel_ = nullptr;
     QuickPick* palette_ = nullptr;
-    QuickPick* go_to_line_ = nullptr;
     std::unique_ptr<QuickOpen> quick_open_;
     // What the popup of the command palette is used for; `other` is a list of `pick_from`.
-    enum class QuickAccess { other, commands, files };
+    enum class QuickAccess { other, commands, files, line };
     QuickAccess quick_access_ = QuickAccess::other;
     core::FileSearchOptions search_options_;
-    // What Go to Line/Column puts back when it is cancelled. `document` is empty while it is
-    // closed.
+    // What Go to Line/Column puts back when it is cancelled. `document` is empty while it is not
+    // in use, and when there is no document to go to a line of.
     struct GoToLineState {
         std::shared_ptr<core::Document> document;
         core::SelectionSet selections;
