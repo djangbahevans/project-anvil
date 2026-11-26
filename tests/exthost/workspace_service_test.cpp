@@ -83,6 +83,12 @@ protected:
         }
         return std::nullopt;
     }
+    // The answer written as soon as the request arrives. `send` moves `req_` on, so it is a
+    // statement of its own: the order in which arguments are evaluated differs between compilers.
+    std::optional<bool> answer_at_once(const json& folders, const json& includes) {
+        const auto messages = send(folders, includes);
+        return answer_in(messages, req_);
+    }
     // The answer to the request sent last, polling for up to ten seconds.
     std::optional<bool> reply_to(std::vector<RpcMessage> messages) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -214,10 +220,10 @@ TEST_F(WorkspaceSearchTest, FoldersThatAreNotOnThisMachineAreNotSearched) {
 TEST_F(WorkspaceServiceTest, ArgumentsThatNameNothingToSearchForAreFalseAtOnce) {
     serve(program("echo $$ > pid; exec sleep 30"));
     const json folders = json::array({uri("project")});
-    EXPECT_EQ(answer_in(send(folders, json::array()), req_), false);
-    EXPECT_EQ(answer_in(send(folders, json::array({"", 7})), req_), false);
-    EXPECT_EQ(answer_in(send(json::array(), json::array({"**"})), req_), false);
-    EXPECT_EQ(answer_in(send("folders", json::array({"**"})), req_), false);
+    EXPECT_EQ(answer_at_once(folders, json::array()), false);
+    EXPECT_EQ(answer_at_once(folders, json::array({"", 7})), false);
+    EXPECT_EQ(answer_at_once(json::array(), json::array({"**"})), false);
+    EXPECT_EQ(answer_at_once("folders", json::array({"**"})), false);
     EXPECT_FALSE(fs::exists(root_ / "project" / "pid"));
 }
 
@@ -301,8 +307,7 @@ TEST_F(WorkspaceServiceTest, StoppingAndDestroyingEndRipgrep) {
 TEST_F(WorkspaceServiceTest, WithoutRipgrepItIsFalseAndSaidOnce) {
     serve(std::nullopt);
     for (int i = 0; i < 2; ++i) {
-        EXPECT_EQ(answer_in(send(json::array({uri("project")}), json::array({"**/*"})), req_),
-                  false);
+        EXPECT_EQ(answer_at_once(json::array({uri("project")}), json::array({"**/*"})), false);
     }
     EXPECT_EQ(warnings("ripgrep, which searches for them, was not found"), 1U);
 }
