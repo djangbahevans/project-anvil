@@ -5,7 +5,7 @@
 
 ## Context
 
-`SettingsStore` reads the user's `settings.json`, watches it, and never writes it. VS Code has many commands that change a setting: Toggle Auto Save, Color Theme, Render Whitespace, Render Control Characters, Word Wrap, the multi-cursor modifier, the tab bar modes. In VS Code each one writes the user's `settings.json`, and the change is still there at the next start. Anvil has no way to make such a command's effect survive a restart.
+`SettingsStore` reads the user's `settings.json`, watches it, and never writes it. VS Code has many commands that change a setting: Toggle Auto Save, Color Theme, Render Whitespace, Render Control Characters, the multi-cursor modifier, the tab bar modes. In VS Code each one writes the user's `settings.json`, and the change is still there at the next start. Anvil has no way to make such a command's effect survive a restart.
 
 The file is the user's own: JSON with comments, written and ordered by hand, often open in an editor. `core::Settings` accepts a key spelled flat (`"editor.fontSize": 14`) or nested (`"editor": {"fontSize": 14}`). `core::parse_jsonc` returns plain JSON and keeps no source positions, so it cannot say where a value is in the text.
 
