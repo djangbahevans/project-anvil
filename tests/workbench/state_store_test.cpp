@@ -193,6 +193,22 @@ TEST_F(StateStoreTest, AFileThatCannotBeReadIsNotReplacedAndTheValuesWait) {
     EXPECT_EQ(read_json(global_file()), nlohmann::json({{"key", 4}}));
 }
 
+TEST_F(StateStoreTest, AFileWithoutReadPermissionKeepsWhatItHolds) {
+    write_text(global_file(), R"({"other": 1})");
+    std::filesystem::permissions(global_file(), std::filesystem::perms::none);
+    if (std::ifstream(global_file()).good()) {
+        GTEST_SKIP() << "the permission does not stop this user from reading";
+    }
+    StateStore state = store();
+    state.set(StateScope::global, "key", 4);
+    EXPECT_FALSE(state.flush().has_value());
+    std::filesystem::permissions(global_file(), std::filesystem::perms::owner_read |
+                                                    std::filesystem::perms::owner_write);
+    EXPECT_EQ(read_json(global_file()), nlohmann::json({{"other", 1}}));
+    ASSERT_TRUE(state.flush().has_value());
+    EXPECT_EQ(read_json(global_file()), nlohmann::json({{"key", 4}, {"other", 1}}));
+}
+
 TEST_F(StateStoreTest, WithNoDirectoryTheStateStaysInMemory) {
     StateStore state(std::filesystem::path(), "1111111111111111", logger_);
     state.set(StateScope::global, "a", 1);

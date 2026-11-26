@@ -218,6 +218,8 @@ TEST_F(WindowStateKeeperTest, AHiddenPartKeepsItsContainerAndSizeWithoutMakingAV
     window->workbench->set_visible(Part::panel, true);
     QApplication::processEvents();
     EXPECT_EQ(window->made, (std::map<std::string, int>{{"output", 1}, {"search", 1}}));
+    ASSERT_NE(window->sidebar->container_widget("search"), nullptr);
+    ASSERT_NE(window->panel->container_widget("output"), nullptr);
     EXPECT_TRUE(window->sidebar->container_widget("search")->isVisible());
     EXPECT_TRUE(window->panel->container_widget("output")->isVisible());
     EXPECT_EQ(window->workbench->sidebar()->width(), 270);
