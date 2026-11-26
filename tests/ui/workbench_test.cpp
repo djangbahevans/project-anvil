@@ -10,6 +10,8 @@
 #include <QVBoxLayout>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
+#include <vector>
 
 using anvil::ui::Part;
 using anvil::ui::Workbench;
@@ -850,3 +852,67 @@ TEST_F(WorkbenchTest, ThePanelHasASizeAtEachPosition) {
     EXPECT_EQ(workbench_->panel()->height(), 150);
     EXPECT_EQ(workbench_->panel_size_at(PanelPosition::bottom), 220);
 }
+
+namespace {
+
+class ActivityBarBorderTest : public WorkbenchTest {
+protected:
+    void SetUp() override {
+        WorkbenchTest::SetUp();
+        set_theme(line);
+        workbench_->set_visible(Part::activity_bar, true);
+        QApplication::processEvents();
+    }
+
+    void set_theme(std::optional<QColor> border) {
+        WorkbenchColors::Colors theme{{"activityBar.background", background}};
+        if (border) {
+            theme.emplace("activityBar.border", *border);
+        }
+        colors_.set_colors(theme);
+    }
+
+    // The columns of the activity bar that are the border's color from top to bottom.
+    std::vector<int> bordered_columns() {
+        QWidget* bar = workbench_->activity_bar();
+        const QImage image = bar->grab().toImage();
+        std::vector<int> columns;
+        for (int x = 0; x < image.width(); ++x) {
+            if (image.pixelColor(x, 0) == line && image.pixelColor(x, image.height() - 1) == line) {
+                columns.push_back(x);
+            } else {
+                EXPECT_EQ(image.pixelColor(x, image.height() / 2), background) << x;
+            }
+        }
+        return columns;
+    }
+
+    const QColor line{255, 0, 0};
+    const QColor background{0, 0, 100};
+};
+
+TEST_F(ActivityBarBorderTest, ALineStandsOnTheEdgeThatFacesTheSidebar) {
+    const int last = workbench_->activity_bar()->width() - 1;
+    EXPECT_EQ(bordered_columns(), std::vector<int>{last});
+    workbench_->set_visible(Part::sidebar, true);
+    EXPECT_EQ(bordered_columns(), std::vector<int>{last});
+
+    workbench_->set_sidebar_side(anvil::ui::Side::right);
+    QApplication::processEvents();
+    EXPECT_EQ(bordered_columns(), std::vector<int>{0});
+    workbench_->set_visible(Part::sidebar, false);
+    EXPECT_EQ(bordered_columns(), std::vector<int>{0});
+
+    workbench_->set_sidebar_side(anvil::ui::Side::left);
+    QApplication::processEvents();
+    EXPECT_EQ(bordered_columns(), std::vector<int>{last});
+}
+
+TEST_F(ActivityBarBorderTest, TheLineFollowsTheTheme) {
+    set_theme(std::nullopt);
+    EXPECT_TRUE(bordered_columns().empty());
+    set_theme(line);
+    EXPECT_EQ(bordered_columns().size(), 1U);
+}
+
+} // namespace

@@ -58,14 +58,29 @@ public:
     PartWidget(const WorkbenchColors& colors, std::string_view background, QWidget* parent)
         : QWidget(parent), colors_(colors), background_(background) {}
 
+    // Draws a line of one pixel along the left or the right edge, in the color of `key`, while the
+    // theme has that color.
+    void set_border(std::string_view key, Qt::Edge edge) {
+        border_ = key;
+        edge_ = edge;
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override {
-        QPainter(this).fillRect(rect(), colors_.color(background_));
+        QPainter painter(this);
+        painter.fillRect(rect(), colors_.color(background_));
+        if (!border_.empty() && colors_.is_themed(border_)) {
+            painter.fillRect(QRect(edge_ == Qt::LeftEdge ? 0 : width() - 1, 0, 1, height()),
+                             colors_.color(border_));
+        }
     }
 
 private:
     const WorkbenchColors& colors_;
     std::string_view background_;
+    std::string_view border_;
+    Qt::Edge edge_ = Qt::RightEdge;
 };
 
 void Workbench::set_zoom(const Zoom* zoom) {
@@ -159,6 +174,7 @@ Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     : QWidget(parent), colors_(colors) {
     activity_bar_ = new PartWidget(colors_, "activityBar.background", this);
     activity_bar_->setFixedWidth(zoomed(activity_bar_width));
+    activity_bar_->set_border("activityBar.border", Qt::RightEdge);
     activity_bar_->hide();
 
     sidebar_ = new PartWidget(colors_, "sideBar.background", this);
@@ -443,6 +459,8 @@ void Workbench::arrange() {
     across_->setStretchFactor(across_->indexOf(down_), 1);
     row_layout_->removeWidget(activity_bar_);
     row_layout_->insertWidget(sidebar_last ? 1 : 0, activity_bar_);
+    // The line is on the side that faces the sidebar.
+    activity_bar_->set_border("activityBar.border", sidebar_last ? Qt::LeftEdge : Qt::RightEdge);
 
     const bool beside = panel_is_beside_editor();
     const bool panel_first =

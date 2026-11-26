@@ -31,6 +31,8 @@ constexpr WorkbenchColorKey table[] = {
                  "Marker on the edge of the activity bar button of the open view container.",
                  QPalette::Highlight),
     from_palette("activityBar.background", "Background of the activity bar.", QPalette::Window),
+    optional_color("activityBar.border", "Line between the activity bar and the side bar.",
+                   QPalette::Mid),
     from_palette("activityBar.foreground", "Icons of the active button of the activity bar.",
                  QPalette::WindowText),
     from_palette("activityBar.inactiveForeground",
