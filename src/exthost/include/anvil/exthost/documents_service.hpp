@@ -2,6 +2,7 @@
 
 #include "anvil/core/document.hpp"
 #include "anvil/core/uri.hpp"
+#include "anvil/exthost/activation_service.hpp"
 #include "anvil/exthost/request_router.hpp"
 #include "anvil/exthost/session.hpp"
 
@@ -13,6 +14,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -24,7 +26,10 @@ namespace anvil::exthost {
 // reports its own changes with document_changed(), and edits that extensions make are applied to
 // the same Document objects and announced back.
 //
-// The session and router must outlive the service.
+// The first document of a language starts the extensions that wait for it: the service fires
+// `onLanguage:<id>` and `onLanguage`, once for each language id.
+//
+// The session, router and activation service must outlive the service.
 class DocumentsService {
 public:
     // The language id of a document from its resource and the first line of its text.
@@ -33,7 +38,7 @@ public:
     // Documents above this size are not shared with extensions.
     static constexpr std::size_t max_shared_bytes = std::size_t{50} * 1024 * 1024;
 
-    DocumentsService(Session& session, RequestRouter& router);
+    DocumentsService(Session& session, RequestRouter& router, ActivationService& activation);
 
     // Callbacks for what extensions do to documents that the editor shows.
     struct Observer {
@@ -150,6 +155,7 @@ private:
     nlohmann::json editor_added_data(const Editor& editor, const Entry& entry) const;
     void send_delta(const nlohmann::json& delta);
     void send(ProxyId target, const char* method, const nlohmann::json& args);
+    void activate_language(const std::string& language_id);
 
     Entry* entry_for(const core::Uri& uri);
     Editor* editor_with_id(const std::string& id);
@@ -176,6 +182,8 @@ private:
     apply_protocol_edits(Entry& entry, const nlohmann::json& edits, bool join_previous);
 
     Session& session_;
+    ActivationService& activation_;
+    std::set<std::string> activated_languages_;
     LanguageResolver language_resolver_;
     Observer observer_;
     EditorOptions editor_options_;

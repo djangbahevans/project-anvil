@@ -157,6 +157,8 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_ACTIVATION_STARTUP_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-startup-extension"
   ANVIL_ACTIVATION_CONTAINS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-contains-extension"
   ANVIL_ACTIVATION_GLOB_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-glob-extension"
+  ANVIL_ACTIVATION_LANGUAGE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-language-extension"
+  ANVIL_ACTIVATION_LANGUAGE_CONTRIBUTION_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-language-contribution-extension"
   ANVIL_MEMFS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/memfs-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
 
@@ -211,7 +213,9 @@ if(TARGET anvil_ui)
     ANVIL_THEMES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/themes-extension"
     ANVIL_LANGUAGES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/languages-extension"
     ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension"
-    ANVIL_ACTIVATION_GLOB_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-glob-extension")
+    ANVIL_ACTIVATION_GLOB_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-glob-extension"
+    ANVIL_ACTIVATION_LANGUAGE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-language-extension"
+    ANVIL_ACTIVATION_LANGUAGE_CONTRIBUTION_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-language-contribution-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()
 

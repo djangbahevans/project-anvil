@@ -211,3 +211,41 @@ TEST_F(RealActivation, AWorkspaceWithoutAMatchingFileDoesNotStartTheExtension) {
     pump_for(milliseconds(500));
     EXPECT_FALSE(active("activation-glob"));
 }
+
+class RealLanguageActivation : public RealActivation {
+protected:
+    void add(const std::string& name, const std::string& language) {
+        auto document = anvil::core::Document::from_file_bytes("x");
+        ASSERT_TRUE(document.has_value());
+        ASSERT_TRUE(host_->documents()
+                        .add_document(anvil::core::Uri::file(scratch_ / name),
+                                      std::make_shared<anvil::core::Document>(std::move(*document)),
+                                      language)
+                        .has_value());
+    }
+    bool both_active() {
+        return active("activation-language") && active("activation-language-contribution");
+    }
+    std::vector<fs::path> extensions() const {
+        return {ANVIL_ACTIVATION_LANGUAGE_EXTENSION,
+                ANVIL_ACTIVATION_LANGUAGE_CONTRIBUTION_EXTENSION};
+    }
+};
+
+TEST_F(RealLanguageActivation, ADocumentOfTheLanguageStartsTheExtensionsAndNoOtherDocumentDoes) {
+    start(extensions());
+    add("a.txt", "plaintext");
+    pump_for(milliseconds(500));
+    ASSERT_FALSE(active("activation-language"));
+    ASSERT_FALSE(active("activation-language-contribution"));
+
+    add("b.fixture", "fixturelang");
+    EXPECT_TRUE(pump_until([&] { return both_active(); }));
+}
+
+TEST_F(RealLanguageActivation, ADocumentThatIsOpenBeforeTheHostIsReadyStartsTheExtensions) {
+    begin(extensions());
+    ASSERT_EQ(host_->state(), HostState::starting);
+    add("b.fixture", "fixturelang");
+    EXPECT_TRUE(pump_until([&] { return both_active(); }));
+}

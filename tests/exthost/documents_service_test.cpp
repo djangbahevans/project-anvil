@@ -132,7 +132,9 @@ bool is_on_disk(const std::filesystem::path& path) {
 
 class DocumentsServiceTest : public ::testing::Test {
 protected:
-    DocumentsServiceTest() : session_("{}"), host_(session_), service_(session_, router_) {
+    DocumentsServiceTest()
+        : session_("{}"), host_(session_), activation_(session_),
+          service_(session_, router_, activation_) {
         session_.set_request_handler([this](const Request& r) { return router_.dispatch(r); });
         host_.complete_handshake();
         scratch_ = std::filesystem::temp_directory_path() /
@@ -164,6 +166,18 @@ protected:
         return Sent{host_.drain_rpc()};
     }
 
+    // The activation events among what was sent, in order.
+    static std::vector<std::string> activations(const Sent& sent) {
+        std::vector<std::string> events;
+        for (const auto& [method, args] : sent.calls()) {
+            if (method == "ExtHostExtensionService.$activateByEvent") {
+                EXPECT_EQ(args[1], 0) << "the normal activation kind";
+                events.push_back(args[0].get<std::string>());
+            }
+        }
+        return events;
+    }
+
     // Sends a request from the extension host and returns everything the service wrote back.
     Sent request(ProxyId service, std::string method, json args, std::uint32_t req = 1) {
         EXPECT_TRUE(host_
@@ -193,6 +207,7 @@ protected:
     Session session_;
     FakeHost host_;
     RequestRouter router_;
+    ActivationService activation_;
     DocumentsService service_;
     std::filesystem::path scratch_;
 };
@@ -308,6 +323,76 @@ TEST_F(DocumentsServiceTest, ALanguageChangeBeforeTheInitialDeltaIsInTheDelta) {
     service_.language_changed(uri, "python");
     EXPECT_TRUE(sent().calls().empty());
     EXPECT_EQ(synchronize()["addedDocuments"][0]["languageId"], "python");
+}
+
+TEST_F(DocumentsServiceTest, TheFirstDocumentOfALanguageFiresItsActivationEvents) {
+    activation_.set_ready();
+    synchronize();
+    const core::Uri first = core::Uri::file(scratch_ / "a.py");
+    ASSERT_TRUE(service_.add_document(first, make_document("x"), "python").has_value());
+    const Sent added = sent();
+    EXPECT_EQ(activations(added), (std::vector<std::string>{"onLanguage:python", "onLanguage"}));
+    EXPECT_LT(added.index_of_call("ExtHostDocumentsAndEditors.$acceptDocumentsAndEditorsDelta"),
+              added.index_of_call("ExtHostExtensionService.$activateByEvent"))
+        << "the extensions that start must see the document";
+
+    ASSERT_TRUE(
+        service_.add_document(core::Uri::file(scratch_ / "b.py"), make_document("y"), "python")
+            .has_value());
+    EXPECT_TRUE(activations(sent()).empty());
+    service_.remove_document(first);
+    ASSERT_TRUE(service_.add_document(first, make_document("x"), "python").has_value());
+    EXPECT_TRUE(activations(sent()).empty());
+
+    open("c.txt", "z");
+    EXPECT_EQ(activations(sent()),
+              (std::vector<std::string>{"onLanguage:plaintext", "onLanguage"}));
+}
+
+TEST_F(DocumentsServiceTest, ADocumentThatIsNotRegisteredFiresNothing) {
+    activation_.set_ready();
+    const core::Uri uri = open("a.txt", "x");
+    sent();
+    EXPECT_FALSE(service_.add_document(uri, make_document("y"), "python").has_value());
+    service_.language_changed(core::Uri::file(scratch_ / "unknown.txt"), "python");
+    auto huge = std::make_shared<core::Document>(
+        *core::Text::from_utf8(std::string(DocumentsService::max_shared_bytes + 1, 'a')));
+    EXPECT_FALSE(
+        service_.add_document(core::Uri::file(scratch_ / "huge"), huge, "python").has_value());
+    EXPECT_TRUE(activations(sent()).empty());
+}
+
+TEST_F(DocumentsServiceTest, ALanguageChangeFiresTheEventsOfANewLanguage) {
+    activation_.set_ready();
+    const core::Uri uri = open("a.txt", "x");
+    synchronize();
+    service_.language_changed(uri, "python");
+    const Sent changed = sent();
+    EXPECT_EQ(activations(changed), (std::vector<std::string>{"onLanguage:python", "onLanguage"}));
+    EXPECT_LT(changed.index_of_call("ExtHostDocuments.$acceptModelLanguageChanged"),
+              changed.index_of_call("ExtHostExtensionService.$activateByEvent"));
+
+    service_.language_changed(uri, "plaintext");
+    service_.language_changed(uri, "python");
+    EXPECT_TRUE(activations(sent()).empty()) << "both languages have started their extensions";
+}
+
+TEST_F(DocumentsServiceTest, TheEventsOfDocumentsOpenBeforeTheHostIsReadyWaitForIt) {
+    const core::Uri uri = open("a.txt", "x");
+    service_.language_changed(uri, "python");
+    EXPECT_TRUE(sent().calls().empty());
+    synchronize();
+    activation_.set_ready();
+    EXPECT_EQ(activations(sent()), (std::vector<std::string>{"onLanguage:plaintext", "onLanguage",
+                                                             "onLanguage:python", "onLanguage"}));
+}
+
+TEST_F(DocumentsServiceTest, ADocumentThatAnExtensionCreatesWithALanguageFiresItsEvents) {
+    activation_.set_ready();
+    synchronize();
+    const Sent created = request(ProxyId::MainThreadDocuments, "$tryCreateDocument",
+                                 json::array({json{{"language", "python"}, {"content", "x"}}}));
+    EXPECT_EQ(activations(created), (std::vector<std::string>{"onLanguage:python", "onLanguage"}));
 }
 
 TEST_F(DocumentsServiceTest, RejectsDuplicateAndOversizedDocuments) {

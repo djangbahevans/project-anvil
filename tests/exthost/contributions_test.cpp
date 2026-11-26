@@ -277,6 +277,26 @@ TEST_F(ContributionsTest, TheInitDataActivatesAnExtensionForEachCommandItContrib
               (json{"onLanguage:x", "onCommand:one.a", "onCommand:one.b"}));
 }
 
+TEST_F(ContributionsTest, TheInitDataActivatesAnExtensionForEachLanguageWithAConfiguration) {
+    const auto dir = root_ / "a";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "package.json") << R"({
+        "name": "one", "publisher": "acme", "activationEvents": ["onLanguage:listed"],
+        "contributes": {"languages": [
+            {"id": "fresh", "configuration": "./c.json"},
+            {"id": "listed", "configuration": "./c.json"},
+            {"id": "fresh", "configuration": "./other.json"},
+            {"id": "bare", "extensions": [".bare"]},
+            {"id": "unnamed-configuration", "configuration": ""},
+            {"id": "", "configuration": "./c.json"},
+            {"id": 7, "configuration": "./c.json"},
+            {"configuration": "./c.json"}, 3]}})";
+    const auto text = build_init_data({.extension_dirs = {dir}});
+    ASSERT_TRUE(text.has_value()) << text.error().message;
+    EXPECT_EQ(json::parse(*text)["extensions"]["activationEvents"]["acme.one"],
+              (json{"onLanguage:listed", "onLanguage:fresh"}));
+}
+
 TEST_F(ContributionsTest, ThemesCarryTheirLabelKindAndAPathInsideTheExtension) {
     const auto dir = extension(
         "a", "one",

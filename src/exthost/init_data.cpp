@@ -33,8 +33,18 @@ Error manifest_error(const std::filesystem::path& dir, const std::string& what) 
     return Error{ErrorCode::io_error, "extension at " + dir.string() + ": " + what};
 }
 
-// VS Code activates an extension for `onCommand:<id>` of every command it contributes, whether or
-// not its manifest lists the event. The extension host only knows the events it is given.
+// The string member `key` of `object`; empty without one.
+std::string string_member(const json& object, const char* key) {
+    if (!object.is_object()) {
+        return {};
+    }
+    const auto found = object.find(key);
+    return found != object.end() && found->is_string() ? found->get<std::string>() : std::string();
+}
+
+// VS Code activates an extension for some of what it contributes, whether or not its manifest
+// lists the event: `onCommand:<id>` for every command, and `onLanguage:<id>` for every language
+// that comes with a language configuration. The extension host only knows the events it is given.
 void add_implicit_activation_events(const json& manifest, json& events) {
     if (!events.is_array()) {
         return;
@@ -43,18 +53,26 @@ void add_implicit_activation_events(const json& manifest, json& events) {
     if (contributes == manifest.end() || !contributes->is_object()) {
         return;
     }
-    const auto commands = contributes->find("commands");
-    if (commands == contributes->end() || !commands->is_array()) {
-        return;
-    }
-    for (const json& command : *commands) {
-        if (!command.is_object() || !command.contains("command") ||
-            !command["command"].is_string()) {
-            continue;
-        }
-        const json event = "onCommand:" + command["command"].get<std::string>();
+    const auto add = [&events](const json& event) {
         if (std::ranges::find(events, event) == events.end()) {
             events.push_back(event);
+        }
+    };
+    if (const auto commands = contributes->find("commands");
+        commands != contributes->end() && commands->is_array()) {
+        for (const json& command : *commands) {
+            if (const std::string id = string_member(command, "command"); !id.empty()) {
+                add("onCommand:" + id);
+            }
+        }
+    }
+    if (const auto languages = contributes->find("languages");
+        languages != contributes->end() && languages->is_array()) {
+        for (const json& language : *languages) {
+            const std::string id = string_member(language, "id");
+            if (!id.empty() && !string_member(language, "configuration").empty()) {
+                add("onLanguage:" + id);
+            }
         }
     }
 }
