@@ -354,13 +354,14 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             if (found == documents_.end()) {
                 return;
             }
-            highlight_edit(uri, change);
-            update_document(uri);
+            // The views follow the change before anything can ask them to paint.
             for (EditorGroupWidget* group : area_->groups()) {
                 if (group->view()->document() == found->second) {
-                    group->view()->document_changed_elsewhere();
+                    group->view()->document_changed_elsewhere(change);
                 }
             }
+            highlight_edit(uri, change);
+            update_document(uri);
             const core::Uri* current = current_uri_ptr();
             if (current && *current == uri) {
                 update_status();
@@ -2372,12 +2373,12 @@ bool MainWindow::revert() {
             return fail(change.error().message);
         }
         bridge_.text_changed(uri, *change);
-        highlight_edit(uri, *change);
         for (EditorGroupWidget* group : area_->groups()) {
             if (group->view()->document() == document) {
-                group->view()->document_changed_elsewhere();
+                group->view()->document_changed_elsewhere(*change);
             }
         }
+        highlight_edit(uri, *change);
     }
     document->mark_saved();
     bridge_.saved(uri);
@@ -2722,6 +2723,15 @@ void MainWindow::on_text_changed(workbench::GroupId group, const core::DocumentC
         return;
     }
     bridge_.text_changed(state->tabs[*state->active], change);
+    // Other groups can show the same document. Their views follow before anything can ask them
+    // to paint.
+    const auto found = documents_.find(state->tabs[*state->active]);
+    for (EditorGroupWidget* other : area_->groups()) {
+        if (other->id() != group && found != documents_.end() &&
+            other->view()->document() == found->second) {
+            other->view()->document_changed_elsewhere(change);
+        }
+    }
     highlight_edit(state->tabs[*state->active], change);
     record_selection(group, workbench::SelectionReason::edit);
     if (auto_save_ == core::AutoSave::after_delay) {

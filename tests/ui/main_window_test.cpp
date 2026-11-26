@@ -1768,6 +1768,27 @@ TEST_F(MainWindowTest, SplitEditorAddsAnEmptyGroupToTheRightThatHasTheFocus) {
     EXPECT_EQ(right->view()->document(), nullptr);
 }
 
+TEST_F(MainWindowTest, AnEditInOneGroupReachesTheOtherViewOfTheDocument) {
+    create_window();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "one").string())));
+    const auto first = window_->editor_layout().focused();
+    // No command shows a document in two groups, but a restored layout can.
+    ASSERT_TRUE(window_->editor_layout().split(first, anvil::workbench::Direction::right,
+                                               anvil::workbench::SplitContent::copy_active));
+    QApplication::processEvents();
+    anvil::ui::EditorView* left = window_->editor_area()->group(first)->view();
+    anvil::ui::EditorView* right = window_->view();
+    ASSERT_NE(left, right);
+    ASSERT_EQ(left->document(), right->document());
+    ASSERT_EQ(left->verticalScrollBar()->maximum(), 0);
+    QSignalSpy changes(left, &anvil::ui::EditorView::content_changed);
+    for (int line = 0; line < 200; ++line) {
+        QTest::keyClick(right, Qt::Key_Return);
+    }
+    EXPECT_EQ(changes.count(), 200);
+    EXPECT_GT(left->verticalScrollBar()->maximum(), 0);
+}
+
 TEST_F(MainWindowTest, SplitEditorDownStacksTheGroups) {
     create_window();
     window_->commands().execute("workbench.action.splitEditorDown");

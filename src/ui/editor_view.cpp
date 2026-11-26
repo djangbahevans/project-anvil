@@ -2,7 +2,7 @@
 
 #include "anvil/core/visible_column.hpp"
 #include "anvil/core/zoom.hpp"
-#include "anvil/ui/chunked_line.hpp"
+#include "anvil/ui/line_layout.hpp"
 #include "anvil/ui/zoom.hpp"
 
 #include <QApplication>
@@ -23,6 +23,7 @@
 #include <QTextLayout>
 #include <QTextOption>
 #include <algorithm>
+#include <cmath>
 
 namespace anvil::ui {
 namespace {
@@ -31,6 +32,7 @@ QColor to_color(const core::Rgba& color) {
     return QColor(color.red, color.green, color.blue, color.alpha);
 }
 
+constexpr int caret_width = 2;
 constexpr int text_padding_px = 6;
 constexpr int gutter_padding_px = 8;
 const QColor match_highlight(255, 190, 0, 90);
@@ -116,12 +118,17 @@ std::vector<std::string> copied_pieces(const QMimeData* data) {
 
 } // namespace
 
-struct EditorView::LineLayout {
-    ChunkedLine text;
+struct EditorView::ShownLine {
+    LineLayout text;
     // The UTF-16 columns of the control characters, which `text` shows as symbols.
     std::vector<int> control_columns;
     // The digest of the highlighter's spans that the formats were made from, when there are any.
     std::optional<std::size_t> spans;
+
+    // A line of one row that is laid out in several parts, whose widths are worth keeping.
+    bool chunked() {
+        return text.row_count() == 1 && text.row(0).chunk_count() > 1;
+    }
 };
 
 EditorView::EditorView(QWidget* parent) : QAbstractScrollArea(parent) {
@@ -155,12 +162,13 @@ void EditorView::update_metrics() {
 }
 
 void EditorView::apply_settings(const core::EditorSettings& settings) {
-    // Scroll positions are in pixels, so they are converted to lines and columns and back to keep
-    // the same text in view when the metrics change.
+    // Scroll positions are in pixels, so they are converted to places in the text and back to keep
+    // the same text in view when the metrics or the rows change.
     const int vertical = verticalScrollBar()->value();
     const int horizontal = horizontalScrollBar()->value();
+    const TextPlace place = top_place();
     clear_layouts();
-    const int first_line = vertical / line_height_;
+    rows_.reset();
     const int first_column = horizontal / char_width_;
     const int previous_line_height = line_height_;
     const int previous_char_width = char_width_;
@@ -185,15 +193,17 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     update_metrics();
     // The widest line is only measured while painting, so until the next paint the old width,
     // scaled to the new font, keeps the horizontal range from collapsing to nothing.
-    max_line_width_ = max_line_width_ * char_width_ / previous_char_width;
+    max_line_width_ =
+        wrapping_ == Wrapping::off ? max_line_width_ * char_width_ / previous_char_width : 0;
     verticalScrollBar()->setSingleStep(line_height_);
     horizontalScrollBar()->setSingleStep(char_width_ * 4);
     update_scroll_bars();
     // A reload that leaves the metrics alone, such as a change of color theme, keeps the exact
-    // position instead of snapping to whole lines.
+    // position instead of snapping to whole rows.
     const bool same_metrics =
         line_height_ == previous_line_height && char_width_ == previous_char_width;
-    verticalScrollBar()->setValue(same_metrics ? vertical : first_line * line_height_);
+    verticalScrollBar()->setValue(static_cast<int>(row_of_place(place)) * line_height_ +
+                                  (same_metrics ? vertical % previous_line_height : 0));
     horizontalScrollBar()->setValue(same_metrics ? horizontal : first_column * char_width_);
     viewport()->update();
 }
@@ -207,6 +217,7 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     max_line_width_ = 0;
     highlights_.clear();
     clear_layouts();
+    rows_.reset();
     verticalScrollBar()->setValue(0);
     horizontalScrollBar()->setValue(0);
     update_scroll_bars();
@@ -214,10 +225,136 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
     emit content_changed();
 }
 
+void EditorView::set_wrapping(Wrapping wrapping, std::size_t column) {
+    column = std::max<std::size_t>(column, 1);
+    if (wrapping == wrapping_ && column == wrap_column_) {
+        return;
+    }
+    const TextPlace place = top_place();
+    wrapping_ = wrapping;
+    wrap_column_ = column;
+    // The scroll bar of wrapped text is always there: its coming and going would change the width
+    // that the rows are made for.
+    setVerticalScrollBarPolicy(wrapping == Wrapping::off ? Qt::ScrollBarAsNeeded
+                                                         : Qt::ScrollBarAlwaysOn);
+    horizontalScrollBar()->setValue(0);
+    reflow(place, 0);
+}
+
+const core::RowMap* EditorView::rows() const {
+    sync_rows();
+    return rows_ ? &*rows_ : nullptr;
+}
+
+std::optional<core::WrapOptions> EditorView::wrap_options() const {
+    if (wrapping_ == Wrapping::off || !document_) {
+        return std::nullopt;
+    }
+    const QFontMetricsF metrics(font());
+    const qreal advance = std::max<qreal>(1, metrics.horizontalAdvance(QLatin1Char('M')));
+    const auto fits = static_cast<std::size_t>(
+        std::max<qreal>(1, std::floor((text_width() - caret_width) / advance)));
+    const std::size_t column = wrapping_ == Wrapping::view     ? fits
+                               : wrapping_ == Wrapping::column ? wrap_column_
+                                                               : std::min(fits, wrap_column_);
+    // U+4E2D stands for the full-width characters.
+    const qreal full_width = metrics.horizontalAdvance(QChar(0x4E2D)) / advance;
+    return core::WrapOptions{tab_size_, column, std::max<qreal>(1, full_width)};
+}
+
+void EditorView::sync_rows() const {
+    if (!document_ || wrapping_ == Wrapping::off) {
+        rows_.reset();
+        return;
+    }
+    if (rows_ && rows_version_ == document_->version()) {
+        return;
+    }
+    const core::WrapOptions options = rows_ ? rows_->options() : *wrap_options();
+    rows_.emplace(document_->text(), options);
+    rows_version_ = document_->version();
+}
+
+void EditorView::apply_rows(const core::DocumentChange& change) {
+    if (rows_ && rows_version_ + 1 == change.version) {
+        rows_->apply(change, document_->text());
+        rows_version_ = change.version;
+    }
+}
+
+void EditorView::rewrap() {
+    const std::optional<core::WrapOptions> wanted = wrap_options();
+    if (rows_ ? wanted == rows_->options() : !wanted) {
+        return;
+    }
+    reflow(top_place(), verticalScrollBar()->value() % line_height_);
+}
+
+void EditorView::reflow(const TextPlace& place, int pixels) {
+    clear_layouts();
+    rows_.reset();
+    max_line_width_ = 0;
+    update_scroll_bars();
+    verticalScrollBar()->setValue(static_cast<int>(row_of_place(place)) * line_height_ + pixels);
+    viewport()->update();
+}
+
+EditorView::TextPlace EditorView::top_place() const {
+    if (!document_) {
+        return {};
+    }
+    const auto row = static_cast<std::size_t>(verticalScrollBar()->value() / line_height_);
+    if (!rows_) {
+        return {row, 0};
+    }
+    // The rows can be those of an earlier text, whose lines the current one need not have.
+    const std::size_t line = std::min(rows_->line_of(row), document_->text().line_count() - 1);
+    const auto layout = layout_line(line);
+    const std::size_t part =
+        std::min(row - std::min(row, rows_->first_row(line)), layout->text.row_count() - 1);
+    return {line, layout->text.begin(part)};
+}
+
+std::size_t EditorView::row_of_place(const TextPlace& place) const {
+    if (!document_) {
+        return 0;
+    }
+    const std::size_t line = std::min(place.line, document_->text().line_count() - 1);
+    if (!rows_) {
+        return line;
+    }
+    const auto layout = layout_line(line);
+    return rows_->first_row(line) +
+           layout->text.row_of(
+               std::min(place.column, static_cast<std::size_t>(layout->text.text().size())));
+}
+
+std::size_t EditorView::row_count() const {
+    if (!document_) {
+        return 0;
+    }
+    return rows_ ? rows_->row_count() : document_->text().line_count();
+}
+
+std::size_t EditorView::first_row(std::size_t line) const {
+    return rows_ ? rows_->first_row(line) : line;
+}
+
+std::size_t EditorView::line_of_row(std::size_t row) const {
+    return rows_ ? rows_->line_of(row) : std::min(row, document_->text().line_count() - 1);
+}
+
 void EditorView::document_changed_elsewhere() {
+    rewrap();
     update_scroll_bars();
     viewport()->update();
     emit content_changed();
+}
+
+void EditorView::document_changed_elsewhere(const core::DocumentChange& change) {
+    update_layouts(change);
+    apply_rows(change);
+    document_changed_elsewhere();
 }
 
 void EditorView::select_range(core::Selection range) {
@@ -257,16 +394,16 @@ void EditorView::refresh_highlighting() {
         viewport()->update();
         return;
     }
-    const std::size_t line_count = document_->text().line_count();
-    const std::size_t first = static_cast<std::size_t>(verticalScrollBar()->value() / line_height_);
-    const std::size_t last = std::min(
-        line_count, static_cast<std::size_t>((verticalScrollBar()->value() + viewport()->height()) /
-                                             line_height_) +
-                        1);
+    sync_rows();
+    const int scroll = verticalScrollBar()->value();
+    const std::size_t first = line_of_row(static_cast<std::size_t>(scroll / line_height_));
+    const std::size_t last =
+        line_of_row(static_cast<std::size_t>((scroll + viewport()->height()) / line_height_)) + 1;
     QRegion changed;
     const auto repaint = [&](std::size_t line) {
-        const int y = static_cast<int>(line) * line_height_ - verticalScrollBar()->value();
-        changed += QRect(0, y, viewport()->width(), line_height_);
+        const int y = static_cast<int>(first_row(line)) * line_height_ - scroll;
+        const auto rows = static_cast<int>(rows_ ? rows_->rows_of(line) : 1);
+        changed += QRect(0, y, viewport()->width(), rows * line_height_);
     };
     // Only the lines in view are asked for spans; a layout made from spans elsewhere is dropped
     // and made again when it comes into view.
@@ -281,7 +418,7 @@ void EditorView::refresh_highlighting() {
         if (in_view) {
             repaint(line);
         }
-        if (cached.layout->text.chunk_count() > 1) {
+        if (cached.layout->chunked()) {
             cached.stale = true;
             ++layout;
         } else {
@@ -320,6 +457,16 @@ int EditorView::text_origin_x() const {
     return gutter_width() + text_padding_ - horizontalScrollBar()->value();
 }
 
+int EditorView::text_width() const {
+    return viewport()->width() - gutter_width() - 2 * text_padding_;
+}
+
+int EditorView::scroll_width(qreal end) const {
+    // Wrapped rows that fit need no scrolling, not even for the room after them.
+    const int width = static_cast<int>(end);
+    return wrapping_ == Wrapping::off || width > text_width() ? width + char_width_ : 0;
+}
+
 QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenTheme& token_theme,
                                                            std::size_t line, qsizetype size) const {
     QList<QTextLayout::FormatRange> formats;
@@ -353,7 +500,7 @@ QList<QTextLayout::FormatRange> EditorView::syntax_formats(const core::TokenThem
     return formats;
 }
 
-std::shared_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line) const {
+std::shared_ptr<EditorView::ShownLine> EditorView::layout_line(std::size_t line) const {
     if (layout_version_ != document_->version()) {
         layouts_.clear();
         layout_version_ = document_->version();
@@ -365,7 +512,10 @@ std::shared_ptr<EditorView::LineLayout> EditorView::layout_line(std::size_t line
     }
     auto layout = build_layout(line);
     if (found != layouts_.end()) {
-        layout->text.keep_widths(found->second.layout->text, found->second.unchanged);
+        if (layout->chunked()) {
+            layout->text.row(0).keep_widths(found->second.layout->text.row(0),
+                                            found->second.unchanged);
+        }
         found->second = {layout, ++layout_clock_};
         return layout;
     }
@@ -406,7 +556,7 @@ void EditorView::update_layouts(const core::DocumentChange& change) {
         const std::size_t inserted = static_cast<std::size_t>(std::ranges::count(edit.text, '\n'));
         // A long line keeps the widths before the edit, so that the text there does not move.
         const auto edited = layouts_.find(first);
-        if (edited != layouts_.end() && edited->second.layout->text.chunk_count() > 1) {
+        if (edited != layouts_.end() && edited->second.layout->chunked()) {
             edited->second.stale = true;
             edited->second.unchanged = std::min(edited->second.unchanged, edit.range.start.column);
         } else {
@@ -432,8 +582,9 @@ void EditorView::update_layouts(const core::DocumentChange& change) {
     }
 }
 
-std::shared_ptr<EditorView::LineLayout> EditorView::build_layout(std::size_t line) const {
-    QString text = to_qstring(document_->text().line(line));
+std::shared_ptr<EditorView::ShownLine> EditorView::build_layout(std::size_t line) const {
+    const std::string content = document_->text().line(line);
+    QString text = to_qstring(content);
     std::vector<int> control_columns;
     if (render_control_characters_) {
         // Through a pointer: the line can be long, and each access by index is checked.
@@ -456,42 +607,66 @@ std::shared_ptr<EditorView::LineLayout> EditorView::build_layout(std::size_t lin
     }
     const ChunkedLine::Style style{font(), char_width_ * static_cast<qreal>(tab_size_),
                                    QFontMetricsF(font()).horizontalAdvance(QLatin1Char('M'))};
-    return std::make_shared<LineLayout>(
-        LineLayout{ChunkedLine(std::move(text), std::move(formats), style, &layouts_built_),
-                   std::move(control_columns), spans});
+    LineLayout::Wrap wrap;
+    if (rows_) {
+        const core::LineBreaks breaks = core::break_line(content, rows_->options());
+        std::size_t byte = 0;
+        std::size_t column = 0;
+        for (std::size_t i = 0; i < breaks.starts.size(); ++i) {
+            for (; byte < breaks.starts[i]; ++byte) {
+                const auto unit = static_cast<unsigned char>(content[byte]);
+                if ((unit & 0xC0u) != 0x80u) {
+                    column += unit >= 0xF0 ? 2 : 1;
+                }
+            }
+            wrap.breaks.push_back({column, breaks.columns[i]});
+        }
+        wrap.indent_end = breaks.indent > 0 ? content.find_first_not_of(" \t") : 0;
+        wrap.tab_size = rows_->options().tab_size;
+    }
+    return std::make_shared<ShownLine>(ShownLine{
+        LineLayout(std::move(text), std::move(formats), style, std::move(wrap), &layouts_built_),
+        std::move(control_columns), spans});
 }
 
 QRect EditorView::cursor_rect(std::size_t offset) const {
     if (!document_) {
         return {};
     }
-    const core::Text& text = document_->text();
-    const core::Position position = text.position_at(offset);
+    sync_rows();
+    const core::Position position = document_->text().position_at(offset);
     const auto layout = layout_line(position.line);
     const int x = text_origin_x() + static_cast<int>(layout->text.x_of(position.column));
-    const int y = static_cast<int>(position.line) * line_height_ - verticalScrollBar()->value();
-    return QRect(x, y, 2, line_height_);
+    const std::size_t row = first_row(position.line) + layout->text.row_of(position.column);
+    const int y = static_cast<int>(row) * line_height_ - verticalScrollBar()->value();
+    return QRect(x, y, caret_width, line_height_);
 }
 
 std::size_t EditorView::offset_at(const QPoint& point) const {
     if (!document_) {
         return 0;
     }
-    const core::Text& text = document_->text();
+    sync_rows();
     const int y = std::max(0, point.y() + verticalScrollBar()->value());
-    const std::size_t line =
-        std::min<std::size_t>(static_cast<std::size_t>(y / line_height_), text.line_count() - 1);
+    const std::size_t row =
+        std::min<std::size_t>(static_cast<std::size_t>(y / line_height_), row_count() - 1);
+    return offset_at_row(row, point.x() - text_origin_x());
+}
+
+std::size_t EditorView::offset_at_row(std::size_t row, qreal x) const {
+    const std::size_t line = line_of_row(row);
     const auto layout = layout_line(line);
-    const std::size_t column = layout->text.column_at(point.x() - text_origin_x());
-    return text.offset_at({line, column});
+    const std::size_t column = layout->text.column_at(row - first_row(line), x);
+    return document_->text().offset_at({line, column});
 }
 
 void EditorView::update_scroll_bars() {
-    const int lines = document_ ? static_cast<int>(document_->text().line_count()) : 0;
+    sync_rows();
+    const int rows = static_cast<int>(row_count());
     verticalScrollBar()->setRange(
-        0, std::max(0, lines * line_height_ - viewport()->height() + line_height_));
+        0, std::max(0, rows * line_height_ - viewport()->height() + line_height_));
     verticalScrollBar()->setPageStep(viewport()->height());
-    const int available = viewport()->width() - gutter_width() - 2 * text_padding_;
+    const int available = text_width();
     horizontalScrollBar()->setRange(0, std::max(0, max_line_width_ - available));
     horizontalScrollBar()->setPageStep(available);
 }
@@ -500,9 +675,12 @@ void EditorView::ensure_cursor_visible() {
     if (!document_) {
         return;
     }
+    sync_rows();
     const std::size_t active = document_->selections().primary().active;
     const core::Position position = document_->text().position_at(active);
-    const int top = static_cast<int>(position.line) * line_height_;
+    const auto layout = layout_line(position.line);
+    const std::size_t part = layout->text.row_of(position.column);
+    const int top = static_cast<int>(first_row(position.line) + part) * line_height_;
     QScrollBar* vertical = verticalScrollBar();
     if (top < vertical->value()) {
         vertical->setValue(top);
@@ -510,21 +688,22 @@ void EditorView::ensure_cursor_visible() {
         vertical->setValue(top + line_height_ - viewport()->height());
     }
 
-    const auto layout = layout_line(position.line);
-    const int available = viewport()->width() - gutter_width() - 2 * text_padding_;
-    // The parts of the line that are going to be on screen are laid out first, since their measured
+    const int available = text_width();
+    ChunkedLine& row = layout->text.row(part);
+    const std::size_t column = position.column - layout->text.begin(part);
+    const qreal left = layout->text.left(part);
+    // The parts of the row that are going to be on screen are laid out first, since their measured
     // widths can move the caret.
-    const qreal estimate = layout->text.x_of(position.column);
-    layout->text.columns_between(estimate - available, estimate + available);
-    const int x = static_cast<int>(layout->text.x_of(position.column));
-    max_line_width_ =
-        std::max(max_line_width_, static_cast<int>(layout->text.width()) + char_width_);
+    const qreal estimate = row.x_of(column);
+    row.columns_between(estimate - available, estimate + available);
+    const int x = static_cast<int>(left + row.x_of(column));
+    max_line_width_ = std::max(max_line_width_, scroll_width(left + row.width()));
     update_scroll_bars();
     QScrollBar* horizontal = horizontalScrollBar();
     if (x < horizontal->value()) {
         horizontal->setValue(x);
-    } else if (x + 2 > horizontal->value() + available) {
-        horizontal->setValue(x + 2 - available);
+    } else if (x + caret_width > horizontal->value() + available) {
+        horizontal->setValue(x + caret_width - available);
     }
 }
 
@@ -541,6 +720,9 @@ void EditorView::apply(const core::EditOutcome& outcome) {
     }
     if (outcome.change) {
         update_layouts(*outcome.change);
+        apply_rows(*outcome.change);
+        // The width of the line numbers, and with it of the text, follows the number of lines.
+        rewrap();
         update_scroll_bars();
     }
     ensure_cursor_visible();
@@ -937,20 +1119,18 @@ bool EditorView::has_other_modifier(Qt::KeyboardModifiers modifiers) const {
 }
 
 void EditorView::select_column_to(const QPoint& viewport_point) {
-    const core::Text& text = document_->text();
+    sync_rows();
     const QPoint point = text_point(viewport_point);
-    const std::size_t last_line = text.line_count() - 1;
-    const auto line_at = [&](int y) {
+    const std::size_t last_row = row_count() - 1;
+    const auto row_at = [&](int y) {
         return std::min<std::size_t>(static_cast<std::size_t>(std::max(0, y) / line_height_),
-                                     last_line);
+                                     last_row);
     };
-    const std::size_t from = line_at(drag_origin_.y());
-    const std::size_t to = line_at(point.y());
+    const std::size_t from = row_at(drag_origin_.y());
+    const std::size_t to = row_at(point.y());
     std::vector<core::Selection> ranges;
-    for (std::size_t line = std::min(from, to); line <= std::max(from, to); ++line) {
-        const auto layout = layout_line(line);
-        ranges.push_back({text.offset_at({line, layout->text.column_at(drag_origin_.x())}),
-                          text.offset_at({line, layout->text.column_at(point.x())})});
+    for (std::size_t row = std::min(from, to); row <= std::max(from, to); ++row) {
+        ranges.push_back({offset_at_row(row, drag_origin_.x()), offset_at_row(row, point.x())});
     }
     apply(controller_->select_ranges(std::move(ranges), to - std::min(from, to)));
 }
@@ -1057,6 +1237,7 @@ QVariant EditorView::inputMethodQuery(Qt::InputMethodQuery query) const {
 
 void EditorView::resizeEvent(QResizeEvent* event) {
     QAbstractScrollArea::resizeEvent(event);
+    rewrap();
     update_scroll_bars();
 }
 
@@ -1078,6 +1259,7 @@ void EditorView::changeEvent(QEvent* event) {
     QAbstractScrollArea::changeEvent(event);
     if (event->type() == QEvent::FontChange) {
         clear_layouts();
+        rows_.reset();
         update_metrics();
         verticalScrollBar()->setSingleStep(line_height_);
         horizontalScrollBar()->setSingleStep(char_width_ * 4);
@@ -1146,28 +1328,32 @@ EditorView::Colors EditorView::current_colors() const {
             colors_->color("editorWhitespace.foreground")};
 }
 
-void EditorView::draw_whitespace(QPainter& painter, LineLayout& layout,
+void EditorView::draw_whitespace(QPainter& painter, ShownLine& line, std::size_t row,
                                  std::span<const core::ColumnRange> selected,
-                                 std::pair<std::size_t, std::size_t> shown, int origin_x, int y,
+                                 std::pair<std::size_t, std::size_t> shown, qreal origin_x, int y,
                                  const QColor& color) const {
-    const QString& text = layout.text.text();
-    const std::u16string_view line(reinterpret_cast<const char16_t*>(text.utf16()),
-                                   static_cast<std::size_t>(text.size()));
+    const QString& text = line.text.text();
+    const std::u16string_view units(reinterpret_cast<const char16_t*>(text.utf16()),
+                                    static_cast<std::size_t>(text.size()));
     const std::vector<std::size_t> columns =
-        core::whitespace_columns(line, render_whitespace_, selected, shown.first, shown.second);
+        core::whitespace_columns(units, render_whitespace_, selected, shown.first, shown.second);
+    ChunkedLine& part = line.text.row(row);
+    const std::size_t begin = line.text.begin(row);
+    const auto x_of = [&](std::size_t column) {
+        return static_cast<int>(origin_x + part.x_of(column - begin));
+    };
     // The columns are in the order of their x, so the first visible one is found by bisection.
     const int left = gutter_width();
     const auto first =
-        std::lower_bound(columns.begin(), columns.end(), left, [&](std::size_t column, int edge) {
-            return origin_x + static_cast<int>(layout.text.x_of(column + 1)) <= edge;
-        });
+        std::lower_bound(columns.begin(), columns.end(), left,
+                         [&](std::size_t column, int edge) { return x_of(column + 1) <= edge; });
     painter.setPen(color);
     for (auto column = first; column != columns.end(); ++column) {
-        const int x = origin_x + static_cast<int>(layout.text.x_of(*column));
+        const int x = x_of(*column);
         if (x >= viewport()->width()) {
             break;
         }
-        const QChar mark = line[*column] == u'\t' ? QChar(0x2192) : QChar(0xB7);
+        const QChar mark = units[*column] == u'\t' ? QChar(0x2192) : QChar(0xB7);
         painter.drawText(QRect(x, y, char_width_, line_height_), Qt::AlignCenter, QString(mark));
     }
 }
@@ -1180,12 +1366,13 @@ void EditorView::paintEvent(QPaintEvent*) {
         return;
     }
 
+    sync_rows();
     const core::Text& text = document_->text();
     const auto& selections = document_->selections().all();
     const int scroll_y = verticalScrollBar()->value();
     const std::size_t first = static_cast<std::size_t>(scroll_y / line_height_);
     const std::size_t last =
-        std::min(text.line_count(),
+        std::min(row_count(),
                  static_cast<std::size_t>((scroll_y + viewport()->height()) / line_height_) + 1);
     const std::size_t active_line = text.position_at(document_->selections().primary().active).line;
     const int origin_x = text_origin_x();
@@ -1195,21 +1382,28 @@ void EditorView::paintEvent(QPaintEvent*) {
     int widest = max_line_width_;
 
     painter.setFont(font());
-    for (std::size_t line = first; line < last; ++line) {
-        const int y = static_cast<int>(line) * line_height_ - scroll_y;
-        const QRect row(0, y, viewport()->width(), line_height_);
+    for (std::size_t row = first; row < last; ++row) {
+        const std::size_t line = line_of_row(row);
+        const int y = static_cast<int>(row) * line_height_ - scroll_y;
         if (line == active_line && selections.size() == 1 && selections[0].empty()) {
-            painter.fillRect(row, colors.line_highlight);
+            painter.fillRect(QRect(0, y, viewport()->width(), line_height_), colors.line_highlight);
         }
 
         const auto layout = layout_line(line);
+        const std::size_t part = row - first_row(line);
+        ChunkedLine& chunks = layout->text.row(part);
+        const std::size_t begin = layout->text.begin(part);
+        const qreal indent = layout->text.left(part);
+        const qreal left = origin_x + indent;
         const std::size_t line_begin = text.line_start(line);
         const std::size_t line_end = text.line_end(line);
         const std::size_t line_units = text.utf16_offset(line_begin);
-        // The part of the line that is on screen, which is all that formats are made for.
-        const qreal from_x = -origin_x;
-        const qreal to_x = viewport()->width() - origin_x;
-        const auto shown = layout->text.columns_between(from_x, to_x);
+        // The part of the row that is on screen, which is all that formats are made for.
+        const qreal from_x = -left;
+        const qreal to_x = viewport()->width() - left;
+        const auto in_row = chunks.columns_between(from_x, to_x);
+        const std::pair<std::size_t, std::size_t> shown{begin + in_row.first,
+                                                        begin + in_row.second};
         const std::size_t shown_begin = text.offset_at({line, shown.first});
         const std::size_t shown_end = text.offset_at({line, shown.second});
 
@@ -1256,16 +1450,19 @@ void EditorView::paintEvent(QPaintEvent*) {
                 formats.push_back({start_column, end_column - start_column, format});
             }
             // A selection that continues past the line break shows a small block after the text.
-            if (selection.start() <= line_end && selection.end() > line_end &&
-                line + 1 < text.line_count()) {
-                const int x = origin_x + static_cast<int>(layout->text.width());
+            if (part + 1 == layout->text.row_count() && selection.start() <= line_end &&
+                selection.end() > line_end && line + 1 < text.line_count()) {
+                const int x = static_cast<int>(left + chunks.width());
                 painter.fillRect(QRect(x, y, char_width_ / 2 + 2, line_height_),
                                  selection_background);
             }
         }
 
+        for (QTextLayout::FormatRange& format : formats) {
+            format.start -= static_cast<int>(begin);
+        }
         painter.setPen(colors.foreground);
-        layout->text.draw(painter, QPointF(origin_x, y), formats, from_x, to_x);
+        chunks.draw(painter, QPointF(left, y), formats, from_x, to_x);
         if (render_whitespace_ != core::RenderWhitespace::none) {
             std::vector<core::ColumnRange> selected;
             if (render_whitespace_ == core::RenderWhitespace::selection) {
@@ -1278,9 +1475,9 @@ void EditorView::paintEvent(QPaintEvent*) {
                     }
                 }
             }
-            draw_whitespace(painter, *layout, selected, shown, origin_x, y, colors.whitespace);
+            draw_whitespace(painter, *layout, part, selected, shown, left, y, colors.whitespace);
         }
-        widest = std::max(widest, static_cast<int>(layout->text.width()) + char_width_);
+        widest = std::max(widest, scroll_width(indent + chunks.width()));
 
         if (caret_visible_ && hasFocus()) {
             for (const core::Selection& selection : selections) {
@@ -1289,11 +1486,12 @@ void EditorView::paintEvent(QPaintEvent*) {
                 }
                 const std::size_t column = text.utf16_offset(selection.active) - line_units;
                 // A caret off screen would only have the part it is in laid out for nothing.
-                if (column < shown.first || column > shown.second) {
+                if (layout->text.row_of(column) != part || column < shown.first ||
+                    column > shown.second) {
                     continue;
                 }
-                const int x = origin_x + static_cast<int>(layout->text.x_of(column));
-                painter.fillRect(QRect(x, y, 2, line_height_), colors.cursor);
+                const int x = static_cast<int>(left + chunks.x_of(column - begin));
+                painter.fillRect(QRect(x, y, caret_width, line_height_), colors.cursor);
                 if (!preedit_.isEmpty() &&
                     selection.active == document_->selections().primary().active) {
                     QFont underlined = font();
@@ -1309,8 +1507,12 @@ void EditorView::paintEvent(QPaintEvent*) {
     // The gutter covers the horizontally scrolled text and carries the line numbers.
     const int gutter = gutter_width();
     painter.fillRect(QRect(0, 0, gutter, viewport()->height()), colors.gutter_background);
-    for (std::size_t line = first; line < last; ++line) {
-        const int y = static_cast<int>(line) * line_height_ - scroll_y;
+    for (std::size_t row = first; row < last; ++row) {
+        const std::size_t line = line_of_row(row);
+        if (row != first_row(line)) {
+            continue;
+        }
+        const int y = static_cast<int>(row) * line_height_ - scroll_y;
         painter.setPen(line == active_line ? colors.line_number_active : colors.line_number);
         painter.drawText(QRect(0, y, gutter - gutter_padding_, line_height_),
                          Qt::AlignRight | Qt::AlignVCenter, QString::number(line + 1));

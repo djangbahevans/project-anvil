@@ -19,6 +19,9 @@ struct WrapOptions {
 struct LineBreaks {
     // The byte offsets at which each row after the first begins.
     std::vector<std::size_t> starts;
+    // The column of the line, without any indent, at each of those offsets: tab stops are counted
+    // from the start of the line on every row.
+    std::vector<double> columns;
     // The columns by which the rows after the first are indented; 0 when there is one row.
     std::size_t indent = 0;
 

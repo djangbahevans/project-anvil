@@ -1,5 +1,6 @@
 #include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
+#include "anvil/ui/line_layout.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -15,6 +16,7 @@
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QSignalSpy>
+#include <QTest>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -25,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <set>
 
 using namespace anvil;
 using anvil::ui::EditorView;
@@ -2221,4 +2224,522 @@ TEST_F(SyntaxHighlightingTest, NewSpansKeepTheTextOfALongLineInPlace) {
     view_.refresh_highlighting();
     painted();
     EXPECT_EQ(view_.cursor_rect(offset), before);
+}
+
+namespace {
+
+class WrapTest : public LayoutCacheTest {
+protected:
+    using Wrapping = EditorView::Wrapping;
+
+    // Words of four letters, each followed by a space: "w000 w001 ...".
+    static std::string words(int count) {
+        std::string line;
+        for (int word = 0; word < count; ++word) {
+            const std::string number = std::to_string(1000 + word % 1000);
+            line += "w" + number.substr(1) + " ";
+        }
+        return line;
+    }
+    static std::string long_lines(int count) {
+        std::string text;
+        for (int line = 0; line < count; ++line) {
+            text += std::to_string(line) + " " + words(30) + "\n";
+        }
+        return text;
+    }
+
+    void open_wrapped(const std::string& text, std::size_t column = 20) {
+        open(text);
+        view_.set_wrapping(Wrapping::column, column);
+        QApplication::processEvents();
+    }
+    // The rows that the view should be showing the document in.
+    std::size_t expected_rows() const {
+        std::size_t rows = 0;
+        for (std::size_t line = 0; line < document_->text().line_count(); ++line) {
+            rows += core::count_rows(document_->text().line(line), view_.rows()->options());
+        }
+        return rows;
+    }
+    // The row of the viewport that the caret of `offset` is on.
+    int row_of(std::size_t offset) {
+        return view_.cursor_rect(offset).top() / view_.line_height();
+    }
+    int left_of(std::size_t offset) {
+        return view_.cursor_rect(offset).left();
+    }
+    double advance() const {
+        return QFontMetricsF(view_.font()).horizontalAdvance(QLatin1Char('M'));
+    }
+    int fitting_columns() {
+        const int gutter = left_of(0) - view_.text_padding() + view_.horizontalScrollBar()->value();
+        const int width = view_.viewport()->width() - gutter - 2 * view_.text_padding();
+        return static_cast<int>((width - 2) / advance());
+    }
+    // The rows of the viewport in which the two images differ.
+    std::set<int> changed_rows(const QImage& before, const QImage& after) const {
+        std::set<int> rows;
+        for (int y = 0; y < before.height(); ++y) {
+            for (int x = 0; x < before.width(); ++x) {
+                if (before.pixel(x, y) != after.pixel(x, y)) {
+                    rows.insert(y / view_.line_height());
+                    break;
+                }
+            }
+        }
+        return rows;
+    }
+    void double_click(const QPoint& point) {
+        mouse(QEvent::MouseButtonDblClick, point);
+        mouse(QEvent::MouseButtonRelease, point);
+    }
+};
+
+} // namespace
+
+TEST_F(WrapTest, ALongLineIsShownAsTheRowsOfTheRowMap) {
+    open_wrapped(words(12) + "\nlast");
+    ASSERT_NE(view_.rows(), nullptr);
+    EXPECT_EQ(view_.rows()->row_count(), 4U); // three of four words each, and one
+    // Every row starts at the left edge of the text, one line height below the one before.
+    for (const std::size_t offset : {0U, 20U, 40U}) {
+        EXPECT_EQ(left_of(offset), left_of(0)) << offset;
+        EXPECT_EQ(row_of(offset), static_cast<int>(offset / 20)) << offset;
+    }
+    EXPECT_EQ(row_of(19), 0);
+    EXPECT_GT(left_of(19), left_of(0));
+    EXPECT_EQ(row_of(61), 3) << "the line after the wrapped one";
+}
+
+TEST_F(WrapTest, TheWidthOfTheViewIsTheWidthOfTheRows) {
+    open(std::string(500, 'a'));
+    view_.set_wrapping(Wrapping::view);
+    const int fits = fitting_columns();
+    ASSERT_GT(fits, 40);
+    EXPECT_EQ(view_.rows()->options().column, static_cast<std::size_t>(fits));
+    const auto last_of_first_row = static_cast<std::size_t>(fits);
+    EXPECT_EQ(row_of(last_of_first_row), 1);
+    // The caret after the last character of a full row is still in sight.
+    view_.select_range(core::Selection::caret(500));
+    EXPECT_LE(view_.cursor_rect(500).right(), view_.viewport()->width());
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+
+    view_.resize(400, 320);
+    QApplication::processEvents();
+    EXPECT_EQ(view_.rows()->options().column, static_cast<std::size_t>(fitting_columns()));
+    EXPECT_LT(fitting_columns(), fits);
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+}
+
+TEST_F(WrapTest, AColumnAndTheSmallerOfAColumnAndTheView) {
+    open(std::string(500, 'a'));
+    view_.set_wrapping(Wrapping::view);
+    const auto fits = static_cast<std::size_t>(fitting_columns());
+    view_.set_wrapping(Wrapping::bounded, 30);
+    EXPECT_EQ(view_.rows()->options().column, 30U);
+    view_.set_wrapping(Wrapping::bounded, 3000);
+    EXPECT_EQ(view_.rows()->options().column, fits);
+    view_.set_wrapping(Wrapping::column, 3000);
+    EXPECT_EQ(view_.rows()->options().column, 3000U);
+}
+
+TEST_F(WrapTest, RowsWiderThanTheViewCanBeScrolledTo) {
+    open_wrapped(std::string(500, 'a'), 200);
+    paint();
+    EXPECT_GT(view_.horizontalScrollBar()->maximum(), 0);
+    view_.select_range(core::Selection::caret(199));
+    EXPECT_GT(view_.horizontalScrollBar()->value(), 0);
+    view_.set_wrapping(Wrapping::column, 20);
+    paint();
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+    EXPECT_EQ(view_.horizontalScrollBar()->value(), 0);
+}
+
+TEST_F(WrapTest, TheVerticalScrollRangeCoversEveryRow) {
+    open_wrapped(long_lines(40));
+    const int rows = static_cast<int>(expected_rows());
+    ASSERT_GT(rows, 200);
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(),
+              rows * view_.line_height() - view_.viewport()->height() + view_.line_height());
+    EXPECT_EQ(view_.verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOn);
+}
+
+TEST_F(WrapTest, TheRowsAfterTheFirstAreIndentedLikeTheLine) {
+    open_wrapped("      " + words(12));
+    const std::size_t second = view_.rows()->row(document_->text(), 1).begin;
+    EXPECT_EQ(row_of(second), 1);
+    EXPECT_EQ(left_of(second), left_of(6));
+    EXPECT_GT(left_of(second), left_of(0));
+    // A click on the indent goes to the start of the row.
+    const QPoint indent(left_of(0) + 1, view_.line_height() * 3 / 2);
+    EXPECT_EQ(view_.offset_at(indent), second);
+}
+
+TEST_F(WrapTest, TabStopsOnARowAreThoseOfTheLine) {
+    // The second row begins at column 9 of the line, one column past a tab stop.
+    open_wrapped("abcdefgh ij\tk", 10);
+    ASSERT_EQ(row_of(9), 1);
+    // The tab ends three columns into the row, where the stop of the line is.
+    EXPECT_EQ(left_of(12) - left_of(9), 3 * view_.char_width());
+}
+
+TEST_F(WrapTest, ClicksActOnTheRowUnderThePointer) {
+    open_wrapped(words(12));
+    click(27);
+    EXPECT_EQ(primary(), core::Selection::caret(27));
+    // Past the end of a row that goes on, the caret stays on the row.
+    const QPoint past(view_.viewport()->width() - 5, view_.line_height() / 2);
+    EXPECT_EQ(view_.offset_at(past), 19U);
+    // Past the end of the last row, it goes to the end of the line.
+    EXPECT_EQ(view_.offset_at(QPoint(past.x(), 2 * view_.line_height() + 3)), 60U);
+
+    double_click(view_.cursor_rect(26).center());
+    EXPECT_EQ(primary(), (core::Selection{25, 29}));
+
+    // Past the triple click's time, so that the drag starts afresh.
+    QTest::qWait(QApplication::doubleClickInterval() + 20);
+    mouse(QEvent::MouseButtonPress, view_.cursor_rect(7).center());
+    mouse(QEvent::MouseMove, view_.cursor_rect(47).center());
+    mouse(QEvent::MouseButtonRelease, view_.cursor_rect(47).center());
+    EXPECT_EQ(primary(), (core::Selection{7, 47}));
+}
+
+TEST_F(WrapTest, AColumnSelectionTakesTheRowsOfTheRectangle) {
+    open_wrapped(words(12));
+    settings_.column_selection = true;
+    view_.apply_settings(settings_);
+    mouse(QEvent::MouseButtonPress, view_.cursor_rect(1).center());
+    mouse(QEvent::MouseMove, view_.cursor_rect(43).center());
+    mouse(QEvent::MouseButtonRelease, view_.cursor_rect(43).center());
+    EXPECT_EQ(document_->selections().all(),
+              (std::vector<core::Selection>{{1, 3}, {21, 23}, {41, 43}}));
+}
+
+TEST_F(WrapTest, ShowingTheCaretScrollsToItsRow) {
+    open_wrapped(words(600));
+    ASSERT_EQ(view_.verticalScrollBar()->value(), 0);
+    view_.select_range(core::Selection::caret(2500));
+    EXPECT_GT(view_.verticalScrollBar()->value(), 0);
+    const QRect caret = view_.cursor_rect(2500);
+    EXPECT_GE(caret.top(), 0);
+    EXPECT_LE(caret.bottom(), view_.viewport()->height());
+}
+
+TEST_F(WrapTest, LineNumbersShowOnTheFirstRowOfALine) {
+    open_wrapped(words(12) + "\nlast");
+    const QImage image = paint();
+    const int gutter = left_of(0) - view_.text_padding();
+    const auto marks = [&](int row) {
+        const QRgb background = image.pixel(1, row * view_.line_height() + 1);
+        int count = 0;
+        for (int y = row * view_.line_height(); y < (row + 1) * view_.line_height(); ++y) {
+            for (int x = 0; x < gutter; ++x) {
+                count += image.pixel(x, y) != background ? 1 : 0;
+            }
+        }
+        return count;
+    };
+    EXPECT_GT(marks(0), 0);
+    EXPECT_EQ(marks(1), 0);
+    EXPECT_EQ(marks(2), 0);
+    EXPECT_GT(marks(3), 0);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/editor_view_wrapped_numbers.png");
+    }
+}
+
+TEST_F(WrapTest, TheCurrentLineHighlightCoversEveryRowOfTheLine) {
+    open_wrapped(words(8) + "\nlast");
+    view_.select_range(core::Selection::caret(25));
+    const QImage image = paint();
+    const auto right_edge = [&](int row) {
+        return image.pixel(view_.viewport()->width() - 3, row * view_.line_height() + 2);
+    };
+    EXPECT_EQ(right_edge(0), right_edge(1));
+    EXPECT_NE(right_edge(1), right_edge(2));
+}
+
+TEST_F(WrapTest, SelectionsHighlightsAndTheCompositionShowOnTheirRows) {
+    open_wrapped(words(16));
+    // A caret in the last row, so that the marks are the only differences.
+    view_.select_range(core::Selection::caret(79));
+    paint();
+    const QImage plain = paint();
+
+    view_.set_highlights({{22, 24}});
+    EXPECT_EQ(changed_rows(plain, paint()), (std::set<int>{1}));
+    view_.set_highlights({});
+
+    // Two carets in both pictures, as a second selection takes away the current line highlight.
+    set_selections({core::Selection::caret(0), core::Selection::caret(79)});
+    const QImage carets = paint();
+    set_selections(
+        {core::Selection::caret(0), core::Selection{27, 44}, core::Selection::caret(79)});
+    // The background of a selection can reach a pixel into the row below.
+    const std::set<int> selected = changed_rows(carets, paint());
+    EXPECT_TRUE(selected.contains(1));
+    EXPECT_TRUE(selected.contains(2));
+    EXPECT_FALSE(selected.contains(0));
+
+    view_.select_range(core::Selection::caret(45));
+    const QImage before_composing = paint();
+    QInputMethodEvent composing(QStringLiteral("xyz"), {});
+    QApplication::sendEvent(&view_, &composing);
+    EXPECT_EQ(changed_rows(before_composing, paint()), (std::set<int>{2}));
+}
+
+TEST_F(WrapTest, WhitespaceMarksAndControlCharactersShowOnTheRowsAfterTheFirst) {
+    const std::string line = words(4) + "ab  cd \x01"
+                                        " end";
+    settings_.render_whitespace = core::RenderWhitespace::none;
+    settings_.render_control_characters = false;
+    view_.apply_settings(settings_);
+    open_wrapped(line);
+    view_.select_range(core::Selection::caret(0));
+    const QImage plain = paint();
+    settings_.render_whitespace = core::RenderWhitespace::all;
+    view_.apply_settings(settings_);
+    EXPECT_TRUE(changed_rows(plain, paint()).contains(1));
+    settings_.render_whitespace = core::RenderWhitespace::none;
+    settings_.render_control_characters = true;
+    view_.apply_settings(settings_);
+    // The symbol of a control character can be taller than the line, by a pixel of the row below.
+    const std::set<int> controls = changed_rows(plain, paint());
+    EXPECT_TRUE(controls.contains(1));
+    EXPECT_FALSE(controls.contains(0));
+}
+
+TEST_F(WrapTest, TypingComputesTheRowsOfTheLineTypedOn) {
+    open_wrapped(long_lines(2000));
+    view_.select_range(core::Selection::caret(offset_of_line(1000, 3)));
+    paint();
+    const std::size_t computed = view_.rows()->lines_computed();
+    const std::size_t laid_out = built_by([&] {
+        type("typed ");
+        paint();
+    });
+    EXPECT_EQ(view_.rows()->lines_computed(), computed + 6);
+    // The rows of the line typed on, at most, are laid out again for each keystroke.
+    EXPECT_LE(laid_out, 6 * (view_.rows()->rows_of(1000) + 1));
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+}
+
+TEST_F(WrapTest, AnEditFromElsewhereComputesTheRowsOfTheLinesItChanged) {
+    open_wrapped(long_lines(200));
+    const std::size_t computed = view_.rows()->lines_computed();
+    const core::Edit edit{offset_of_line(100), offset_of_line(100), words(10)};
+    const core::DocumentChange change = document_->apply_edits(std::span(&edit, 1)).value();
+    view_.document_changed_elsewhere(change);
+    EXPECT_EQ(view_.rows()->lines_computed(), computed + 1);
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+    const QImage updated = paint();
+    EXPECT_EQ(updated, painted_afresh());
+
+    // Without the change, the rows are computed anew and are as right.
+    ASSERT_TRUE(document_->apply_edits(std::span(&edit, 1)).has_value());
+    view_.document_changed_elsewhere();
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+}
+
+TEST_F(WrapTest, MoreDigitsInTheLineNumbersWrapTheLinesAgain) {
+    std::string text;
+    for (int line = 0; line < 998; ++line) {
+        text += "x\n";
+    }
+    open(text);
+    view_.set_wrapping(Wrapping::view);
+    const std::size_t column = view_.rows()->options().column;
+    view_.select_range(core::Selection::caret(0));
+    key(Qt::Key_Return);
+    ASSERT_EQ(document_->text().line_count(), 1000U);
+    EXPECT_LT(view_.rows()->options().column, column);
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+}
+
+TEST_F(WrapTest, TheTextAtTheTopStaysThereWhenTheRowsChange) {
+    open(long_lines(100));
+    view_.set_wrapping(Wrapping::view);
+    const std::size_t line = offset_of_line(50);
+    view_.verticalScrollBar()->setValue(view_.cursor_rect(line).top());
+    ASSERT_EQ(view_.cursor_rect(line).top(), 0);
+    view_.resize(420, 320);
+    QApplication::processEvents();
+    EXPECT_EQ(view_.cursor_rect(line).top(), 0) << "a narrower view";
+    view_.set_wrapping(Wrapping::column, 20);
+    EXPECT_EQ(view_.cursor_rect(line).top(), 0) << "a column";
+    settings_.font_size = 20;
+    view_.apply_settings(settings_);
+    EXPECT_EQ(view_.cursor_rect(line).top(), 0) << "a larger font";
+    settings_.tab_size = 8;
+    view_.apply_settings(settings_);
+    EXPECT_EQ(view_.cursor_rect(line).top(), 0) << "a tab size";
+    view_.set_wrapping(Wrapping::off);
+    EXPECT_EQ(view_.cursor_rect(line).top(), 0) << "no wrapping";
+}
+
+TEST_F(WrapTest, TurningWrappingOffShowsTheLinesAsBefore) {
+    open(long_lines(100));
+    view_.select_range(core::Selection::caret(0));
+    const QImage plain = paint();
+    EXPECT_EQ(view_.rows(), nullptr);
+    view_.set_wrapping(Wrapping::view);
+    EXPECT_NE(paint(), plain);
+    view_.set_wrapping(Wrapping::off);
+    QApplication::processEvents();
+    EXPECT_EQ(view_.rows(), nullptr);
+    EXPECT_EQ(view_.verticalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
+    EXPECT_EQ(paint(), plain);
+}
+
+TEST_F(WrapTest, AnotherDocumentGetsRowsOfItsOwn) {
+    open_wrapped(words(12));
+    ASSERT_EQ(view_.rows()->row_count(), 3U);
+    // A second document at the same version as the first.
+    document_ = make_document("short\nlines");
+    view_.set_document(document_);
+    EXPECT_EQ(view_.rows()->row_count(), 2U);
+}
+
+TEST_F(WrapTest, APaintOfAVeryLongLineLaysOutTheRowsInView) {
+    open_wrapped(words(200000), 40);
+    paint();
+    view_.verticalScrollBar()->setValue(view_.verticalScrollBar()->maximum() / 2);
+    EXPECT_LE(built_by([&] { paint(); }), lines_in_view() + 2);
+    EXPECT_EQ(built_by([&] { paint(); }), 0U);
+}
+
+TEST_F(WrapTest, ScreenshotOfWrappedCode) {
+    open("// Wrapped lines keep the indent of their first row, and break after punctuation or "
+         "spaces rather than inside a word.\n"
+         "int main(int argc, char** argv) {\n"
+         "    const auto message = format_the_greeting(argv[0], \"hello there\", argc > 1 ? "
+         "argv[1] : \"world\", options);\n"
+         "\tif (message.empty()) return report_a_failure_to_the_user(message, errno);\t// tabs\n"
+         "    https://example.com/a/very/long/path/that/has/no/spaces?query=1&other=2&third=3\n"
+         "}\n");
+    view_.set_wrapping(Wrapping::view);
+    set_selections({core::Selection{150, 235}});
+    const QImage image = paint();
+    EXPECT_EQ(view_.rows()->row_count(), expected_rows());
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/editor_view_wrapped_code.png");
+    }
+}
+
+TEST_F(WrapTest, ARowInTheMiddleOfALineStaysAtTheTopWhenTheRowsChange) {
+    open_wrapped(long_lines(30));
+    // The fifth row of a line.
+    const std::size_t offset = offset_of_line(10, view_.rows()->row(document_->text(), 0).end);
+    const std::size_t inside = offset_of_line(10, 83);
+    view_.verticalScrollBar()->setValue(view_.cursor_rect(inside).top());
+    ASSERT_EQ(view_.cursor_rect(inside).top(), 0);
+    ASSERT_NE(view_.cursor_rect(offset).top(), 0);
+    settings_.font_size = 18;
+    view_.apply_settings(settings_);
+    EXPECT_EQ(view_.cursor_rect(inside).top(), 0) << "a larger font";
+    view_.set_wrapping(Wrapping::column, 30);
+    EXPECT_EQ(view_.cursor_rect(inside).top(), 0) << "wider rows";
+}
+
+TEST_F(WrapTest, ARowThatFillsTheViewAsksForNoHorizontalScrolling) {
+    open(std::string(500, 'a'));
+    view_.set_wrapping(Wrapping::view);
+    // A width that leaves almost nothing after a full row.
+    for (int width = 640; width > 500; --width) {
+        view_.resize(width, 320);
+        QApplication::processEvents();
+        const int gutter = left_of(0) - view_.text_padding();
+        const int room = view_.viewport()->width() - gutter - 2 * view_.text_padding();
+        if (room - fitting_columns() * advance() < 4) {
+            break;
+        }
+    }
+    view_.select_range(core::Selection::caret(0));
+    paint();
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+}
+
+TEST_F(WrapTest, ACaretWhereALineBreaksIsDrawnOnTheLaterRowAlone) {
+    open_wrapped(words(16));
+    set_selections({core::Selection::caret(0), core::Selection::caret(79)});
+    const QImage without = paint();
+    set_selections(
+        {core::Selection::caret(0), core::Selection::caret(40), core::Selection::caret(79)});
+    EXPECT_EQ(changed_rows(without, paint()), (std::set<int>{2}));
+}
+
+TEST_F(WrapTest, WhitespaceMarksStandOnTheirSpacesOnALaterRow) {
+    settings_.render_whitespace = core::RenderWhitespace::none;
+    view_.apply_settings(settings_);
+    // Two spaces at columns 2 and 3 of the second row.
+    open_wrapped(words(4) + "ab  cdefghij");
+    const QImage plain = paint();
+    settings_.render_whitespace = core::RenderWhitespace::boundary;
+    view_.apply_settings(settings_);
+    const QImage marked = paint();
+    const int lh = view_.line_height();
+    const int from = left_of(22);
+    const int to = left_of(24);
+    int inside = 0;
+    for (int y = lh; y < 2 * lh; ++y) {
+        for (int x = 0; x < plain.width(); ++x) {
+            if (plain.pixel(x, y) != marked.pixel(x, y)) {
+                EXPECT_GE(x, from);
+                EXPECT_LE(x, to);
+                ++inside;
+            }
+        }
+    }
+    EXPECT_GT(inside, 0);
+}
+
+TEST_F(WrapTest, EveryRowBeginsAtTheColumnThatTheRowMapGives) {
+    // Characters of one to four bytes, one and two UTF-16 units.
+    std::string line;
+    for (int i = 0; i < 12; ++i) {
+        line += "\xF0\x9F\x98\x80\xF0\x9F\x98\x80 \xC3\xA9\xC3\xA9 \xE4\xB8\xAD ab ";
+    }
+    open_wrapped(line, 9);
+    const std::size_t rows = view_.rows()->row_count();
+    ASSERT_GT(rows, 10U);
+    for (std::size_t row = 0; row < 10; ++row) {
+        const std::size_t offset = view_.rows()->row(document_->text(), row).begin;
+        EXPECT_EQ(row_of(offset), static_cast<int>(row)) << row;
+        EXPECT_EQ(left_of(offset), left_of(0)) << row;
+    }
+}
+
+TEST_F(WrapTest, TheRowsOfALongLineFarFromViewAreLaidOutAgain) {
+    open_wrapped(words(4000), 20);
+    paint();
+    const int page = view_.viewport()->height();
+    const int far = static_cast<int>(ui::LineLayout::kept_rows) * view_.line_height() + 2 * page;
+    for (int value = 0; value <= far; value += page) {
+        view_.verticalScrollBar()->setValue(value);
+        paint();
+    }
+    view_.verticalScrollBar()->setValue(page);
+    EXPECT_GT(built_by([&] { paint(); }), 0U);
+}
+
+TEST_F(SyntaxHighlightingTest, ARefreshPaintsEveryRowOfAWrappedLine) {
+    open("aaaa aaaa if aaaa\nlast");
+    view_.set_wrapping(EditorView::Wrapping::column, 5);
+    highlight({{"if", "string.fake"}});
+    painted();
+    const std::size_t rows = view_.rows()->rows_of(0);
+    ASSERT_GT(rows, 2U);
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+
+    highlighter_->set_scopes({{"if", "invalid.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+
+    EXPECT_EQ(counter.painted.boundingRect().top(), 0);
+    EXPECT_EQ(counter.painted.boundingRect().height(),
+              static_cast<int>(rows) * view_.line_height());
 }

@@ -27,6 +27,7 @@ public:
         QFont font;
         qreal tab_stop = 0; // the distance between tab stops, from the start of the line
         qreal advance = 0;  // the expected width of a code unit
+        qreal origin = 0;   // how far past a tab stop the line begins
     };
 
     static constexpr std::size_t chunk_length = 2048;

@@ -25,6 +25,7 @@ TEST(LineBreaks, AgreeWithVsCodeOnEveryRecordedLine) {
         const WrapOptions options{c.at("tabSize"), c.at("column"), c.at("fullWidth")};
         const LineBreaks breaks = break_line(line, options);
         ASSERT_EQ(breaks.starts, expected.starts);
+        ASSERT_EQ(breaks.columns, c.at("columns").get<std::vector<double>>());
         ASSERT_EQ(breaks.indent, expected.indent);
         ASSERT_EQ(count_rows(line, options), expected.starts.size() + 1);
         wrapped += expected.starts.empty() ? 0 : 1;

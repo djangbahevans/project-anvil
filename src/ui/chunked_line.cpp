@@ -57,7 +57,9 @@ void ChunkedLine::split(std::size_t length) {
         for (std::size_t column = chunk.begin; column < chunk.end; ++column) {
             if (units[column] == u'\t' && style_.tab_stop > 0) {
                 chunk.has_tab = true;
-                x = (std::floor(x / style_.tab_stop + 1e-6) + 1) * style_.tab_stop;
+                x = (std::floor((style_.origin + x) / style_.tab_stop + 1e-6) + 1) *
+                        style_.tab_stop -
+                    style_.origin;
             } else {
                 x += style_.advance;
             }
@@ -92,7 +94,7 @@ qreal ChunkedLine::phase_of(std::size_t index) {
     if (!chunks_[index].has_tab) {
         return 0;
     }
-    const qreal phase = std::fmod(start(index), style_.tab_stop);
+    const qreal phase = std::fmod(style_.origin + start(index), style_.tab_stop);
     // A start on a stop, give or take rounding, needs no stops of its own.
     return phase < 0.01 || style_.tab_stop - phase < 0.01 ? 0 : phase;
 }

@@ -131,8 +131,8 @@ bool surely_fits(std::string_view line, const WrapOptions& options) {
            static_cast<double>(options.column);
 }
 
-// Calls `emit` with the offset of each row after the first, and returns their indent. The
-// arithmetic follows VS Code's in its order, so that fractional widths round the same way.
+// Calls `emit` with the offset and column of each row after the first, and returns their indent.
+// The arithmetic follows VS Code's in its order, so that fractional widths round the same way.
 template <class Emit>
 std::size_t wrap(std::string_view line, const WrapOptions& options, const Emit& emit) {
     if (line.empty() || surely_fits(line, options)) {
@@ -165,7 +165,7 @@ std::size_t wrap(std::string_view line, const WrapOptions& options, const Emit& 
             }
             // A single character wider than the row stays on it.
             if (candidate > row_start) {
-                emit(candidate);
+                emit(candidate, candidate_column);
                 row_start = candidate;
                 breaking_column = candidate_column + wrapped_width;
                 candidate = 0;
@@ -181,15 +181,17 @@ std::size_t wrap(std::string_view line, const WrapOptions& options, const Emit& 
 
 LineBreaks break_line(std::string_view line, const WrapOptions& options) {
     LineBreaks breaks;
-    const std::size_t indent =
-        wrap(line, options, [&](std::size_t start) { breaks.starts.push_back(start); });
+    const std::size_t indent = wrap(line, options, [&](std::size_t start, double column) {
+        breaks.starts.push_back(start);
+        breaks.columns.push_back(column);
+    });
     breaks.indent = breaks.starts.empty() ? 0 : indent;
     return breaks;
 }
 
 std::size_t count_rows(std::string_view line, const WrapOptions& options) {
     std::size_t rows = 1;
-    wrap(line, options, [&](std::size_t) { ++rows; });
+    wrap(line, options, [&](std::size_t, double) { ++rows; });
     return rows;
 }
 

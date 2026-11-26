@@ -4,6 +4,7 @@
 #include "anvil/core/editing.hpp"
 #include "anvil/core/editor_settings.hpp"
 #include "anvil/core/highlighter.hpp"
+#include "anvil/core/row_map.hpp"
 #include "anvil/core/search.hpp"
 #include "anvil/core/whitespace.hpp"
 #include "anvil/ui/workbench_colors.hpp"
@@ -29,7 +30,8 @@ namespace anvil::ui {
 //
 // Only the visible lines are laid out, so documents of any size scroll smoothly, and the layouts
 // of the most recently used lines are kept until the line, the font or the highlighting changes. A
-// long line is laid out a part at a time (ChunkedLine).
+// long line is laid out a part at a time (ChunkedLine). With word wrap, a line takes the rows that
+// core::RowMap gives it, each laid out on its own (LineLayout).
 class EditorView : public QAbstractScrollArea {
     Q_OBJECT
 
@@ -51,6 +53,18 @@ public:
     // selection keeps its color when the theme sets the selection's background, since that color
     // may be translucent; otherwise it takes the palette's highlighted text color.
     void set_colors(const WorkbenchColors* colors);
+
+    // Where lines wrap: nowhere, at the width of the view, at a column, or at the smaller of the
+    // two.
+    enum class Wrapping { off, view, column, bounded };
+    // Wraps the lines, or stops wrapping them. The text at the top of the view stays there.
+    // `column` counts the widths of an ordinary character, for `column` and `bounded`.
+    void set_wrapping(Wrapping wrapping, std::size_t column = 80);
+    Wrapping wrapping() const {
+        return wrapping_;
+    }
+    // The rows of the wrapped document, or null while lines do not wrap or no document is shown.
+    const core::RowMap* rows() const;
 
     // Shows `document`, or nothing when null. The document is shared with its other users.
     void set_document(std::shared_ptr<core::Document> document);
@@ -113,8 +127,11 @@ public:
     // true when there are more.
     bool select_all_matches(const core::Search& search, std::size_t limit);
 
-    // Call after something other than this view changed the document or its selections.
+    // Call after something other than this view changed the document or its selections. With the
+    // change to the text, which must follow the version the view has seen, only the lines it
+    // touched are laid out and wrapped again.
     void document_changed_elsewhere();
+    void document_changed_elsewhere(const core::DocumentChange& change);
 
     // Makes `range` the only selection and scrolls to show it.
     void select_range(core::Selection range);
@@ -198,7 +215,12 @@ protected:
     bool focusNextPrevChild(bool next) override;
 
 private:
-    struct LineLayout;
+    struct ShownLine;
+    // A place in the text that stays put while the lines are wrapped differently.
+    struct TextPlace {
+        std::size_t line = 0;
+        std::size_t column = 0;
+    };
     // The point of the text, in the coordinates of `drag_origin_`, that the viewport point shows.
     QPoint text_point(const QPoint& viewport_point) const;
     // Selects the rectangle between `drag_origin_` and the pointer, one selection on each line,
@@ -213,14 +235,15 @@ private:
     // The format of each span of the highlighter on `line`, whose text has `size` UTF-16 units.
     QList<QTextLayout::FormatRange> syntax_formats(const core::TokenTheme& token_theme,
                                                    std::size_t line, qsizetype size) const;
-    void draw_whitespace(QPainter& painter, LineLayout& layout,
+    // `row` of the line, whose columns `shown` are on screen and whose text begins at `origin_x`.
+    void draw_whitespace(QPainter& painter, ShownLine& line, std::size_t row,
                          std::span<const core::ColumnRange> selected,
-                         std::pair<std::size_t, std::size_t> shown, int origin_x, int y,
+                         std::pair<std::size_t, std::size_t> shown, qreal origin_x, int y,
                          const QColor& color) const;
 
     // The layout of `line`, from the cache when it is there.
-    std::shared_ptr<LineLayout> layout_line(std::size_t line) const;
-    std::shared_ptr<LineLayout> build_layout(std::size_t line) const;
+    std::shared_ptr<ShownLine> layout_line(std::size_t line) const;
+    std::shared_ptr<ShownLine> build_layout(std::size_t line) const;
     // Drops every cached layout.
     void clear_layouts();
     // Brings the cache to the text after `change`: layouts of the replaced lines are dropped and
@@ -230,6 +253,30 @@ private:
     std::size_t layout_capacity() const;
     int gutter_width() const;
     int text_origin_x() const;
+    // The width of the part of the viewport that shows text.
+    int text_width() const;
+    // The horizontal extent that a row ending at `end` asks the scroll bar for.
+    int scroll_width(qreal end) const;
+
+    // What the rows are made with now, or nothing when lines do not wrap.
+    std::optional<core::WrapOptions> wrap_options() const;
+    // Makes the rows if they are not those of the document's text.
+    void sync_rows() const;
+    // Brings the rows to the text after `change`, when they are those of the text before it.
+    void apply_rows(const core::DocumentChange& change);
+    // Wraps again if what the rows are made with has changed.
+    void rewrap();
+    // Makes the layouts and rows anew and scrolls `place` to `pixels` above the top.
+    void reflow(const TextPlace& place, int pixels);
+    TextPlace top_place() const;
+    // The row that shows `place`.
+    std::size_t row_of_place(const TextPlace& place) const;
+    // The rows of the document, which are its lines when none wraps.
+    std::size_t row_count() const;
+    std::size_t first_row(std::size_t line) const;
+    std::size_t line_of_row(std::size_t row) const;
+    // The byte offset on row `row` nearest to `x`, counted from the left edge of the rows.
+    std::size_t offset_at_row(std::size_t row, qreal x) const;
     void apply(const core::EditOutcome& outcome);
     void move_by_page(bool down, bool extend);
     void update_metrics();
@@ -286,7 +333,7 @@ private:
     std::shared_ptr<const core::Highlighter> highlighter_;
     std::uint64_t painted_highlighter_version_ = 0;
     struct CachedLayout {
-        std::shared_ptr<LineLayout> layout;
+        std::shared_ptr<ShownLine> layout;
         std::uint64_t used = 0;
         // A stale layout of a long line is made again, and only passes its widths before column
         // `unchanged` to the new one.
@@ -299,6 +346,11 @@ private:
     mutable std::uint64_t layout_clock_ = 0;
     mutable std::size_t layouts_built_ = 0;
     std::optional<OccurrenceSession> occurrence_session_;
+    Wrapping wrapping_ = Wrapping::off;
+    std::size_t wrap_column_ = 80;
+    // The rows of the document at `rows_version_`, while lines wrap.
+    mutable std::optional<core::RowMap> rows_;
+    mutable std::uint64_t rows_version_ = 0;
 };
 
 } // namespace anvil::ui
