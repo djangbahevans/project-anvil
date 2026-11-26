@@ -6,6 +6,7 @@
 #include "anvil/ui/codicons.hpp"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QFile>
 #include <QFontInfo>
@@ -630,6 +631,21 @@ ExplorerActions default_explorer_actions() {
                 box.exec();
                 return box.clickedButton() == accept;
             },
+        .confirm_move =
+            [](QWidget* parent, const QString& message, const QString& detail) {
+                QMessageBox box(QMessageBox::Question, QString(), message, QMessageBox::NoButton,
+                                parent);
+                box.setInformativeText(detail);
+                QPushButton* accept =
+                    box.addButton(ExplorerView::tr("Move"), QMessageBox::AcceptRole);
+                box.addButton(QMessageBox::Cancel);
+                box.setDefaultButton(accept);
+                auto* again = new QCheckBox(ExplorerView::tr("Do not ask me again"));
+                box.setCheckBox(again);
+                box.exec();
+                return MoveAnswer{.move = box.clickedButton() == accept,
+                                  .do_not_ask_again = again->isChecked()};
+            },
     };
 }
 
@@ -979,9 +995,61 @@ ExplorerView::folder_to_drop_into(const std::vector<std::filesystem::path>& sour
     return moves_something ? std::optional(folder) : std::nullopt;
 }
 
+bool ExplorerView::can_move(const std::filesystem::path& source,
+                            const std::filesystem::path& directory) const {
+    if (source.parent_path() == directory || exthost::is_path_within(directory, source)) {
+        return false;
+    }
+    const std::filesystem::path destination = directory / source.filename();
+    return !platform::stat_path(destination) ||
+           (!exthost::is_path_within(source, destination) &&
+            !(unsaved_changes_ && unsaved_changes_(destination)));
+}
+
+bool ExplorerView::move_confirmed(const std::vector<std::filesystem::path>& sources,
+                                  const std::filesystem::path& directory) {
+    QStringList names;
+    for (const std::filesystem::path& source : sources) {
+        if (can_move(source, directory)) {
+            names.push_back(QString::fromStdString(file_name_of(source)));
+        }
+    }
+    if (names.isEmpty()) {
+        return true;
+    }
+    const QString folder = directory == *model_->folder()
+                               ? folder_name()
+                               : QString::fromStdString(file_name_of(directory));
+    QString message;
+    QString detail;
+    if (names.size() == 1) {
+        message = tr("Are you sure you want to move '%1' into '%2'?").arg(names.front(), folder);
+    } else {
+        message = tr("Are you sure you want to move the following %1 files into '%2'?")
+                      .arg(QString::number(names.size()), folder);
+        // As many names as VS Code lists.
+        constexpr qsizetype listed = 10;
+        detail = names.mid(0, listed).join(QLatin1Char('\n'));
+        if (const qsizetype more = names.size() - listed; more > 0) {
+            detail +=
+                QLatin1Char('\n') + (more == 1 ? tr("...1 additional file not shown")
+                                               : tr("...%1 additional files not shown").arg(more));
+        }
+    }
+    const MoveAnswer answer = actions_.confirm_move(this, message, detail);
+    if (answer.move && answer.do_not_ask_again) {
+        emit move_confirmation_turned_off();
+    }
+    return answer.move;
+}
+
 void ExplorerView::drop_items(const std::vector<std::filesystem::path>& sources,
                               const std::filesystem::path& directory, bool copy) {
     finish_editing();
+    if (!copy && confirm_drag_and_drop_ && actions_.confirm_move &&
+        !move_confirmed(sources, directory)) {
+        return;
+    }
     std::vector<std::filesystem::path> written;
     QString failure;
     const auto fail = [&failure](const QString& message) {

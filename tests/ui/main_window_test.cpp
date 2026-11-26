@@ -10007,6 +10007,10 @@ protected:
             questions_.push_back(message);
             return true;
         };
+        actions.confirm_move = [this](QWidget*, const QString& message, const QString&) {
+            move_questions_.push_back(message);
+            return move_answer_;
+        };
         explorer_actions_ = actions;
     }
 
@@ -10042,6 +10046,8 @@ protected:
 
     std::vector<std::filesystem::path> trashed_;
     std::vector<QString> questions_;
+    std::vector<QString> move_questions_;
+    ui::MoveAnswer move_answer_{.move = true};
 };
 
 TEST_F(ExplorerOperationsWindowTest, TheFileCommandsHaveVsCodesIdsAndTitles) {
@@ -10809,4 +10815,48 @@ TEST_F(ExpandedFoldersTest, ASavedValueThatIsNoListGivesACollapsedTree) {
     create_window();
     ASSERT_NE(explorer(), nullptr);
     EXPECT_TRUE(wait_expanded({}));
+}
+
+TEST_F(ExplorerDragWindowTest, TheSettingSaysWhetherADragAsksAndAppliesWhileTheWindowRuns) {
+    settings_file_ = write("settings.json", R"({"explorer.confirmDragAndDrop": false})");
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    drag(explorer, project() / "a.txt", project() / "src");
+    EXPECT_TRUE(std::filesystem::exists(project() / "src" / "a.txt"));
+    EXPECT_TRUE(move_questions_.empty());
+
+    window_->change_setting("explorer.confirmDragAndDrop", true);
+    ASSERT_TRUE(platform::write_file(project() / "b.txt", "beta").has_value());
+    ASSERT_TRUE(
+        wait_until([&] { return explorer->model()->index_of(project() / "b.txt").isValid(); }));
+    drag(explorer, project() / "b.txt", project() / "src");
+    EXPECT_EQ(move_questions_.size(), 1U);
+}
+
+TEST_F(ExplorerDragWindowTest, DoNotAskAgainIsWrittenToTheSettingsAndTheNextMoveDoesNotAsk) {
+    settings_file_ = write("settings.json", "{}");
+    auto* explorer = start();
+    if (!explorer) {
+        return;
+    }
+    ASSERT_TRUE(platform::write_file(project() / "b.txt", "beta").has_value());
+    ASSERT_TRUE(
+        wait_until([&] { return explorer->model()->index_of(project() / "b.txt").isValid(); }));
+
+    move_answer_ = {.move = false, .do_not_ask_again = true};
+    drag(explorer, project() / "a.txt", project() / "src");
+    EXPECT_TRUE(std::filesystem::exists(project() / "a.txt"));
+    EXPECT_EQ(*platform::read_file(settings_file_), "{}");
+
+    move_answer_ = {.move = true, .do_not_ask_again = true};
+    drag(explorer, project() / "a.txt", project() / "src");
+    EXPECT_TRUE(std::filesystem::exists(project() / "src" / "a.txt"));
+    EXPECT_NE(platform::read_file(settings_file_)->find("\"explorer.confirmDragAndDrop\": false"),
+              std::string::npos);
+
+    drag(explorer, project() / "b.txt", project() / "src");
+    EXPECT_TRUE(std::filesystem::exists(project() / "src" / "b.txt"));
+    EXPECT_EQ(move_questions_.size(), 2U);
 }

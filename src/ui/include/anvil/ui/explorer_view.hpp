@@ -28,8 +28,15 @@ class QTreeView;
 
 namespace anvil::ui {
 
-// What the explorer asks of the system when it deletes: the parts that tests replace, so that they
-// touch neither the user's trash nor a dialog.
+// What the user answered before a drag moves items.
+struct MoveAnswer {
+    bool move = false;
+    // The box "Do not ask me again" was checked.
+    bool do_not_ask_again = false;
+};
+
+// What the explorer asks of the system when it deletes or moves: the parts that tests replace, so
+// that they touch neither the user's trash nor a dialog.
 struct ExplorerActions {
     // Moves the path to the trash. False when that failed, or when there is no trash.
     std::function<bool(const std::filesystem::path&)> move_to_trash;
@@ -38,9 +45,12 @@ struct ExplorerActions {
     std::function<bool(QWidget* parent, const QString& message, const QString& detail,
                        const QString& button)>
         confirm;
+    // Asks whether a drag is to move the items; modal as `confirm` is.
+    std::function<MoveAnswer(QWidget* parent, const QString& message, const QString& detail)>
+        confirm_move;
 };
 
-// `QFile::moveToTrash` and a message box.
+// `QFile::moveToTrash` and message boxes.
 ExplorerActions default_explorer_actions();
 
 // The explorer: the workspace folder as a tree, with the folders first and the files below, and
@@ -65,7 +75,8 @@ ExplorerActions default_explorer_actions();
 //
 // Several rows can be selected. Dragging them onto a folder, or onto the space below the rows for
 // the folder of the workspace, moves them there, or copies them with Ctrl (Cmd on macOS) held; a
-// drop on a file is a drop on its folder. The folder under the pointer is highlighted and opens
+// move asks first, unless `set_confirm_drag_and_drop(false)`, and a drop on a file is a drop on its
+// folder. The folder under the pointer is highlighted and opens
 // after a short hover, and Escape ends the drag. A folder is not dropped onto itself or below, and
 // a name that is taken asks before it is replaced. Typing the first letters of a name selects the
 // next visible row that starts with them.
@@ -93,6 +104,10 @@ public:
     // Asks before a delete, as `explorer.confirmDelete` says; on by default.
     void set_confirm_delete(bool confirm) {
         confirm_delete_ = confirm;
+    }
+    // Asks before a drag moves items, as `explorer.confirmDragAndDrop` says; on by default.
+    void set_confirm_drag_and_drop(bool confirm) {
+        confirm_drag_and_drop_ = confirm;
     }
     // Whether `moveFileToTrash` has a trash to go to, as `files.enableTrash` says; on by default.
     // Without one it deletes for good.
@@ -173,6 +188,8 @@ signals:
     void renamed(const QString& from, const QString& to);
     // These items were deleted, or moved to the trash.
     void deleted(const std::vector<std::filesystem::path>& paths);
+    // The user checked "Do not ask me again" and moved: the window turns the setting off.
+    void move_confirmation_turned_off();
     // An operation failed: a sentence for the status bar.
     void operation_failed(const QString& message);
     // The user asked for the context menu at the position, in global coordinates. The selection is
@@ -236,7 +253,15 @@ private:
     std::optional<QModelIndex>
     folder_to_drop_into(const std::vector<std::filesystem::path>& sources,
                         const QModelIndex& under) const;
-    // Moves or copies the items into `directory`, asking before an item is replaced.
+    // Whether moving `source` into `directory` has something to do that is not refused.
+    bool can_move(const std::filesystem::path& source,
+                  const std::filesystem::path& directory) const;
+    // Asks whether the items are to be moved into `directory`; true without asking when there is
+    // nothing that could move.
+    bool move_confirmed(const std::vector<std::filesystem::path>& sources,
+                        const std::filesystem::path& directory);
+    // Moves or copies the items into `directory`, asking before a move and before an item is
+    // replaced.
     void drop_items(const std::vector<std::filesystem::path>& sources,
                     const std::filesystem::path& directory, bool copy);
 
@@ -251,6 +276,7 @@ private:
     // The folders to expand whose rows have not arrived.
     std::set<std::string> unreached_;
     bool confirm_delete_ = true;
+    bool confirm_drag_and_drop_ = true;
     bool trash_enabled_ = true;
     std::function<bool(const std::filesystem::path&)> unsaved_changes_;
     std::optional<Editing> editing_;
