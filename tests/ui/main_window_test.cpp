@@ -10959,9 +10959,14 @@ protected:
     void enter() {
         QTest::keyClick(pick()->filter_field(), Qt::Key_Return);
     }
-    // Empty for a document without a file.
+    // Empty for a document without a file, and for a group without a tab.
     std::filesystem::path shown_path() {
-        return window_->current_uri().file_path().value_or(std::filesystem::path());
+        const workbench::EditorGroup* group =
+            window_->editor_layout().group(window_->editor_layout().focused());
+        if (!group || !group->active) {
+            return {};
+        }
+        return group->tabs[*group->active].file_path().value_or(std::filesystem::path());
     }
 
     std::vector<std::string> files_ = {"a.txt", "b.txt", "src/main.cpp", "src/util.cpp"};
@@ -10984,7 +10989,7 @@ TEST_F(QuickOpenWindowTest, TheChosenFileOpensInTheFocusedGroup) {
     enter();
     EXPECT_FALSE(pick()->isVisible());
     EXPECT_EQ(window_->editor_layout().focused(), second);
-    EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "main.cpp");
+    ASSERT_EQ(shown_path(), window_->workspace()->folder / "src" / "main.cpp");
     EXPECT_EQ(current_text(), "src/main.cpp");
 }
 
@@ -11205,6 +11210,13 @@ TEST_F(QuickAccessTest, TheCommandPaletteWithItsArrowRemovedSearchesFilesAndRuns
 }
 
 TEST_F(QuickAccessTest, ChoosingAFileRunsNoCommandThatThePaletteListedBefore) {
+    // A command with an effect that lasts, run from the palette so that it is listed first.
+    keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    field()->setText(">toggle primary side bar visibility");
+    ASSERT_FALSE(rows().empty());
+    enter();
+    const bool sidebar = window_->workbench()->is_visible(ui::Part::sidebar);
+
     keys(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
     const int tabs = window_->tab_strip()->count();
     field()->setText("main");
@@ -11212,6 +11224,7 @@ TEST_F(QuickAccessTest, ChoosingAFileRunsNoCommandThatThePaletteListedBefore) {
     enter();
     EXPECT_EQ(shown_path(), window_->workspace()->folder / "src" / "main.cpp");
     EXPECT_EQ(window_->tab_strip()->count(), tabs + 1);
+    EXPECT_EQ(window_->workbench()->is_visible(ui::Part::sidebar), sidebar);
     EXPECT_FALSE(window_->go_to_line_pick()->isVisible());
     EXPECT_FALSE(pick()->isVisible());
 }
