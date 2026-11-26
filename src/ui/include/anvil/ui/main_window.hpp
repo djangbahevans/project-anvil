@@ -277,6 +277,10 @@ private:
     void run_bound_command(const std::string& command, const nlohmann::json* args);
     // The context keys that the `when` clauses of the menus read.
     core::ContextKeys menu_context() const;
+    EditorArea::Wrapping wrapping_of(const std::shared_ptr<core::Document>& document) const;
+    // View > Word Wrap: wraps the shown document when it does not wrap and the reverse, or removes
+    // the override that an earlier use made.
+    void toggle_word_wrap();
     // Fills `menu` with `items`. An item runs its command and shows its key binding, and is
     // disabled while no command has its id.
     void populate_menu(QMenu* menu, const std::vector<workbench::MenuItem>& items);
@@ -489,6 +493,8 @@ private:
     // one is closed in every group without asking.
     void document_renamed(const core::Uri& uri, const core::Uri& new_uri);
     void document_deleted(const core::Uri& uri);
+    // Drops a document that no tab shows any more, with what the window keeps about it.
+    void release_document(const core::Uri& uri);
     // Writes the document to `path`. A failure is shown in a dialog, or in the status bar when
     // `automatic`, which is for a save that nobody asked for.
     bool write_document(const core::Uri& uri, const std::filesystem::path& path,
@@ -589,6 +595,9 @@ private:
     workbench::EditorLayout layout_;
     std::unique_ptr<LayoutWatcher> watcher_;
     EditorArea* area_ = nullptr;
+    // The documents that View > Word Wrap overrides `editor.wordWrap` for, and whether each
+    // wraps. Nothing of it is saved.
+    std::map<std::shared_ptr<core::Document>, bool> wrap_overrides_;
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
     workbench::NavigationHistory history_;

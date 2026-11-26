@@ -195,6 +195,28 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             problems.emplace_back("editor.columnSelection must be true or false");
         }
     }
+    if (settings.contains("editor.wordWrap")) {
+        const auto mode = settings.get<std::string>("editor.wordWrap");
+        if (mode == "off") {
+            result.word_wrap = WordWrap::off;
+        } else if (mode == "on") {
+            result.word_wrap = WordWrap::on;
+        } else if (mode == "wordWrapColumn") {
+            result.word_wrap = WordWrap::word_wrap_column;
+        } else if (mode == "bounded") {
+            result.word_wrap = WordWrap::bounded;
+        } else {
+            problems.emplace_back(
+                R"(editor.wordWrap must be "off", "on", "wordWrapColumn" or "bounded")");
+        }
+    }
+    if (settings.contains("editor.wordWrapColumn")) {
+        if (const auto column = settings.get<double>("editor.wordWrapColumn")) {
+            result.word_wrap_column = clamped(*column, 1, max_word_wrap_column);
+        } else {
+            problems.emplace_back("editor.wordWrapColumn must be a number");
+        }
+    }
     if (settings.contains("editor.renderWhitespace")) {
         const auto mode = settings.get<std::string>("editor.renderWhitespace");
         if (mode == "none") {

@@ -68,6 +68,10 @@ public:
 
     // Shows `document`, or nothing when null. The document is shared with its other users.
     void set_document(std::shared_ptr<core::Document> document);
+    // Shows `document` wrapped as set_wrapping would have it, without first wrapping the document
+    // that is shown now that way.
+    void set_document(std::shared_ptr<core::Document> document, Wrapping wrapping,
+                      std::size_t column);
     const std::shared_ptr<core::Document>& document() const {
         return document_;
     }
@@ -260,6 +264,8 @@ private:
 
     // What the rows are made with now, or nothing when lines do not wrap.
     std::optional<core::WrapOptions> wrap_options() const;
+    // Sets how lines wrap, without making the rows.
+    void set_wrap_mode(Wrapping wrapping, std::size_t column);
     // Makes the rows if they are not those of the document's text.
     void sync_rows() const;
     // Brings the rows to the text after `change`, when they are those of the text before it.

@@ -2887,6 +2887,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.renderWhitespace.trailing",
                                           "editor.action.renderWhitespace.all",
                                           "editor.action.toggleRenderControlCharacter",
+                                          "editor.action.toggleWordWrap",
                                           "workbench.action.closeActiveEditor",
                                           "actions.find",
                                           "editor.action.nextMatchFindAction",
@@ -3118,6 +3119,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "editor.action.renderWhitespace.trailing",
         "editor.action.renderWhitespace.all",
         "editor.action.toggleRenderControlCharacter",
+        "editor.action.toggleWordWrap",
         "workbench.action.closeActiveEditor",
         "workbench.action.closeWindow",
         "workbench.action.quit",
@@ -3777,6 +3779,189 @@ TEST_F(MainWindowMenuBarTest, TheRenderWhitespaceCommandsSetTheSettingAndTheMenu
             EXPECT_EQ(item->isChecked(), other == name) << "after " << name << ", item " << other;
         }
     }
+}
+
+namespace {
+
+// The rows that the view shows its document in: its lines while nothing wraps.
+std::size_t rows_of(const anvil::ui::EditorView* view) {
+    return view->rows() ? view->rows()->row_count() : view->document()->text().line_count();
+}
+
+} // namespace
+
+class MainWindowWordWrapTest : public MainWindowMenuBarTest {
+protected:
+    // A line far wider than any window of the tests.
+    static std::string wide() {
+        std::string line;
+        for (int word = 0; word < 300; ++word) {
+            line += "word ";
+        }
+        return line;
+    }
+    void open_wide(const std::string& settings = "{}", const char* name = "wide.txt") {
+        settings_file_ = write("settings.json", settings);
+        create_active_window();
+        open(name);
+    }
+    void open(const char* name) {
+        const auto path = scratch_ / name;
+        if (!std::filesystem::exists(path)) {
+            write(name, wide());
+        }
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+        QApplication::processEvents();
+    }
+    bool wraps() const {
+        return rows_of(window_->view()) > 1;
+    }
+    void toggle() {
+        window_->commands().execute("editor.action.toggleWordWrap");
+    }
+    QAction* item() {
+        return opened_action(menu(3), "editor.action.toggleWordWrap");
+    }
+    // Writes the settings file and waits for the window to have read it.
+    void change_settings(const std::string& settings, anvil::core::WordWrap expected) {
+        write("settings.json", settings);
+        ASSERT_TRUE(wait_until([&] { return window_->settings().editor().word_wrap == expected; }));
+    }
+};
+
+TEST_F(MainWindowWordWrapTest, TheSettingWrapsEveryEditorAndAChangeAppliesAtOnce) {
+    open_wide();
+    EXPECT_FALSE(wraps());
+    change_settings(R"j({"editor.wordWrap": "on"})j", anvil::core::WordWrap::on);
+    EXPECT_TRUE(wraps());
+    EXPECT_EQ(window_->view()->wrapping(), anvil::ui::EditorView::Wrapping::view);
+
+    change_settings(R"j({"editor.wordWrap": "wordWrapColumn", "editor.wordWrapColumn": 20})j",
+                    anvil::core::WordWrap::word_wrap_column);
+    EXPECT_EQ(window_->view()->rows()->options().column, 20U);
+    write("settings.json",
+          R"j({"editor.wordWrap": "wordWrapColumn", "editor.wordWrapColumn": 30})j");
+    ASSERT_TRUE(wait_until([&] { return window_->view()->rows()->options().column == 30U; }));
+
+    change_settings(R"j({"editor.wordWrap": "bounded", "editor.wordWrapColumn": 3000})j",
+                    anvil::core::WordWrap::bounded);
+    EXPECT_EQ(window_->view()->wrapping(), anvil::ui::EditorView::Wrapping::bounded);
+    EXPECT_LT(window_->view()->rows()->options().column, 3000U);
+
+    change_settings("{}", anvil::core::WordWrap::off);
+    EXPECT_FALSE(wraps());
+}
+
+TEST_F(MainWindowWordWrapTest, AFileOpenedWithTheSettingOnIsWrapped) {
+    open_wide(R"j({"editor.wordWrap": "on"})j");
+    EXPECT_TRUE(wraps());
+}
+
+TEST_F(MainWindowWordWrapTest, TheCommandOverridesTheSettingForOneFileAndWritesNothing) {
+    open_wide("{ }");
+    open("other.txt");
+    open("wide.txt");
+    toggle();
+    EXPECT_TRUE(wraps());
+    EXPECT_EQ(*platform::read_file(settings_file_), "{ }");
+
+    // The other file is not wrapped, and the first one still is when it is shown again.
+    open("other.txt");
+    EXPECT_FALSE(wraps());
+    open("wide.txt");
+    EXPECT_TRUE(wraps());
+
+    // The next use removes the override.
+    toggle();
+    EXPECT_FALSE(wraps());
+    change_settings(R"j({"editor.wordWrap": "on"})j", anvil::core::WordWrap::on);
+    EXPECT_TRUE(wraps()) << "the setting rules again";
+}
+
+TEST_F(MainWindowWordWrapTest, TheOverrideTurnsWrappingOffAndOutlastsAChangeOfTheSetting) {
+    open_wide(R"j({"editor.wordWrap": "on"})j");
+    toggle();
+    EXPECT_FALSE(wraps());
+    change_settings(R"j({"editor.wordWrap": "bounded"})j", anvil::core::WordWrap::bounded);
+    EXPECT_FALSE(wraps());
+    toggle();
+    EXPECT_EQ(window_->view()->wrapping(), anvil::ui::EditorView::Wrapping::bounded);
+}
+
+TEST_F(MainWindowWordWrapTest, AnOverrideOnWrapsAtTheWidthOfTheEditor) {
+    open_wide(R"j({"editor.wordWrapColumn": 20})j");
+    toggle();
+    EXPECT_EQ(window_->view()->wrapping(), anvil::ui::EditorView::Wrapping::view);
+    EXPECT_GT(window_->view()->rows()->options().column, 20U);
+}
+
+TEST_F(MainWindowWordWrapTest, EveryViewOfTheDocumentFollowsTheOverride) {
+    open_wide();
+    const auto first = window_->editor_layout().focused();
+    ASSERT_TRUE(window_->editor_layout().split(first, anvil::workbench::Direction::right,
+                                               anvil::workbench::SplitContent::copy_active));
+    QApplication::processEvents();
+    anvil::ui::EditorView* left = window_->editor_area()->group(first)->view();
+    ASSERT_NE(left, window_->view());
+    ASSERT_EQ(left->document(), window_->view()->document());
+    toggle();
+    EXPECT_GT(rows_of(left), 1U);
+    EXPECT_GT(rows_of(window_->view()), 1U);
+    toggle();
+    EXPECT_EQ(rows_of(left), 1U);
+}
+
+TEST_F(MainWindowWordWrapTest, ClosingTheDocumentForgetsTheOverrideAndLetsTheDocumentGo) {
+    open_wide();
+    open("other.txt");
+    open("wide.txt");
+    const std::weak_ptr<anvil::core::Document> closed = window_->view()->document();
+    toggle();
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    QApplication::processEvents();
+    EXPECT_TRUE(closed.expired());
+    open("wide.txt");
+    EXPECT_FALSE(wraps());
+}
+
+TEST_F(MainWindowWordWrapTest, TheMenuItemChecksAndRunsTheCommand) {
+    open_wide();
+    ASSERT_NE(item(), nullptr);
+    EXPECT_TRUE(item()->isEnabled());
+    EXPECT_FALSE(item()->isChecked());
+    item()->trigger();
+    EXPECT_TRUE(wraps());
+    EXPECT_TRUE(item()->isChecked());
+}
+
+TEST_F(MainWindowWordWrapTest, ScreenshotOfAWrappedFileInTheWindow) {
+    open_wide();
+    write(
+        "notes.md",
+        "# Word wrap\n\nA paragraph of prose is one long line in the file, and with wrapping on it "
+        "shows on as many rows as the width of the editor needs, breaking between words.\n\n"
+        "- A list item that also goes on for longer than the editor is wide, so that its second "
+        "row shows under the first, with the same indent as the line itself.\n"
+        "    An indented line keeps its indent on every row that it takes, which makes it easy to "
+        "see where the next line of the file begins.\n");
+    open("notes.md");
+    QApplication::processEvents();
+    toggle();
+    QApplication::processEvents();
+    EXPECT_GT(rows_of(window_->view()), window_->view()->document()->text().line_count());
+    EXPECT_EQ(window_->view()->horizontalScrollBar()->maximum(), 0);
+    EXPECT_FALSE(window_->view()->horizontalScrollBar()->isVisible());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/main_window_word_wrap.png");
+    }
+}
+
+TEST_F(MainWindowWordWrapTest, AltZTogglesWrapping) {
+    open_wide();
+    QTest::keyClick(window_->view(), Qt::Key_Z, Qt::AltModifier);
+    EXPECT_TRUE(wraps());
+    QTest::keyClick(window_->view(), Qt::Key_Z, Qt::AltModifier);
+    EXPECT_FALSE(wraps());
 }
 
 TEST_F(MainWindowMenuBarTest, TheControlCharacterCommandFlipsTheSettingAndTheMenuChecksIt) {

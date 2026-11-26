@@ -335,6 +335,22 @@ void EditorArea::sync_tabs(EditorGroupWidget& widget) {
     }
 }
 
+void EditorArea::set_wrapping_lookup(WrappingLookup lookup) {
+    wrapping_for_ = std::move(lookup);
+}
+
+void EditorArea::refresh_wrapping() {
+    if (!wrapping_for_) {
+        return;
+    }
+    for (EditorGroupWidget* widget : groups_) {
+        if (const auto& document = widget->view()->document()) {
+            const Wrapping wrapping = wrapping_for_(document);
+            widget->view()->set_wrapping(wrapping.mode, wrapping.column);
+        }
+    }
+}
+
 void EditorArea::set_highlighter_lookup(HighlighterLookup lookup) {
     highlighter_for_ = std::move(lookup);
 }
@@ -363,7 +379,12 @@ void EditorArea::sync_document(EditorGroupWidget& widget) {
         document = document_for_(state->tabs[*state->active]);
     }
     if (widget.view()->document() != document) {
-        widget.view()->set_document(document);
+        if (document && wrapping_for_) {
+            const Wrapping wrapping = wrapping_for_(document);
+            widget.view()->set_document(document, wrapping.mode, wrapping.column);
+        } else {
+            widget.view()->set_document(document);
+        }
     }
     sync_highlighter(widget);
     widget.set_empty(!document);

@@ -90,6 +90,18 @@ public:
     EditorGroupWidget* focused_group() const;
     std::vector<EditorGroupWidget*> groups() const;
 
+    // How the lines of a document wrap in its editors.
+    struct Wrapping {
+        EditorView::Wrapping mode = EditorView::Wrapping::off;
+        std::size_t column = 80;
+    };
+    using WrappingLookup = std::function<Wrapping(const std::shared_ptr<core::Document>&)>;
+
+    // Where the editors learn how to wrap the document they show. Without it they do not wrap.
+    // `refresh_wrapping` asks again for every editor.
+    void set_wrapping_lookup(WrappingLookup lookup);
+    void refresh_wrapping();
+
     // Where the editors get the highlighter of the document they show. Without one they show plain
     // text. `refresh_highlighters` asks again for every editor, which is what a change of the
     // language of a document needs.
@@ -186,6 +198,7 @@ private:
     TabInfo tab_info_;
     DocumentLookup document_for_;
     HighlighterLookup highlighter_for_;
+    WrappingLookup wrapping_for_;
     core::EditorSettings settings_;
     std::vector<EditorGroupWidget*> groups_;
     QVBoxLayout* box_ = nullptr;

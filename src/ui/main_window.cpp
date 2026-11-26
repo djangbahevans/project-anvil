@@ -190,6 +190,8 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         });
     highlighting_ = new Highlighting(this);
     area_->set_zoom(&zoom_);
+    area_->set_wrapping_lookup(
+        [this](const std::shared_ptr<core::Document>& document) { return wrapping_of(document); });
     area_->set_highlighter_lookup([this](const core::Uri& uri) { return highlighter_of(uri); });
     connect(highlighting_, &Highlighting::spans_arrived, this,
             [this](const core::Highlighter* highlighter) {
@@ -803,6 +805,7 @@ void MainWindow::apply_settings() {
     const core::EditorSettings& editor = settings_->editor();
     zoom_.set_level(editor.zoom_level);
     area_->apply_settings(editor);
+    area_->refresh_wrapping();
     if (title_bar_) {
         title_bar_->set_command_center_visible(editor.command_center);
         title_bar_->set_layout_controls_visible(editor.layout_controls);
@@ -1506,6 +1509,8 @@ void MainWindow::register_commands() {
         set_render_whitespace("trailing"));
     add("editor.action.renderWhitespace.all", tr("Set Render Whitespace to All"),
         set_render_whitespace("all"));
+    add("editor.action.toggleWordWrap", tr("View: Toggle Word Wrap"),
+        [this] { toggle_word_wrap(); });
     add("editor.action.toggleRenderControlCharacter", tr("Toggle Control Characters"), [this] {
         change_setting("editor.renderControlCharacters",
                        !settings_->editor().render_control_characters,
@@ -1641,6 +1646,37 @@ QFont MainWindow::menu_font() const {
     return font;
 }
 
+EditorArea::Wrapping
+MainWindow::wrapping_of(const std::shared_ptr<core::Document>& document) const {
+    const core::EditorSettings& settings = settings_->editor();
+    const auto column = static_cast<std::size_t>(settings.word_wrap_column);
+    if (const auto found = wrap_overrides_.find(document); found != wrap_overrides_.end()) {
+        return {found->second ? EditorView::Wrapping::view : EditorView::Wrapping::off, column};
+    }
+    switch (settings.word_wrap) {
+    case core::WordWrap::on:
+        return {EditorView::Wrapping::view, column};
+    case core::WordWrap::word_wrap_column:
+        return {EditorView::Wrapping::column, column};
+    case core::WordWrap::bounded:
+        return {EditorView::Wrapping::bounded, column};
+    case core::WordWrap::off:
+        break;
+    }
+    return {EditorView::Wrapping::off, column};
+}
+
+void MainWindow::toggle_word_wrap() {
+    const std::shared_ptr<core::Document> document = view()->document();
+    if (!document) {
+        return;
+    }
+    if (wrap_overrides_.erase(document) == 0) {
+        wrap_overrides_.emplace(document, view()->wrapping() == EditorView::Wrapping::off);
+    }
+    area_->refresh_wrapping();
+}
+
 core::ContextKeys MainWindow::menu_context() const {
     core::ContextKeys keys;
     workbench::set_menu_context_defaults(keys);
@@ -1663,6 +1699,9 @@ core::ContextKeys MainWindow::menu_context() const {
     keys.set("panelVisible", workbench_->is_visible(Part::panel));
     keys.set("panelPosition", std::string(panel_position_name(workbench_->panel_position())));
     keys.set("canReopenClosedEditor", !closed_editors_.empty());
+    const EditorView* shown = area_->focused_group()->view();
+    keys.set("canToggleWordWrap", shown->document() != nullptr);
+    keys.set("editorWordWrap", shown->wrapping() != EditorView::Wrapping::off);
     keys.set("canNavigateBack", history_.can_go_back());
     keys.set("canNavigateForward", history_.can_go_forward());
     keys.set("canNavigateToLastEditLocation", history_.can_go_to_last_edit());
@@ -2008,6 +2047,12 @@ void MainWindow::open_find_bar(bool with_replace) {
     }
 }
 
+void MainWindow::release_document(const core::Uri& uri) {
+    forget_document_language(uri);
+    wrap_overrides_.erase(documents_.at(uri));
+    documents_.erase(uri);
+}
+
 bool MainWindow::close_document(std::size_t index) {
     return close_tab_at(layout_.focused(), index);
 }
@@ -2046,8 +2091,7 @@ bool MainWindow::close_document_in(workbench::GroupId group,
     layout_.close_tab(target.group, target.index);
     if (layout_.locations(*uri).empty()) {
         bridge_.remove_document(*uri);
-        forget_document_language(*uri);
-        documents_.erase(*uri);
+        release_document(*uri);
     }
     return true;
 }
@@ -2101,8 +2145,7 @@ bool MainWindow::close_group(workbench::GroupId group) {
     for (const auto& document : documents) {
         if (const auto uri = uri_of(document); uri && layout_.locations(*uri).empty()) {
             bridge_.remove_document(*uri);
-            forget_document_language(*uri);
-            documents_.erase(*uri);
+            release_document(*uri);
         }
     }
     if (documents_.empty()) {
@@ -2463,8 +2506,7 @@ void MainWindow::document_deleted(const core::Uri& uri) {
          locations = layout_.locations(uri)) {
         layout_.close_tab(locations.front().group, locations.front().index);
     }
-    forget_document_language(uri);
-    documents_.erase(uri);
+    release_document(uri);
 }
 
 void MainWindow::save_as_dialog() {

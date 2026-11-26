@@ -82,6 +82,8 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `editor.multiCursorModifier` | The key that makes a click add a cursor: `"alt"` (Alt+click), or `"ctrlCmd"` (Ctrl+click, Cmd+click on macOS). Shift with it, or Shift+Alt with `"ctrlCmd"`, selects a rectangle | `"alt"` |
 | `editor.columnSelection` | Dragging the mouse selects a rectangle, one selection per line, instead of a stream of text | `false` |
 | `editor.renderWhitespace` | Which spaces and tabs get a mark (a dot for a space, an arrow for a tab, in `editorWhitespace.foreground`): `"none"`, `"boundary"` (all but a single space between words), `"selection"` (inside selections), `"trailing"` (at the end of the line) or `"all"` | `"selection"` |
+| `editor.wordWrap` | Where long lines wrap: `"off"` (nowhere), `"on"` (at the width of the editor), `"wordWrapColumn"` (at `editor.wordWrapColumn`) or `"bounded"` (at the smaller of the two). View > Word Wrap (Alt+Z) turns wrapping on or off for one file until it is closed, without changing the setting | `"off"` |
+| `editor.wordWrapColumn` | The column that `"wordWrapColumn"` and `"bounded"` wrap at, an integer of at least 1 | 80 |
 | `editor.renderControlCharacters` | Control characters are drawn as symbols (white on red) when `true` | `true` |
 | `workbench.colorTheme` | The color theme, by id or label: one of the ten that ship with the editor, or one that an extension contributes in `contributes.themes` (the `uiTheme` of the manifest decides its kind) | `"Dark 2026"` |
 | `workbench.editor.focusRecentEditorAfterClose` | Closing the active tab shows the tab that was shown before it when `true`, its right neighbor (the left one for the last tab) when `false` | `true` |
