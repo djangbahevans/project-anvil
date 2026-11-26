@@ -203,6 +203,7 @@ const Row rows[] = {
      {"escape escape"},
      {"escape escape"}},
     {"editor.action.toggleWordWrap", "", {"alt+z"}, {"alt+z"}, {"alt+z"}},
+    {"workbench.view.explorer", "", {"ctrl+shift+e"}, {"ctrl+shift+e"}, {"cmd+shift+e"}},
     {"workbench.action.openSettings", "", {"ctrl+,"}, {"ctrl+,"}, {"cmd+,"}},
     {"workbench.action.openGlobalKeybindings",
      "",

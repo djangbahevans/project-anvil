@@ -2896,6 +2896,7 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "editor.action.renderWhitespace.all",
                                           "editor.action.toggleRenderControlCharacter",
                                           "editor.action.toggleWordWrap",
+                                          "workbench.view.explorer",
                                           "workbench.action.closeActiveEditor",
                                           "actions.find",
                                           "editor.action.nextMatchFindAction",
@@ -3129,6 +3130,7 @@ TEST_F(MainWindowTest, TheMenusRunTheirCommands) {
         "editor.action.renderWhitespace.all",
         "editor.action.toggleRenderControlCharacter",
         "editor.action.toggleWordWrap",
+        "workbench.view.explorer",
         "workbench.action.closeActiveEditor",
         "workbench.action.closeWindow",
         "workbench.action.quit",
@@ -3798,6 +3800,74 @@ std::size_t rows_of(const anvil::ui::EditorView* view) {
 }
 
 } // namespace
+
+class MainWindowShowExplorerTest : public MainWindowMenuBarTest {
+protected:
+    void open_window(bool with_folder) {
+        if (with_folder) {
+            std::filesystem::create_directories(scratch_ / "folder");
+            write("folder/a.txt", "a");
+            workspace_ = *anvil::core::Workspace::open(scratch_ / "folder");
+        }
+        create_active_window();
+    }
+    void show() {
+        window_->commands().execute("workbench.view.explorer");
+        QApplication::processEvents();
+    }
+    // Null until the side bar has shown the Explorer.
+    anvil::ui::ExplorerView* explorer() const {
+        return qobject_cast<anvil::ui::ExplorerView*>(
+            window_->sidebar()->container_widget("workbench.view.explorer"));
+    }
+    bool sidebar_visible() const {
+        return window_->workbench()->is_visible(Part::sidebar);
+    }
+};
+
+TEST_F(MainWindowShowExplorerTest, ShowsAndFocusesTheExplorerAndASecondUseGoesBackToTheEditor) {
+    open_window(true);
+    window_->workbench()->set_visible(Part::sidebar, false);
+    ASSERT_FALSE(sidebar_visible());
+    show();
+    ASSERT_TRUE(sidebar_visible());
+    ASSERT_NE(explorer(), nullptr);
+    EXPECT_EQ(QApplication::focusWidget(), explorer()->tree());
+    show();
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+    EXPECT_TRUE(sidebar_visible());
+    // With the side bar shown and the editor focused, it takes the focus.
+    show();
+    EXPECT_EQ(QApplication::focusWidget(), explorer()->tree());
+}
+
+TEST_F(MainWindowShowExplorerTest, WithNoFolderTheOpenFolderButtonHasTheFocus) {
+    open_window(false);
+    show();
+    ASSERT_NE(explorer(), nullptr);
+    EXPECT_EQ(QApplication::focusWidget(), explorer()->open_folder_button());
+    show();
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+}
+
+TEST_F(MainWindowShowExplorerTest, TheMenuItemIsEnabledAndRunsIt) {
+    open_window(true);
+    QAction* item = opened_action(menu(3), "workbench.view.explorer");
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->isEnabled());
+    item->trigger();
+    EXPECT_EQ(QApplication::focusWidget(), explorer()->tree());
+}
+
+TEST_F(MainWindowShowExplorerTest, ItsKeyRunsItFromTheEditorAndFromTheExplorer) {
+    open_window(true);
+    QTest::keyClick(window_->view(), Qt::Key_E, Qt::ControlModifier | Qt::ShiftModifier);
+    ASSERT_NE(explorer(), nullptr);
+    ASSERT_EQ(QApplication::focusWidget(), explorer()->tree());
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_E,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+}
 
 class MainWindowWordWrapTest : public MainWindowMenuBarTest {
 protected:
