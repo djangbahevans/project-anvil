@@ -120,4 +120,7 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
       - name: Test
+        # Tests of file search fail instead of skipping where ripgrep is missing.
+        env:
+          ANVIL_REQUIRE_RIPGREP: '1'
         run: ctest --preset ${{ matrix.preset }} --output-on-failure

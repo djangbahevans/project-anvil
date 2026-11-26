@@ -54,6 +54,7 @@ The status bar shows the language of the shown document, from VS Code's language
 | `ANVIL_EXTENSIONS` | unpacked extension directories, separated like `PATH` entries |
 | `ANVIL_NODE` | the Node.js binary (default: `node` on `PATH`) |
 | `ANVIL_VSCODE_DIR` | the VS Code checkout (default: `.deps/vscode` of the source tree) |
+| `ANVIL_RG` | the ripgrep binary that file search runs (default: the one in the VS Code checkout, else `rg` on `PATH`) |
 | `ANVIL_EXTENSION_HOST=off` | run the editor without the extension host |
 | `ANVIL_NATIVE_FRAME=1` | give the window the system's frame and menu bar instead of its own title bar (Linux and Windows) |
 
@@ -103,6 +104,11 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `files.autoSaveDelay` | Milliseconds between the last change and the save, with `"afterDelay"` (0 to 86400000) | `1000` |
 | `files.associations` | An object from a glob to a language id that decides the language of the files it matches before any language's own rules, as in `{"*.cfg": "ini", "**/.config/*": "json"}`. A pattern with a `/` is matched against the whole path and any other against the file name, ignoring case. The language shows in the status bar. An entry whose value is not a language id is skipped and logged | `{}` |
 | `files.exclude` | An object from a glob to `true` or `false` of the files and folders the Explorer hides, matched against the path relative to the opened folder, as in `{"**/node_modules": true}`. The entries are laid over VS Code's defaults (`**/.git`, `**/.svn`, `**/.hg`, `**/.jj`, `**/.DS_Store`, `**/Thumbs.db`), so a default stays hidden unless it is set to `false`. An entry whose value is an object (a `when` condition) is skipped and logged. A change applies to the open tree without collapsing it | the defaults above |
+| `search.exclude` | An object from a glob to `true` or `false` of what file search leaves out besides `files.exclude`, over which it lies: `**/node_modules`, `**/bower_components` and `**/*.code-search` unless set to `false` | those three |
+| `search.useIgnoreFiles` | Whether file search respects `.gitignore` and `.ignore` files | `true` |
+| `search.useGlobalIgnoreFiles` | Whether it also respects the user's global ignore file of git | `false` |
+| `search.useParentIgnoreFiles` | Whether it also respects the ignore files in the folders above the searched one | `false` |
+| `search.followSymlinks` | Whether file search follows symbolic links | `true` |
 | `explorer.confirmDelete` | Whether the Explorer asks before it deletes | `true` |
 | `explorer.confirmDragAndDrop` | Whether the Explorer asks before dragging moves items; "Do not ask me again" in the question writes `false` | `true` |
 | `files.enableTrash` | Whether the Explorer moves what it deletes to the trash; without it a delete is for good | `true` |
@@ -148,6 +154,7 @@ The window opens with the size, position and layout it had when it was last clos
 | `src/core` | Text buffer, documents, editing commands, encoding, JSON with comments and settings, with no UI or OS dependencies |
 | `src/exthost` | Extension host protocol: codecs, session, and host process launcher |
 | `src/platform` | Per-OS code behind portable interfaces |
+| `src/search` | Listing the files of a folder with ripgrep |
 | `src/ui` | Qt Widgets user interface: main window, editor view, extension host bridge |
 | `src/app` | The `anvil` executable |
 | `resources` | Files the editor ships with: the color themes and the icon font of VS Code |

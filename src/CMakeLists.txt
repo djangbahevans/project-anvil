@@ -1,5 +1,6 @@
 add_subdirectory(core)
 add_subdirectory(platform)
+add_subdirectory(search)
 add_subdirectory(exthost)
 add_subdirectory(workbench)
 
