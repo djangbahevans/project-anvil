@@ -11,6 +11,7 @@
 #include "anvil/exthost/host_process.hpp"
 #include "anvil/exthost/logging_service.hpp"
 #include "anvil/exthost/request_router.hpp"
+#include "anvil/exthost/workspace_service.hpp"
 
 #include <chrono>
 #include <expected>
@@ -37,6 +38,9 @@ struct ExtensionHostOptions {
     std::shared_ptr<core::Logger> logger{};
     // The folder extensions work on, trusted. Extensions see no workspace when unset.
     std::optional<core::Workspace> workspace{};
+    // What the searches that extensions ask for run with. Without a ripgrep, an extension with a
+    // `workspaceContains:<glob>` activation event does not start.
+    SearchSettings search{};
     std::chrono::milliseconds connect_timeout{15000};
 };
 
@@ -82,6 +86,11 @@ public:
         return documents_;
     }
 
+    // The searches of the workspace that extensions ask for.
+    WorkspaceService& workspace_service() {
+        return workspace_service_;
+    }
+
     // The file systems that extensions provide, which the editor reads and writes through.
     FileSystemProviders& file_system_providers() {
         return providers_;
@@ -114,7 +123,7 @@ public:
 
 private:
     ExtensionHost(std::unique_ptr<HostProcess> host, std::shared_ptr<core::Logger> logger,
-                  std::optional<core::Workspace> workspace);
+                  std::optional<core::Workspace> workspace, SearchSettings search);
 
     struct Step {
         ProxyId target;
@@ -136,6 +145,7 @@ private:
     FileSystemProviders providers_;
     FileSystemService file_system_;
     FileEventService file_events_;
+    WorkspaceService workspace_service_;
     std::optional<core::Workspace> workspace_;
     std::vector<Step> startup_steps_;
     HostState state_ = HostState::starting;

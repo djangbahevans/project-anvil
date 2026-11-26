@@ -31,6 +31,8 @@ public:
         std::filesystem::path storage_dir;
         // The folder extensions work on; they see no workspace when unset.
         std::optional<core::Workspace> workspace{};
+        // What the searches that extensions ask for run with.
+        exthost::SearchSettings search{};
     };
 
     struct Callbacks {
@@ -66,6 +68,10 @@ public:
     // Fails when start() has not been called or the new host does not start; the bridge is then
     // not running.
     std::expected<void, Error> restart(std::optional<core::Workspace> workspace);
+    // What the searches of the next host that starts run with.
+    void set_search_settings(exthost::SearchSettings search) {
+        config_.search = std::move(search);
+    }
 
     bool running() const {
         return host_ != nullptr;

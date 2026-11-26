@@ -40,6 +40,7 @@ std::expected<void, Error> ExtensionHostBridge::launch() {
         .storage_dir = config_.storage_dir,
         .logger = logger_,
         .workspace = config_.workspace,
+        .search = config_.search,
     });
     if (!started) {
         return std::unexpected(std::move(started.error()));

@@ -1,6 +1,7 @@
 #include "anvil/core/workspace.hpp"
 #include "anvil/exthost/extension_host.hpp"
 
+#include <cstdlib>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -43,6 +44,7 @@ protected:
             .extension_dirs = std::move(extensions),
             .storage_dir = scratch_ / "storage",
             .workspace = std::move(workspace),
+            .search = search_,
         });
         ASSERT_TRUE(started.has_value()) << started.error().message;
         host_ = std::move(*started);
@@ -90,6 +92,23 @@ protected:
         return json::parse(***result);
     }
 
+    // The ripgrep that searches the workspace; false without one, which is a failure where it is
+    // required, as in CI.
+    bool with_ripgrep() {
+        const char* override_path = std::getenv("ANVIL_RG");
+        const char* path_variable = std::getenv("PATH");
+        search_.ripgrep =
+            anvil::search::find_ripgrep({.override_path = override_path ? override_path : "",
+                                         .vscode_dir = vscode_dir_,
+                                         .path_variable = path_variable ? path_variable : ""});
+        search_.options = anvil::core::FileSearchOptions::from_settings(anvil::core::Settings{});
+        if (!search_.ripgrep) {
+            EXPECT_EQ(std::getenv("ANVIL_REQUIRE_RIPGREP"), nullptr) << "ripgrep is required";
+        }
+        return search_.ripgrep.has_value();
+    }
+
+    anvil::exthost::SearchSettings search_;
     fs::path node_;
     fs::path vscode_dir_;
     fs::path scratch_;
@@ -161,4 +180,34 @@ TEST_F(RealActivation, AnEventThatWaitsFailsWhenTheHostIsAbandoned) {
     ASSERT_TRUE(result.has_value());
     ASSERT_FALSE(result->has_value());
     EXPECT_NE(result->error().find("restarted"), std::string::npos);
+}
+
+TEST_F(RealActivation, TheEditorSearchesForAGlobInTheWorkspaceAndTheExtensionStarts) {
+    if (!with_ripgrep()) {
+        GTEST_SKIP() << "needs ripgrep";
+    }
+    fs::create_directories(scratch_ / "project" / "sub");
+    std::ofstream(scratch_ / "project" / "sub" / "a.fixture") << "x";
+    const auto workspace = anvil::core::Workspace::open(scratch_ / "project");
+    ASSERT_TRUE(workspace.has_value());
+    start({ANVIL_ACTIVATION_GLOB_EXTENSION}, *workspace);
+    EXPECT_TRUE(pump_until([&] { return active("activation-glob"); }));
+    EXPECT_TRUE(host_->unhandled_requests().find("MainThreadWorkspace.$checkExists") ==
+                host_->unhandled_requests().end());
+}
+
+TEST_F(RealActivation, AWorkspaceWithoutAMatchingFileDoesNotStartTheExtension) {
+    if (!with_ripgrep()) {
+        GTEST_SKIP() << "needs ripgrep";
+    }
+    // Only where the search rules do not look.
+    fs::create_directories(scratch_ / "project" / "node_modules");
+    std::ofstream(scratch_ / "project" / "node_modules" / "a.fixture") << "x";
+    const auto workspace = anvil::core::Workspace::open(scratch_ / "project");
+    ASSERT_TRUE(workspace.has_value());
+    start({ANVIL_ACTIVATION_GLOB_EXTENSION, ANVIL_ACTIVATION_STARTUP_EXTENSION}, *workspace);
+    ASSERT_TRUE(pump_until([&] { return active("activation-startup"); }));
+    ASSERT_TRUE(pump_until([&] { return host_->workspace_service().pending() == 0; }));
+    pump_for(milliseconds(500));
+    EXPECT_FALSE(active("activation-glob"));
 }
