@@ -10959,8 +10959,9 @@ protected:
     void enter() {
         QTest::keyClick(pick()->filter_field(), Qt::Key_Return);
     }
+    // Empty for a document without a file.
     std::filesystem::path shown_path() {
-        return *window_->current_uri().file_path();
+        return window_->current_uri().file_path().value_or(std::filesystem::path());
     }
 
     std::vector<std::string> files_ = {"a.txt", "b.txt", "src/main.cpp", "src/util.cpp"};
