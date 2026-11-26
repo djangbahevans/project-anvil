@@ -31,7 +31,7 @@ The first argument that is a directory is the workspace folder: its name is in t
 
 The first button of the activity bar opens the Explorer: the folder as a tree, folders first. Enter or a double click opens a file in a tab and expands or collapses a folder, and a single click only selects. With no folder open it offers Open Folder. `files.exclude` (see the settings below) decides what the tree hides. The tree follows the disk: files that other programs create, delete and rename in the folders that are open appear and disappear without a refresh, and a problem with the watch (the system's limit of watches, lost events) is said in the status bar.
 
-The Explorer creates, renames and deletes files and folders. The commands have VS Code's ids, are in the command palette and in the context menu of the tree (right click), and apply to the selected row:
+The Explorer creates, renames and deletes files and folders. The commands have VS Code's ids, are in the command palette and in the context menu of the tree (right click), and apply to the selection; a command on one item takes the row that has the focus:
 
 | Command | What it does | Keys (Linux and Windows, macOS) |
 | --- | --- | --- |
@@ -42,6 +42,8 @@ The Explorer creates, renames and deletes files and folders. The commands have V
 | `revealFileInOS` | Opens the file manager on the folder that holds the selected row, or the file of the active editor when the Explorer does not have the focus | |
 
 The keys apply while the tree has the focus and no name is being edited. A name that is empty, starts with a slash, has a separator, is `.` or `..`, or is taken is refused with the reason under the field, as it is typed, and nothing changes. A failure of the system (a folder that cannot be written to, a trash that cannot take the item) is said in the status bar.
+
+Several rows can be selected (Ctrl+click, Shift+click). Dragging them onto a folder, or onto the space below the rows for the opened folder, moves them there, or copies them with Ctrl (Cmd on macOS) held when the button is released; a drop on a file is a drop on its folder. The folder under the pointer is highlighted, a closed one opens when the pointer rests on it, and Escape ends the drag. A folder cannot be dropped onto itself or into itself, and a name that is taken asks before it is replaced. Open files follow a move as they follow a rename, a copy leaves them alone, and a move does not replace a file that has unsaved changes. Typing the first letters of a name selects the next row that starts with them, ignoring case, among the rows that show; the letters start again after a short pause.
 
 View > Split Editor Right (Ctrl+\) and Split Editor Down add an empty editor group next to the focused one, each group with its own tabs; Focus Next Group, Focus Previous Group and Close Editor Group move between groups and remove one. Opening a file that is open in another group focuses its tab there, because a document is shown in one group at a time. Dragging a tab onto the tabs of another group moves it there, onto the middle of a group moves it to the end, and onto the nearest quarter of a group's edge splits the group and puts the tab in the new half; Escape cancels the drag.
 
