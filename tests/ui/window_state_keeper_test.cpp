@@ -453,19 +453,90 @@ TEST_F(WindowStateKeeperTest, EachWorkspaceHasItsLayoutAndTheSizesAreShared) {
     EXPECT_FALSE(first->workbench->is_visible(Part::panel));
 }
 
-TEST_F(WindowStateKeeperTest, ChangingTheWorkspaceSavesTheOneLeftAndKeepsTheLayout) {
-    write_state("workspaces/2222222222222222.json", R"({"layout.sidebar.visible": false})");
+TEST_F(WindowStateKeeperTest, ChangingTheWorkspaceSavesTheOneLeftAndAppliesTheLayoutOfTheNewOne) {
+    write_state("workspaces/2222222222222222.json",
+                R"({"layout.sidebar.visible": false, "layout.sidebar.activeContainer": "search",)"
+                R"( "layout.panel.visible": true, "layout.panel.activeContainer": "output",)"
+                R"( "layout.panel.position": "left"})");
     const auto window = open("1111111111111111");
-    window->sidebar->activate("search");
     window->keeper->set_workspace("2222222222222222");
     EXPECT_EQ(workspace_state("1111111111111111").at("layout.sidebar.visible"), true);
-    EXPECT_TRUE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_EQ(workspace_state("1111111111111111").at("layout.panel.visible"), false);
+    EXPECT_FALSE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_TRUE(window->workbench->is_visible(Part::panel));
+    EXPECT_EQ(window->workbench->panel_position(), PanelPosition::left);
+    EXPECT_EQ(window->sidebar->active_container(), "search");
+    EXPECT_EQ(window->panel->active_container(), "output");
+    // No view is made for the container of the sidebar, which does not show.
+    EXPECT_EQ(window->made, (std::map<std::string, int>{{"files", 1}, {"output", 1}}));
 
-    window->workbench->set_visible(Part::panel, true);
+    window->workbench->set_visible(Part::sidebar, true);
     window->keeper->save();
     EXPECT_EQ(workspace_state("2222222222222222").at("layout.sidebar.visible"), true);
-    EXPECT_EQ(workspace_state("2222222222222222").at("layout.panel.visible"), true);
-    EXPECT_EQ(workspace_state("1111111111111111").at("layout.panel.visible"), false);
+    EXPECT_EQ(workspace_state("1111111111111111").at("layout.sidebar.activeContainer"), "files");
+
+    window->keeper->set_workspace("1111111111111111");
+    EXPECT_TRUE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_FALSE(window->workbench->is_visible(Part::panel));
+    EXPECT_EQ(window->workbench->panel_position(), PanelPosition::bottom);
+    EXPECT_EQ(window->sidebar->active_container(), "files");
+}
+
+TEST_F(WindowStateKeeperTest, AWorkspaceThatHasNothingSavedGetsTheDefaultsAndNotWhatShowed) {
+    const auto window = open("1111111111111111");
+    window->sidebar->activate("search");
+    window->workbench->set_visible(Part::sidebar, false);
+    window->panel->activate("output");
+    window->workbench->set_panel_position(PanelPosition::right);
+    window->workbench->set_maximized(Part::panel, true);
+
+    window->keeper->set_workspace("3333333333333333");
+    EXPECT_TRUE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_EQ(window->sidebar->active_container(), "files");
+    EXPECT_EQ(window->sidebar->title(), "FILES");
+    EXPECT_FALSE(window->workbench->is_visible(Part::panel));
+    EXPECT_FALSE(window->workbench->is_maximized(Part::panel));
+    EXPECT_EQ(window->workbench->panel_position(), PanelPosition::bottom);
+    window->workbench->set_visible(Part::panel, true);
+    EXPECT_EQ(window->panel->active_container(), "terminal");
+
+    window->keeper->set_workspace(std::nullopt);
+    EXPECT_FALSE(window->workbench->is_visible(Part::sidebar));
+    EXPECT_FALSE(window->workbench->is_visible(Part::panel));
+}
+
+TEST_F(WindowStateKeeperTest, AMaximizedPanelIsRestoredWhenTheWorkspaceChanges) {
+    write_state("workspaces/2222222222222222.json",
+                R"({"layout.panel.visible": true, "layout.panel.maximized": true})");
+    const auto window = open("1111111111111111");
+    window->keeper->set_workspace("2222222222222222");
+    EXPECT_TRUE(window->workbench->is_maximized(Part::panel));
+}
+
+TEST_F(WindowStateKeeperTest, TheSizesStayWhenTheWorkspaceChanges) {
+    const auto window = open("1111111111111111");
+    window->workbench->set_size(Part::sidebar, 260);
+    window->workbench->set_visible(Part::panel, true);
+    window->workbench->set_size(Part::panel, 180);
+    QApplication::processEvents();
+    window->keeper->set_workspace("2222222222222222");
+    window->workbench->set_visible(Part::panel, true);
+    QApplication::processEvents();
+    EXPECT_EQ(window->workbench->sidebar()->width(), 260);
+    EXPECT_EQ(window->workbench->panel()->height(), 180);
+}
+
+TEST_F(WindowStateKeeperTest, TheContentIsRestoredFromTheNewWorkspaceBeforeItsLayoutShows) {
+    write_state("workspaces/2222222222222222.json",
+                R"({"layout.sidebar.visible": false, "content": "second"})");
+    const auto window = open("1111111111111111");
+    std::vector<std::pair<std::optional<std::string>, bool>> seen;
+    window->keeper->set_content_restore([&] {
+        seen.emplace_back(window->store.string(StateScope::workspace, "content"),
+                          window->workbench->is_visible(Part::sidebar));
+    });
+    window->keeper->set_workspace("2222222222222222");
+    EXPECT_EQ(seen, (std::vector<std::pair<std::optional<std::string>, bool>>{{"second", true}}));
 }
 
 TEST_F(WindowStateKeeperTest, TheSizeAndPlaceOfTheWindowAreRestored) {

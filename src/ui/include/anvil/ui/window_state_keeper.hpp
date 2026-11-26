@@ -25,7 +25,7 @@ class Workbench;
 // that screen.
 QRect fit_to_screens(const QRect& saved, const std::vector<QRect>& screens);
 
-// Keeps the layout of a window, and its size and position, in the state store (ADR 0019): the
+// Keeps the layout of a window, and its size and position, in the state store (ADR 0021): the
 // visibility and sizes of the sidebar and the panel, the position of the panel, whether it is
 // maximized and the active view containers. What the views show is added by a capture of the
 // window's own.
@@ -51,6 +51,9 @@ public:
 
     // Called before each write, to put into the store what is not the layout.
     void set_content_capture(std::function<void(workbench::StateStore&)> capture);
+    // Called by `set_workspace` once the store is on the new workspace and before its layout is
+    // applied, to show what is saved there of the content.
+    void set_content_restore(std::function<void()> restore);
     // Writes after the delay, as after a change of the layout.
     void schedule();
 
@@ -60,8 +63,9 @@ public:
     void restore();
     // Writes what the window shows.
     void save();
-    // Writes what the window shows to the workspace that is left. The window stays as it is, and
-    // what is saved afterwards goes to the new workspace.
+    // Writes what the window shows to the workspace that is left and applies the layout of the new
+    // one: the visibility of the parts, the position of the panel, whether it is maximized and the
+    // active containers, each with its default where the workspace has none saved. The sizes stay.
     void set_workspace(const std::optional<std::string>& workspace_id);
 
 protected:
@@ -69,6 +73,8 @@ protected:
 
 private:
     void restore_geometry();
+    void restore_sizes();
+    // The layout that belongs to the workspace.
     void restore_layout();
     void watch();
     void capture();
@@ -81,6 +87,7 @@ private:
     QTimer timer_;
     std::function<std::optional<PartsShown>()> parts_outside_mode_;
     std::function<void(workbench::StateStore&)> content_capture_;
+    std::function<void()> content_restore_;
 };
 
 } // namespace anvil::ui

@@ -451,6 +451,13 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                       explorer_->expanded_folders());
         }
     });
+    state_keeper_->set_content_restore([this] {
+        // At once: the view still shows the folder that was left, and the store holds the new
+        // one's state.
+        if (explorer_) {
+            show_workspace_in(*explorer_);
+        }
+    });
     state_keeper_->restore();
 }
 
@@ -716,12 +723,18 @@ void MainWindow::explorer_deleted(const std::vector<std::filesystem::path>& path
 }
 
 void MainWindow::workspace_changed() {
+    // The mode is not saved, and would keep the layout of the new workspace from showing.
+    if (zen_.active) {
+        toggle_zen_mode();
+    }
+    const QPointer<QWidget> focused = focusWidget();
     state_keeper_->set_workspace(options_.workspace ? std::optional(options_.workspace->id)
                                                     : std::nullopt);
-    // At once: the view still shows the folder that was left, and the store holds the new one's
-    // state.
-    if (explorer_) {
-        show_workspace_in(*explorer_);
+    // The parts are hidden for a moment while the layout changes, which moves the focus.
+    if (focused && focused->isVisible()) {
+        focused->setFocus();
+    } else {
+        view()->setFocus();
     }
     if (options_.extension_host) {
         core::NullLogger discarded;

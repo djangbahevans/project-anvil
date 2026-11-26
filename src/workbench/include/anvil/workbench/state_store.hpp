@@ -20,7 +20,7 @@ namespace anvil::workbench {
 enum class StateScope { global, workspace };
 
 // What follows from using the editor, such as the layout of the window, kept between runs
-// (ADR 0019). `global.json` holds the state of the user, `workspaces/<workspace id>.json` that of
+// (ADR 0021). `global.json` holds the state of the user, `workspaces/<workspace id>.json` that of
 // a folder and `no-folder.json` that of a window without one; each file is a JSON object of dotted
 // keys. A write changes only the keys that were set since the last one, so that another process
 // that uses the same files keeps what it wrote to the other keys.

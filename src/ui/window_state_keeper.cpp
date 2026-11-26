@@ -100,6 +100,10 @@ void WindowStateKeeper::set_content_capture(std::function<void(workbench::StateS
     content_capture_ = std::move(capture);
 }
 
+void WindowStateKeeper::set_content_restore(std::function<void()> restore) {
+    content_restore_ = std::move(restore);
+}
+
 void WindowStateKeeper::schedule() {
     timer_.start();
 }
@@ -107,6 +111,7 @@ void WindowStateKeeper::schedule() {
 void WindowStateKeeper::restore() {
     // The window first, so that the parts are laid out in the size they were saved in.
     restore_geometry();
+    restore_sizes();
     restore_layout();
     watch();
 }
@@ -128,7 +133,7 @@ void WindowStateKeeper::restore_geometry() {
     }
 }
 
-void WindowStateKeeper::restore_layout() {
+void WindowStateKeeper::restore_sizes() {
     if (const auto width = within(store_.integer(StateScope::global, sidebar_width_key), 1)) {
         workbench_.set_size(Part::sidebar, *width);
     }
@@ -138,13 +143,25 @@ void WindowStateKeeper::restore_layout() {
             workbench_.set_panel_size_at(position, *size);
         }
     }
+}
+
+void WindowStateKeeper::restore_layout() {
+    // The parts are hidden while their containers change, so that no view is made of a container
+    // that is not to show. At startup they are hidden already.
+    workbench_.set_visible(Part::panel, false);
+    workbench_.set_visible(Part::sidebar, false);
+    sidebar_.reset_active_container();
+    panel_.reset_active_container();
+
+    PanelPosition panel_position = PanelPosition::bottom;
     if (const auto name = store_.string(StateScope::workspace, panel_position_key)) {
         for (const PanelPosition position : panel_positions) {
             if (panel_position_name(position) == *name) {
-                workbench_.set_panel_position(position);
+                panel_position = position;
             }
         }
     }
+    workbench_.set_panel_position(panel_position);
     // The containers before the visibility, so that a part that shows has the right one.
     if (const auto id = store_.string(StateScope::workspace, sidebar_container_key)) {
         sidebar_.set_active_container(*id);
@@ -155,9 +172,8 @@ void WindowStateKeeper::restore_layout() {
     // As in VS Code, a folder shows the sidebar until it is hidden there.
     workbench_.set_visible(Part::sidebar, store_.boolean(StateScope::workspace, sidebar_visible_key)
                                               .value_or(store_.has_workspace()));
-    if (const auto shown = store_.boolean(StateScope::workspace, panel_visible_key)) {
-        workbench_.set_visible(Part::panel, *shown);
-    }
+    workbench_.set_visible(
+        Part::panel, store_.boolean(StateScope::workspace, panel_visible_key).value_or(false));
     if (workbench_.is_visible(Part::panel) &&
         store_.boolean(StateScope::workspace, panel_maximized_key).value_or(false)) {
         workbench_.set_maximized(Part::panel, true);
@@ -234,6 +250,10 @@ void WindowStateKeeper::save() {
 void WindowStateKeeper::set_workspace(const std::optional<std::string>& workspace_id) {
     save();
     store_.set_workspace(workspace_id);
+    if (content_restore_) {
+        content_restore_();
+    }
+    restore_layout();
 }
 
 } // namespace anvil::ui

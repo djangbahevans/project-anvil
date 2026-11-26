@@ -156,6 +156,14 @@ void Sidebar::set_active_container(std::string_view id) {
     }
 }
 
+void Sidebar::reset_active_container() {
+    if (active_.empty()) {
+        return;
+    }
+    active_.clear();
+    emit active_container_changed({});
+}
+
 QString Sidebar::title() const {
     return title_->text();
 }
