@@ -69,6 +69,22 @@ if(UNIX)
   gtest_discover_tests(anvil_platform_tests)
 endif()
 
+if(UNIX)
+  add_executable(anvil_search_tests search/ripgrep_test.cpp)
+  target_link_libraries(anvil_search_tests PRIVATE anvil::search GTest::gtest_main anvil_compile_options)
+  # The directory of the ripgrep that the VS Code checkout carries for this machine.
+  string(TOLOWER "${CMAKE_SYSTEM_NAME}" anvil_target_os)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(anvil_target_arch arm64)
+  else()
+    set(anvil_target_arch x64)
+  endif()
+  target_compile_definitions(anvil_search_tests PRIVATE
+    ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode"
+    ANVIL_TARGET="${anvil_target_os}-${anvil_target_arch}")
+  gtest_discover_tests(anvil_search_tests)
+endif()
+
 add_executable(anvil_exthost_tests
   exthost/binary_arguments_test.cpp
   exthost/activation_service_test.cpp

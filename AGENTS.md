@@ -61,16 +61,17 @@ ctest --preset linux-clang-debug -R Session   # a subset
 scripts/format.sh                             # format; --check only reports
 ```
 
-Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-gcc-debug`, plus Windows and macOS presets that have not been built. Test binaries are in `build/<preset>/bin/`: `anvil_core_tests`, `anvil_platform_tests`, `anvil_exthost_tests`, `anvil_workbench_tests`, `anvil_exthost_integration_tests` (real extension host), `anvil_ui_tests` (Qt, offscreen). Run the editor with `build/<preset>/bin/anvil` (see the README).
+Presets: `linux-clang-debug`, `linux-clang-release`, `linux-clang-asan`, `linux-gcc-debug`, plus Windows and macOS presets that have not been built. Test binaries are in `build/<preset>/bin/`: `anvil_core_tests`, `anvil_platform_tests`, `anvil_search_tests` (runs ripgrep, and skips what needs it where there is none unless `ANVIL_REQUIRE_RIPGREP` is set), `anvil_exthost_tests`, `anvil_workbench_tests`, `anvil_exthost_integration_tests` (real extension host), `anvil_ui_tests` (Qt, offscreen). Run the editor with `build/<preset>/bin/anvil` (see the README).
 
 ## Layers
 
-`ui` → `workbench` → `exthost` → `core` / `platform`. Dependencies point down only. `core` has no Qt and no OS code; per-OS code lives only in `platform`; Qt lives only in `ui`. The CMake targets enforce this, so a violation fails to link or include. `workbench` holds the editor layout model so far.
+`ui` → `workbench` → `exthost` → `core` / `platform`. `search` depends on `core` and `platform` alone, for `exthost` and the layers above it. Dependencies point down only. `core` has no Qt and no OS code; per-OS code lives only in `platform`; Qt lives only in `ui`. The CMake targets enforce this, so a violation fails to link or include. `workbench` holds the editor layout model so far.
 
 | Directory | Contents |
 | --- | --- |
 | `src/core` | rope text, documents, undo, selections, editing commands, search and replace, `when` expressions, color themes, key chords, fuzzy matching, the language id of a file, the rows of wrapped lines, the syntax highlighter interface and the worker that parses on a thread, UTF-8/UTF-16, URIs, glob patterns, file name order and the file tree of the explorer, the workspace folder and the command line, JSON with comments (parsed, with positions, and edited in place), settings, logging interface |
-| `src/platform` | processes, local sockets, files, file watching, paths, per-platform editor defaults |
+| `src/platform` | processes, local sockets, files, file watching, paths, finding executables, per-platform editor defaults |
+| `src/search` | listing the files of a folder with ripgrep |
 | `src/exthost` | frame and RPC codecs, session, extension host launcher, `MainThread*` services, the commands, key bindings and palette rules that extension manifests contribute |
 | `src/workbench` | the editor layout: groups of tabs, the split tree, focus, saving and restoring it, the menu bar of VS Code with the rules that show its entries, and the store of the editor's state (no Qt) |
 | `src/ui` | editor view, find bar, quick pick popup, command registry, workbench layout and colors, color theme store, syntax highlighting of the open documents, view containers with the activity bar, sidebar and panel, the saving and restoring of the window's state, status bar, title bar and window frame, tab strip, splitter, editor area and its groups, main window, extension host bridge |
