@@ -108,6 +108,14 @@ TEST(RowMotion, TheSideOfARowIsForgottenWhenTheSelectionsOrTheTextChange) {
     w.controller.set_caret(4, false, true);
     w.controller.move(Motion::left);
     EXPECT_FALSE(w.controller.ends_row(3));
+
+    // Text added after the caret by something else leaves the selections as they were.
+    w.controller.set_caret(4, false, true);
+    ASSERT_TRUE(w.controller.ends_row(4));
+    const Edit elsewhere{w.document.text().size(), w.document.text().size(), "!"};
+    ASSERT_TRUE(w.document.apply_edits(std::span(&elsewhere, 1)).has_value());
+    ASSERT_EQ(w.at(), 4U);
+    EXPECT_FALSE(w.controller.ends_row(4));
 }
 
 TEST(RowMotion, TheSameOffsetOnTheOtherRowIsAChange) {
