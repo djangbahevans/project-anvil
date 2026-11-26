@@ -309,6 +309,8 @@ private:
     // and for extensions.
     void explorer_renamed(const std::filesystem::path& from, const std::filesystem::path& to);
     void explorer_deleted(const std::vector<std::filesystem::path>& paths);
+    // Whether a document with unsaved changes is open at or below the path.
+    bool has_unsaved_changes_within(const std::filesystem::path& path) const;
     // Reads `files.exclude` and, when it changed, gives it to the explorer.
     void apply_file_excludes();
     // Builds the comment tokens of the registered languages from the built-in table and from the

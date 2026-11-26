@@ -486,6 +486,8 @@ void MainWindow::register_explorer() {
         connect(view, &ExplorerView::watch_problem, this,
                 [this](const QString& message) { status_bar_->show_message(message, 15000); });
         view->set_zoom(&zoom_);
+        view->set_unsaved_changes_check(
+            [this](const std::filesystem::path& path) { return has_unsaved_changes_within(path); });
         view->set_excludes(file_excludes_);
         view->set_confirm_delete(settings_->editor().explorer_confirm_delete);
         view->set_trash_enabled(settings_->editor().enable_trash);
@@ -550,10 +552,11 @@ std::unique_ptr<QMenu> MainWindow::build_explorer_menu() {
         menu->addSeparator();
     }
     // The menu takes the focus, so the command could not tell what to reveal.
-    const std::optional<std::filesystem::path> target =
-        !selected.empty()    ? std::optional(selected.front())
-        : options_.workspace ? std::optional(options_.workspace->folder)
-                             : std::nullopt;
+    std::optional<std::filesystem::path> target =
+        explorer_ ? explorer_->focused_path() : std::nullopt;
+    if (!target && options_.workspace) {
+        target = options_.workspace->folder;
+    }
     add(reveal_title(), "revealFileInOS", [this, target] {
         if (target) {
             reveal_path(*target);
@@ -571,10 +574,8 @@ void MainWindow::reveal_in_file_manager() {
     std::optional<std::filesystem::path> path;
     QWidget* focus = QApplication::focusWidget();
     if (explorer_ && focus && explorer_->isAncestorOf(focus)) {
-        const std::vector<std::filesystem::path> selected = explorer_->selected_paths();
-        if (!selected.empty()) {
-            path = selected.front();
-        } else if (options_.workspace) {
+        path = explorer_->focused_path();
+        if (!path && options_.workspace) {
             path = options_.workspace->folder;
         }
     }
@@ -722,6 +723,13 @@ bool MainWindow::has_unsaved_changes_in(const std::filesystem::path& file) const
         }
     }
     return false;
+}
+
+bool MainWindow::has_unsaved_changes_within(const std::filesystem::path& path) const {
+    return std::ranges::any_of(documents_, [&](const auto& entry) {
+        const auto file = entry.first.file_path();
+        return file && entry.second->is_dirty() && exthost::is_path_within(*file, path);
+    });
 }
 
 SettingsStore::ChangeResult MainWindow::change_setting(const std::string& key, nlohmann::json value,
