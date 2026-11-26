@@ -192,6 +192,8 @@ TEST_F(ScrollBarTest, AChangeOfThemeRepaintsTheBarAtOnce) {
             return false;
         }
     } paints;
+    // A repaint that is already due would count.
+    QApplication::processEvents();
     bar_.installEventFilter(&paints);
     auto colors = theme();
     colors["scrollbarSlider.background"] = QColor("#123456");
