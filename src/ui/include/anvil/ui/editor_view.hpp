@@ -26,8 +26,9 @@ namespace anvil::ui {
 // scrolling, and keyboard, mouse and input method handling. All editing behavior lives in
 // core::EditController; the view translates events into controller commands and paints the result.
 //
-// Only the visible lines are laid out, so documents of any size scroll smoothly. Lines longer than
-// `max_line_characters` are shown cut off.
+// Only the visible lines are laid out, so documents of any size scroll smoothly, and the layouts
+// of the most recently used lines are kept until the line, the font or the highlighting changes.
+// Lines longer than `max_line_characters` are shown cut off.
 class EditorView : public QAbstractScrollArea {
     Q_OBJECT
 
@@ -165,6 +166,11 @@ public:
     int char_width() const {
         return char_width_;
     }
+    // How many line layouts the view has built since it was created, which tells a test whether a
+    // paint, a hit test or an edit reused the cached layouts.
+    std::size_t layouts_built() const {
+        return layouts_built_;
+    }
 
 signals:
     // The user changed the text: typing, deleting, pasting, undo or redo.
@@ -211,7 +217,16 @@ private:
                          std::span<const core::ColumnRange> selected, int origin_x, int y,
                          const QColor& color) const;
 
-    std::unique_ptr<LineLayout> layout_line(std::size_t line) const;
+    // The layout of `line`, from the cache when it is there.
+    std::shared_ptr<const LineLayout> layout_line(std::size_t line) const;
+    std::shared_ptr<const LineLayout> build_layout(std::size_t line) const;
+    // Drops every cached layout.
+    void clear_layouts();
+    // Brings the cache to the text after `change`: layouts of the replaced lines are dropped and
+    // the ones below move with their lines.
+    void update_layouts(const core::DocumentChange& change);
+    // The number of layouts kept: enough for the lines in view and the lines around them.
+    std::size_t layout_capacity() const;
     int gutter_width() const;
     int text_origin_x() const;
     void apply(const core::EditOutcome& outcome);
@@ -269,9 +284,15 @@ private:
     std::vector<core::Match> highlights_;
     std::shared_ptr<const core::Highlighter> highlighter_;
     std::uint64_t painted_highlighter_version_ = 0;
-    // A digest of the spans that each line was last laid out with, which tells
-    // `refresh_highlighting` what changed. Lines far from the view are dropped as it runs.
-    mutable std::unordered_map<std::size_t, std::size_t> laid_out_spans_;
+    struct CachedLayout {
+        std::shared_ptr<const LineLayout> layout;
+        std::uint64_t used = 0;
+    };
+    // The layouts of lines by line number, valid for the document at `layout_version_`.
+    mutable std::unordered_map<std::size_t, CachedLayout> layouts_;
+    mutable std::uint64_t layout_version_ = 0;
+    mutable std::uint64_t layout_clock_ = 0;
+    mutable std::size_t layouts_built_ = 0;
     std::optional<OccurrenceSession> occurrence_session_;
 };
 
