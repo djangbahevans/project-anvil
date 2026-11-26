@@ -2453,6 +2453,9 @@ TEST(ExplorerMoveQuestionTest, TheBoxHasAMoveButtonCancelAndDoNotAskAgain) {
                 ASSERT_NE(box->checkBox(), nullptr);
                 box_label = box->checkBox()->text();
                 box->checkBox()->setChecked(again);
+                if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+                    box->grab().save(QString::fromUtf8(directory) + "/explorer_move_question.png");
+                }
                 if (move && accept) {
                     accept->click();
                 } else {
