@@ -11928,6 +11928,21 @@ TEST_F(ExplorerIconWindowTest, AnOpenDocumentGivesItsFileTheIconOfItsLanguage) {
     EXPECT_EQ(glyph_of("run"), ui::seti_default_icon().dark);
 }
 
+TEST_F(ExplorerIconWindowTest, APlainTextDocumentLeavesItsFileTheIconOfItsPath) {
+    create_window();
+    explorer_ = show_explorer();
+    ASSERT_TRUE(
+        window_->open_file(QString::fromStdString((workspace_->folder / "main.py").string())));
+    window_->commands().execute("workbench.action.editor.changeLanguageMode");
+    ui::QuickPick* pick = window_->command_palette();
+    QTest::keyClicks(pick->filter_field(), "plaintext");
+    QTest::keyClick(pick->filter_field(), Qt::Key_Return);
+    QApplication::processEvents();
+    ASSERT_EQ(label_text("Plain Text"), "Plain Text");
+    // As in VS Code, which asks the path when the document says no more than plain text.
+    EXPECT_EQ(glyph_of("main.py"), of("python"));
+}
+
 TEST_F(ExplorerIconWindowTest, AChangeOfTheFileAssociationsPaintsTheIconsAgain) {
     create_window();
     explorer_ = show_explorer();
