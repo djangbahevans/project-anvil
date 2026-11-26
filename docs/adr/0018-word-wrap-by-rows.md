@@ -1,6 +1,6 @@
 # 0018. Word wrap breaks lines into rows by columns, computed in the core
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-26
 
 ## Context
@@ -22,7 +22,7 @@ View ▸ Word Wrap in VS Code (`editor.action.toggleWordWrap`, `src/vs/workbench
 
 ## Consequences
 
-- Rows are known for the whole document, so the scrollbar is exact and does not move as lines come into view. The cost is a pass over the text when the wrapping column changes. A measurement of a simplified form of the rules (one greedy pass over the storage chunks of the text at 80 columns, `-O3`, an Intel Core Ultra 9 275HX under WSL2) takes 13 to 17 ms for 100,000 lines of 55 characters, 27 ms for 100,000 lines of 170, about 95 ms for a million lines, and 17 to 30 ms for one line of 10 MB. Summing the counts of a million lines takes 0.25 ms. The full rules cost more, which is why this ADR rests on an assumption: the real computer keeps a change of width below a delay that matters in documents up to about 100,000 lines. The step that adds it measures this. Dragging a splitter over a document of a million lines lags.
+- Rows are known for the whole document, so the scrollbar is exact and does not move as lines come into view. The cost is a pass over the text when the wrapping column changes. A measurement of a simplified form of the rules (one greedy pass over the storage chunks of the text at 80 columns, `-O3`, an Intel Core Ultra 9 275HX under WSL2) takes 13 to 17 ms for 100,000 lines of 55 characters, 27 ms for 100,000 lines of 170, about 95 ms for a million lines, and 17 to 30 ms for one line of 10 MB. Summing the counts of a million lines takes 0.25 ms. The full rules cost more; the implementation measures them, and they must not make a change of width noticeably slow in documents of up to 100,000 lines. Dragging a splitter over a document of a million lines lags.
 - The counts take four bytes a line for each wrapped view.
 - An edit in a very long wrapped line computes its breaks again, from the row before the edit.
 - Breaks are exact for a monospace font. A proportional font, or glyphs whose width differs from the counted columns, leaves rows short or makes them run past the edge, where horizontal scrolling reaches them. VS Code's simple strategy behaves the same way.
