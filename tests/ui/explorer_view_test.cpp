@@ -2237,7 +2237,7 @@ TEST_F(ExplorerExpandedTest, AnotherFolderForgetsWhatWasToBeRestored) {
     view_->set_workspace(std::filesystem::path("/w"), "w");
     view_->restore_expanded({"src/util"});
     view_->set_workspace(std::filesystem::path("/w/docs"), "docs");
-    settle();
+    // At once: a listing of the new folder would drop what it does not have anyway.
     EXPECT_TRUE(view_->expanded_folders().empty());
     view_->set_workspace(std::nullopt, QString());
     view_->restore_expanded({"src"});
