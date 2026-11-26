@@ -2,6 +2,7 @@
 
 #include "anvil/core/char_class.hpp"
 #include "anvil/core/visible_column.hpp"
+#include "row_motion.hpp"
 
 #include <algorithm>
 
@@ -453,14 +454,32 @@ EditOutcome EditController::redo() {
     return outcome;
 }
 
-EditOutcome EditController::adopt(SelectionSet selections) {
+std::vector<std::size_t> EditController::current_row_ends() const {
+    const bool current = !row_ends_.offsets.empty() && row_ends_.version == document_.version() &&
+                         row_ends_.selections == document_.selections();
+    return current ? row_ends_.offsets : std::vector<std::size_t>{};
+}
+
+bool EditController::ends_row(std::size_t offset) const {
+    // The offsets are looked at first: comparing many selections costs more.
+    return std::ranges::binary_search(row_ends_.offsets, offset) &&
+           row_ends_.version == document_.version() &&
+           row_ends_.selections == document_.selections();
+}
+
+EditOutcome EditController::adopt(SelectionSet selections, std::vector<std::size_t> row_ends) {
     goal_column_.reset();
-    if (selections == document_.selections()) {
+    std::ranges::sort(row_ends);
+    const bool moved = !(selections == document_.selections());
+    // A caret can change rows and stay at its offset.
+    const bool turned = row_ends != current_row_ends();
+    if (!moved && !turned) {
         return {};
     }
-    if (!document_.set_selections(std::move(selections))) {
+    if (moved && !document_.set_selections(std::move(selections))) {
         return {};
     }
+    row_ends_ = {document_.version(), document_.selections(), std::move(row_ends)};
     return {std::nullopt, true};
 }
 
@@ -468,13 +487,19 @@ EditOutcome EditController::move(Motion motion, bool extend) {
     const Text& text = document_.text();
     const auto& current = document_.selections().all();
     const bool vertical = motion == Motion::up || motion == Motion::down;
+    const bool by_rows = vertical || motion == Motion::home || motion == Motion::line_end;
+    const RowMap* rows = by_rows && row_source_ ? row_source_() : nullptr;
+    std::vector<std::size_t> row_ends;
     std::optional<std::size_t> goal;
     bool at_edge = false;
     if (vertical && current.size() == 1) {
-        goal =
-            goal_column_
-                ? goal_column_
-                : std::optional<std::size_t>(visible_column_at(text, current[0].active, tab_size_));
+        if (goal_column_) {
+            goal = goal_column_;
+        } else {
+            const std::size_t active = current[0].active;
+            goal = rows ? row_visible_column(text, *rows, {active, ends_row(active)}, tab_size_)
+                        : visible_column_at(text, active, tab_size_);
+        }
         // As in VS Code, a caret that is at the start or end of the text and moves further that
         // way forgets its column.
         at_edge = current[0].active == (motion == Motion::up ? 0 : text.size());
@@ -483,6 +508,8 @@ EditOutcome EditController::move(Motion motion, bool extend) {
     std::vector<Selection> moved;
     for (const Selection& selection : current) {
         std::size_t target = selection.active;
+        const RowCaret caret{selection.active, rows != nullptr && ends_row(selection.active)};
+        std::optional<RowCaret> on_rows;
         switch (motion) {
         case Motion::left:
             if (!extend && !selection.empty()) {
@@ -500,19 +527,29 @@ EditOutcome EditController::move(Motion motion, bool extend) {
                                                     : text.size();
             break;
         case Motion::up:
-            target = move_vertically(text, selection.active, -1, goal, tab_size_);
+        case Motion::down: {
+            const int direction = motion == Motion::up ? -1 : 1;
+            if (rows) {
+                on_rows = row_vertical(text, *rows, caret, direction, goal, tab_size_);
+            } else {
+                target = move_vertically(text, selection.active, direction, goal, tab_size_);
+            }
             break;
-        case Motion::down:
-            target = move_vertically(text, selection.active, 1, goal, tab_size_);
-            break;
+        }
         case Motion::line_start:
             target = text.line_start(text.position_at(selection.active).line);
             break;
         case Motion::home:
-            target = home_target(text, selection.active);
+            on_rows = rows ? row_home(text, *rows, caret) : std::nullopt;
+            if (!on_rows) {
+                target = home_target(text, selection.active);
+            }
             break;
         case Motion::line_end:
-            target = text.line_end(text.position_at(selection.active).line);
+            on_rows = rows ? row_end(text, *rows, caret) : std::nullopt;
+            if (!on_rows) {
+                target = text.line_end(text.position_at(selection.active).line);
+            }
             break;
         case Motion::document_start:
             target = 0;
@@ -527,11 +564,18 @@ EditOutcome EditController::move(Motion motion, bool extend) {
             target = word_right(text, selection.active);
             break;
         }
+        if (on_rows) {
+            target = on_rows->offset;
+            if (on_rows->ends_row) {
+                row_ends.push_back(target);
+            }
+        }
         moved.push_back(extend ? Selection{selection.anchor, target} : Selection::caret(target));
     }
 
     EditOutcome outcome =
-        adopt(SelectionSet::from(std::move(moved), document_.selections().primary_index()));
+        adopt(SelectionSet::from(std::move(moved), document_.selections().primary_index()),
+              std::move(row_ends));
     // Vertical movement remembers the column it started from; any other movement forgets it.
     goal_column_ = vertical && !at_edge ? goal : std::nullopt;
     return outcome;
@@ -553,7 +597,8 @@ EditOutcome EditController::select(Selection range) {
     return adopt(SelectionSet::from({Selection{boundary(range.anchor), boundary(range.active)}}));
 }
 
-EditOutcome EditController::select_ranges(std::vector<Selection> ranges, std::size_t primary) {
+EditOutcome EditController::select_ranges(std::vector<Selection> ranges, std::size_t primary,
+                                          std::vector<std::size_t> row_ends) {
     const Text& text = document_.text();
     const auto boundary = [&text](std::size_t offset) {
         offset = std::min(offset, text.size());
@@ -565,29 +610,43 @@ EditOutcome EditController::select_ranges(std::vector<Selection> ranges, std::si
     for (Selection& range : ranges) {
         range = Selection{boundary(range.anchor), boundary(range.active)};
     }
-    return adopt(SelectionSet::from(std::move(ranges), primary));
+    return adopt(SelectionSet::from(std::move(ranges), primary), std::move(row_ends));
 }
 
-EditOutcome EditController::set_caret(std::size_t offset, bool extend) {
+EditOutcome EditController::set_caret(std::size_t offset, bool extend, bool row_end) {
     const Text& text = document_.text();
     offset = std::min(offset, text.size());
     while (!text.is_char_boundary(offset)) {
         --offset;
     }
+    std::vector<std::size_t> row_ends;
+    if (row_end) {
+        row_ends.push_back(offset);
+    }
     if (extend) {
         std::vector<Selection> selections = document_.selections().all();
         const std::size_t primary = document_.selections().primary_index();
+        for (const std::size_t other : current_row_ends()) {
+            if (other != selections[primary].active) {
+                row_ends.push_back(other);
+            }
+        }
         selections[primary].active = offset;
-        return adopt(SelectionSet::from(std::move(selections), primary));
+        return adopt(SelectionSet::from(std::move(selections), primary), std::move(row_ends));
     }
-    return adopt(SelectionSet::from({Selection::caret(offset)}));
+    return adopt(SelectionSet::from({Selection::caret(offset)}), std::move(row_ends));
 }
 
 EditOutcome EditController::keep_primary_selection() {
-    return adopt(SelectionSet::from({document_.selections().primary()}));
+    const Selection primary = document_.selections().primary();
+    std::vector<std::size_t> row_ends;
+    if (ends_row(primary.active)) {
+        row_ends.push_back(primary.active);
+    }
+    return adopt(SelectionSet::from({primary}), std::move(row_ends));
 }
 
-EditOutcome EditController::add_caret(std::size_t offset) {
+EditOutcome EditController::add_caret(std::size_t offset, bool row_end) {
     const Text& text = document_.text();
     offset = std::min(offset, text.size());
     while (!text.is_char_boundary(offset)) {
@@ -596,7 +655,11 @@ EditOutcome EditController::add_caret(std::size_t offset) {
     std::vector<Selection> selections = document_.selections().all();
     selections.push_back(Selection::caret(offset));
     const std::size_t added = selections.size() - 1;
-    return adopt(SelectionSet::from(std::move(selections), added));
+    std::vector<std::size_t> row_ends = current_row_ends();
+    if (row_end) {
+        row_ends.push_back(offset);
+    }
+    return adopt(SelectionSet::from(std::move(selections), added), std::move(row_ends));
 }
 
 EditOutcome EditController::select_word_at(std::size_t offset) {
