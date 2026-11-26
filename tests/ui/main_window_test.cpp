@@ -11624,3 +11624,76 @@ TEST_F(QuickAccessLineTest, AnotherListStaysWhatItIsWhenAColonIsTyped) {
     EXPECT_FALSE(goes_to_line());
     EXPECT_EQ(line(), 1U);
 }
+
+namespace {
+
+// An extension that starts for a file that matches a pattern, with the window's search settings.
+class WorkspaceContainsWindowTest : public MainWindowTest {
+protected:
+    // False when the test has to skip.
+    bool start(const std::string& settings) {
+        const char* override_path = std::getenv("ANVIL_RG");
+        const char* path_variable = std::getenv("PATH");
+        ripgrep_ = search::find_ripgrep({.override_path = override_path ? override_path : "",
+                                         .vscode_dir = ANVIL_VSCODE_DIR,
+                                         .path_variable = path_variable ? path_variable : ""});
+        if (!ripgrep_) {
+            EXPECT_EQ(std::getenv("ANVIL_REQUIRE_RIPGREP"), nullptr) << "ripgrep is required";
+            return false;
+        }
+        for (const char* name : {"first/dist", "second/sub"}) {
+            std::filesystem::create_directories(scratch_ / name);
+        }
+        EXPECT_TRUE(platform::write_file(scratch_ / "first/dist/a.fixture", "x").has_value());
+        EXPECT_TRUE(platform::write_file(scratch_ / "second/sub/b.fixture", "x").has_value());
+        settings_file_ = write("settings.json", settings);
+        extension_dirs_ = {ANVIL_ACTIVATION_GLOB_EXTENSION};
+        workspace_ = *core::Workspace::open(scratch_ / "first");
+        create_window(true);
+        return !::testing::Test::IsSkipped() && window_ != nullptr;
+    }
+    bool active() {
+        return window_->bridge().host() &&
+               window_->bridge().host()->commands().extension_commands().contains(
+                   "anvil.activation.activation-glob");
+    }
+    bool settled() {
+        return window_->bridge().host()->state() == exthost::HostState::ready &&
+               window_->bridge().host()->workspace_service().pending() == 0;
+    }
+};
+
+} // namespace
+
+TEST_F(WorkspaceContainsWindowTest, TheExtensionStartsForAFileInTheWorkspace) {
+    if (!start("{}")) {
+        GTEST_SKIP() << "needs ripgrep, Node.js and the VS Code checkout";
+    }
+    EXPECT_TRUE(wait_until([&] { return active(); }));
+}
+
+TEST_F(WorkspaceContainsWindowTest, TheSearchSettingsApplyFromTheStartAndAfterAnotherFolder) {
+    if (!start(R"({"search.exclude": {"**/dist": true}})")) {
+        GTEST_SKIP() << "needs ripgrep, Node.js and the VS Code checkout";
+    }
+    ASSERT_TRUE(wait_until([&] { return settled(); }));
+    QTest::qWait(500);
+    EXPECT_FALSE(active()) << "the only match is where search.exclude hides it";
+
+    // The other folder has its match elsewhere; the new host searches it with the settings.
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    EXPECT_TRUE(wait_until([&] { return active(); }));
+}
+
+TEST_F(WorkspaceContainsWindowTest, AHostStartedAgainSearchesWithTheSettingsAsTheyAreThen) {
+    if (!start(R"({"search.exclude": {"**/dist": true}})")) {
+        GTEST_SKIP() << "needs ripgrep, Node.js and the VS Code checkout";
+    }
+    ASSERT_TRUE(wait_until([&] { return settled(); }));
+    // The match of the other folder is in `sub`, which only the new setting leaves out.
+    window_->change_setting("search.exclude", nlohmann::json{{"**/sub", true}});
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    ASSERT_TRUE(wait_until([&] { return settled(); }));
+    QTest::qWait(500);
+    EXPECT_FALSE(active());
+}

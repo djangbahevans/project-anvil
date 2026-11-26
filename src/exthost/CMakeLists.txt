@@ -19,11 +19,12 @@ add_library(anvil_exthost STATIC
   session_logs.cpp
   vscode_types.cpp
   workspace_file_edit.cpp
+  workspace_service.cpp
 )
 add_library(anvil::exthost ALIAS anvil_exthost)
 
 target_include_directories(anvil_exthost PUBLIC include)
 target_link_libraries(anvil_exthost
-  PUBLIC anvil::core anvil::platform nlohmann_json::nlohmann_json
+  PUBLIC anvil::core anvil::platform anvil::search nlohmann_json::nlohmann_json
   PRIVATE anvil_compile_options
 )

@@ -95,6 +95,7 @@ add_executable(anvil_exthost_tests
   exthost/file_event_service_test.cpp
   exthost/file_system_providers_test.cpp
   exthost/file_system_service_test.cpp
+  exthost/workspace_service_test.cpp
   exthost/frame_test.cpp
   exthost/init_data_test.cpp
   exthost/logging_service_test.cpp
@@ -108,7 +109,8 @@ add_executable(anvil_exthost_tests
 find_package(nlohmann_json REQUIRED)
 target_link_libraries(anvil_exthost_tests PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(anvil_exthost_tests PRIVATE anvil::exthost GTest::gtest_main anvil_compile_options)
-target_compile_definitions(anvil_exthost_tests PRIVATE ANVIL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/exthost/data")
+target_compile_definitions(anvil_exthost_tests PRIVATE ANVIL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/exthost/data"
+  ANVIL_VSCODE_DIR="${CMAKE_SOURCE_DIR}/.deps/vscode")
 gtest_discover_tests(anvil_exthost_tests)
 
 add_executable(anvil_workbench_tests
@@ -154,6 +156,7 @@ target_compile_definitions(anvil_exthost_integration_tests PRIVATE
   ANVIL_ACTIVATION_FS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-fs-extension"
   ANVIL_ACTIVATION_STARTUP_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-startup-extension"
   ANVIL_ACTIVATION_CONTAINS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-contains-extension"
+  ANVIL_ACTIVATION_GLOB_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-glob-extension"
   ANVIL_MEMFS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/memfs-extension")
 gtest_discover_tests(anvil_exthost_integration_tests)
 
@@ -207,7 +210,8 @@ if(TARGET anvil_ui)
     ANVIL_CONTRIBUTIONS_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/contributions-extension"
     ANVIL_THEMES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/themes-extension"
     ANVIL_LANGUAGES_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/languages-extension"
-    ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension")
+    ANVIL_WORKSPACE_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/workspace-extension"
+    ANVIL_ACTIVATION_GLOB_EXTENSION="${CMAKE_SOURCE_DIR}/tools/exthost-probe/fixtures/activation-glob-extension")
   gtest_discover_tests(anvil_ui_tests)
 endif()
 

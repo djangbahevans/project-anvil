@@ -159,6 +159,15 @@ TEST(RipgrepArguments, FollowTheOptions) {
                      "--null", "--path-separator=/"}));
 }
 
+TEST(RipgrepArguments, IncludesComeAnchoredBeforeTheExcludes) {
+    FileSearchOptions options;
+    options.excludes = {"**/.git"};
+    const Names arguments = list_arguments(options, {"**/*.toml", "a.txt", "b\\c", ""});
+    EXPECT_EQ((Names(arguments.begin(), arguments.begin() + 12)),
+              (Names{"--files", "--hidden", "--case-sensitive", "--no-require-git", "-g",
+                     "**/*.toml", "-g", "/a.txt", "-g", "/b/c", "-g", "!**/.git"}));
+}
+
 class FindRipgrepTest : public ScratchTest {
 protected:
     fs::path bundled() {
@@ -225,6 +234,17 @@ TEST_F(StandInTest, NamesArriveWhileRipgrepRunsAndOnesThatArriveInPiecesAreWhole
     EXPECT_TRUE(batch.files.empty());
     EXPECT_FALSE(batch.finished);
     EXPECT_GE(std::chrono::steady_clock::now() - start, milliseconds(90));
+}
+
+TEST_F(StandInTest, AReadWithoutATimeoutDoesNotWaitForRipgrepToExit) {
+    FileListing listing = start("exec >&- 2>&-; exec sleep 5");
+    // Until both streams are seen closed.
+    std::this_thread::sleep_for(milliseconds(300));
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_FALSE(listing.read(milliseconds(0)).finished);
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - start, milliseconds(100));
 }
 
 TEST_F(StandInTest, CancellingEndsRipgrepAtOnce) {
@@ -418,4 +438,17 @@ TEST_F(RipgrepTest, ACancelledListingGivesNothingMore) {
     const auto batch = listing->read(milliseconds(100));
     EXPECT_TRUE(batch.finished);
     EXPECT_TRUE(batch.files.empty());
+}
+
+TEST_F(RipgrepTest, AnIncludeNamesAnIgnoredFileButEntersNoIgnoredFolderAndAnExcludeWins) {
+    write(".gitignore", "build/\nignored.fixture\n");
+    write("build/in_build.fixture");
+    write("ignored.fixture");
+    write("sub/a.fixture");
+    write("sub/b.txt");
+    write("node_modules/dep/x.fixture");
+    write("named.fixture/inside.txt");
+    auto listing = FileListing::start(rg_, root_, options_of(), {"**/*.fixture"});
+    ASSERT_TRUE(listing.has_value());
+    EXPECT_EQ(collect(*listing).files, (Names{"ignored.fixture", "sub/a.fixture"}));
 }

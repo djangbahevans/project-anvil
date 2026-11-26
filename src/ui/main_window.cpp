@@ -394,6 +394,11 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         };
         ExtensionHostBridge::Config host_config = *options_.extension_host;
         host_config.workspace = options_.workspace;
+        // Extensions search as the editor does, and they are started by what they find, so the
+        // host has the settings from its start.
+        host_config.search = {.ripgrep = options_.ripgrep,
+                              .options =
+                                  core::FileSearchOptions::from_settings(settings_->settings())};
         if (auto started = bridge_.start(host_config, logger, std::move(callbacks)); !started) {
             status_bar_->show_message(tr("The extension host did not start: %1")
                                           .arg(QString::fromStdString(started.error().message)),
@@ -701,6 +706,7 @@ void MainWindow::workspace_changed() {
     if (options_.extension_host) {
         core::NullLogger discarded;
         core::Logger& logger = options_.logger ? *options_.logger : discarded;
+        bridge_.set_search_settings({.ripgrep = options_.ripgrep, .options = search_options_});
         auto restarted = bridge_.restart(options_.workspace);
         rebuild_languages();
         if (!restarted) {

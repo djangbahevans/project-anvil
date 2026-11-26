@@ -29,8 +29,11 @@ struct RipgrepLocations {
 std::optional<std::filesystem::path> find_ripgrep(const RipgrepLocations& locations);
 
 // The arguments of `rg` that lists the files of the directory it runs in, as VS Code passes them
-// (`ripgrepFileSearch.ts`), with names that end in a null byte.
-std::vector<std::string> list_arguments(const core::FileSearchOptions& options);
+// (`ripgrepFileSearch.ts`), with names that end in a null byte. With `includes`, only files that
+// one of these globs matches are listed. ripgrep lets such a glob override the ignore files for a
+// file that they name, though not enter a folder that they ignore, and an exclude still wins.
+std::vector<std::string> list_arguments(const core::FileSearchOptions& options,
+                                        const std::vector<std::string>& includes = {});
 
 // What a read of a listing gives.
 struct ListingBatch {
@@ -48,13 +51,16 @@ struct ListingBatch {
 // listing ends ripgrep. One thread uses a listing at a time.
 class FileListing {
 public:
-    // Fails when ripgrep cannot be started or the folder is not a directory.
+    // Fails when ripgrep cannot be started or the folder is not a directory. `includes` are as in
+    // `list_arguments`.
     static std::expected<FileListing, Error> start(const std::filesystem::path& ripgrep,
                                                    const std::filesystem::path& folder,
-                                                   const core::FileSearchOptions& options);
+                                                   const core::FileSearchOptions& options,
+                                                   const std::vector<std::string>& includes = {});
 
-    // Waits up to `timeout` for ripgrep to say something, and gives what has arrived, which can be
-    // nothing. A listing that has finished gives nothing more.
+    // Waits up to `timeout` for ripgrep to say something or to end, and gives what has arrived,
+    // which can be nothing. With no timeout it does not wait at all. A listing that has finished
+    // gives nothing more.
     ListingBatch read(std::chrono::milliseconds timeout);
 
     // Ends ripgrep at once and finishes the listing.
@@ -66,7 +72,7 @@ private:
     // Reads what the output or the error has ready.
     void drain_output(std::vector<std::string>& files);
     void drain_error();
-    void end(ListingBatch& batch);
+    void end(ListingBatch& batch, std::chrono::milliseconds timeout);
     void fail(ListingBatch& batch, const Error& error);
 
     std::optional<platform::Process> process_;
