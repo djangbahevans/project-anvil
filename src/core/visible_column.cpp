@@ -11,12 +11,11 @@ namespace {
 
 // VS Code's `isFullWidthCharacter` and `isEmojiImprecise`.
 bool is_two_columns(char32_t c) {
-    return (c >= 0x2E80 && c <= 0xD7AF) || (c >= 0xF900 && c <= 0xFAFF) ||
-           (c >= 0xFF01 && c <= 0xFF5E) || (c >= 0xFFE0 && c <= 0xFFE6) ||
-           (c >= 0x1F1E6 && c <= 0x1F1FF) || c == 8986 || c == 8987 || c == 9200 || c == 9203 ||
-           (c >= 9728 && c <= 10175) || c == 11088 || c == 11093 || (c >= 127744 && c <= 128591) ||
-           (c >= 128640 && c <= 128764) || (c >= 128992 && c <= 129008) ||
-           (c >= 129280 && c <= 129535) || (c >= 129648 && c <= 129782);
+    return is_full_width(c) || (c >= 0x1F1E6 && c <= 0x1F1FF) || c == 8986 || c == 8987 ||
+           c == 9200 || c == 9203 || (c >= 9728 && c <= 10175) || c == 11088 || c == 11093 ||
+           (c >= 127744 && c <= 128591) || (c >= 128640 && c <= 128764) ||
+           (c >= 128992 && c <= 129008) || (c >= 129280 && c <= 129535) ||
+           (c >= 129648 && c <= 129782);
 }
 
 GraphemeClass grapheme_class(char32_t c) {
