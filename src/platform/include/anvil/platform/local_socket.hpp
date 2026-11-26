@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/error.hpp"
+#include "anvil/platform/read_result.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -11,12 +12,6 @@
 #include <span>
 
 namespace anvil::platform {
-
-struct ReadResult {
-    std::size_t bytes = 0;
-    // True once the peer has closed its end and all data has been read.
-    bool closed = false;
-};
 
 // A connected stream socket on a filesystem path (Unix domain socket).
 class LocalConnection {
