@@ -39,9 +39,9 @@ public:
     explicit EditorView(QWidget* parent = nullptr);
     ~EditorView() override;
 
-    // Takes the font, tab size and tab key behavior from the settings. A font family that is not
-    // installed falls back to the system's fixed-width font. The text, caret and scroll position
-    // stay as they are, so this can run while the user edits.
+    // Takes the font, tab size, tab key and scrolling behavior from the settings. A font family
+    // that is not installed falls back to the system's fixed-width font. The text, caret and scroll
+    // position stay as they are, so this can run while the user edits.
     void apply_settings(const core::EditorSettings& settings);
 
     // Takes the colors of the editor from the workbench colors, which must outlive the view, and
@@ -209,6 +209,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
@@ -259,8 +260,11 @@ private:
     int text_origin_x() const;
     // The width of the part of the viewport that shows text.
     int text_width() const;
-    // The horizontal extent that a row ending at `end` asks the scroll bar for.
+    // The width that a row ending at `end` asks the scroll bar to reach: none for a wrapped row
+    // that fits in the view.
     int scroll_width(qreal end) const;
+    // Whether lines wrap at the width of the view, or at a column that it may narrow.
+    bool wraps_at_view() const;
 
     // What the rows are made with now, or nothing when lines do not wrap.
     std::optional<core::WrapOptions> wrap_options() const;
@@ -333,6 +337,9 @@ private:
     core::RenderWhitespace render_whitespace_ = core::RenderWhitespace::selection;
     bool render_control_characters_ = true;
     int max_line_width_ = 0;
+    core::WheelSettings wheel_;
+    bool scroll_beyond_last_line_ = true;
+    int scroll_beyond_last_column_ = 4;
     bool caret_visible_ = true;
     // What moving the mouse with the button down does: nothing, extends the selection the press
     // made (and becomes a column selection when the mouse asks for one), or selects a rectangle

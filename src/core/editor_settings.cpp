@@ -101,6 +101,7 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
     }
     for (const auto& [key, field] :
          {std::pair{"editor.comments.insertSpace", &EditorSettings::comments_insert_space},
+          std::pair{"editor.scrollBeyondLastLine", &EditorSettings::scroll_beyond_last_line},
           std::pair{"editor.comments.ignoreEmptyLines",
                     &EditorSettings::comments_ignore_empty_lines},
           std::pair{"zenMode.fullScreen", &EditorSettings::zen_full_screen},
@@ -216,6 +217,35 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             result.word_wrap_column = clamped(*column, 1, max_word_wrap_column);
         } else {
             problems.emplace_back("editor.wordWrapColumn must be a number");
+        }
+    }
+    if (settings.contains("editor.mouseWheelScrollSensitivity")) {
+        if (const auto value = settings.get<double>("editor.mouseWheelScrollSensitivity")) {
+            result.wheel.sensitivity = *value == 0 ? 1 : *value;
+        } else {
+            problems.emplace_back("editor.mouseWheelScrollSensitivity must be a number");
+        }
+    }
+    if (settings.contains("editor.fastScrollSensitivity")) {
+        if (const auto value = settings.get<double>("editor.fastScrollSensitivity")) {
+            result.wheel.fast_sensitivity = *value <= 0 ? 5 : *value;
+        } else {
+            problems.emplace_back("editor.fastScrollSensitivity must be a number");
+        }
+    }
+    if (settings.contains("editor.scrollPredominantAxis")) {
+        if (const auto value = settings.get<bool>("editor.scrollPredominantAxis")) {
+            result.wheel.predominant_axis = *value;
+        } else {
+            problems.emplace_back("editor.scrollPredominantAxis must be true or false");
+        }
+    }
+    if (settings.contains("editor.scrollBeyondLastColumn")) {
+        if (const auto columns = settings.get<double>("editor.scrollBeyondLastColumn")) {
+            result.scroll_beyond_last_column =
+                clamped(std::trunc(*columns), 0, max_scroll_beyond_last_column);
+        } else {
+            problems.emplace_back("editor.scrollBeyondLastColumn must be a number");
         }
     }
     if (settings.contains("editor.renderWhitespace")) {

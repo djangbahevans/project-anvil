@@ -371,6 +371,54 @@ TEST(EditorSettings, UnrelatedKeysDoNotMatter) {
     EXPECT_TRUE(result.has_value());
 }
 
+TEST(EditorSettings, ScrollingDefaultsToVsCodes) {
+    const auto result = read("{}");
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->wheel.sensitivity, 1);
+    EXPECT_EQ(result->wheel.fast_sensitivity, 5);
+    EXPECT_TRUE(result->wheel.predominant_axis);
+    EXPECT_TRUE(result->scroll_beyond_last_line);
+    EXPECT_EQ(result->scroll_beyond_last_column, 4);
+}
+
+TEST(EditorSettings, ReadsTheScrollingSettings) {
+    const auto result = read(R"j({
+        "editor.mouseWheelScrollSensitivity": 2.5,
+        "editor.fastScrollSensitivity": 8,
+        "editor.scrollPredominantAxis": false,
+        "editor.scrollBeyondLastLine": false,
+        "editor.scrollBeyondLastColumn": 12
+    })j");
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_EQ(result->wheel.sensitivity, 2.5);
+    EXPECT_EQ(result->wheel.fast_sensitivity, 8);
+    EXPECT_FALSE(result->wheel.predominant_axis);
+    EXPECT_FALSE(result->scroll_beyond_last_line);
+    EXPECT_EQ(result->scroll_beyond_last_column, 12);
+}
+
+TEST(EditorSettings, ScrollingNumbersAreCoercedAsVsCodeDoes) {
+    EXPECT_EQ(read(R"j({"editor.mouseWheelScrollSensitivity": 0})j")->wheel.sensitivity, 1);
+    EXPECT_EQ(read(R"j({"editor.mouseWheelScrollSensitivity": -2})j")->wheel.sensitivity, -2);
+    EXPECT_EQ(read(R"j({"editor.fastScrollSensitivity": 0})j")->wheel.fast_sensitivity, 5);
+    EXPECT_EQ(read(R"j({"editor.fastScrollSensitivity": -1})j")->wheel.fast_sensitivity, 5);
+    EXPECT_EQ(read(R"j({"editor.fastScrollSensitivity": 0.5})j")->wheel.fast_sensitivity, 0.5);
+    EXPECT_EQ(read(R"j({"editor.scrollBeyondLastColumn": -3})j")->scroll_beyond_last_column, 0);
+    EXPECT_EQ(read(R"j({"editor.scrollBeyondLastColumn": 6.9})j")->scroll_beyond_last_column, 6);
+    EXPECT_EQ(read(R"j({"editor.scrollBeyondLastColumn": 1e12})j")->scroll_beyond_last_column,
+              EditorSettings::max_scroll_beyond_last_column);
+}
+
+TEST(EditorSettings, AScrollingSettingOfTheWrongTypeIsReported) {
+    for (const std::string key : {"editor.mouseWheelScrollSensitivity",
+                                  "editor.fastScrollSensitivity", "editor.scrollPredominantAxis",
+                                  "editor.scrollBeyondLastLine", "editor.scrollBeyondLastColumn"}) {
+        const auto result = read("{\"" + key + "\": \"x\"}");
+        ASSERT_FALSE(result.has_value()) << key;
+        EXPECT_NE(result.error().message.find(key), std::string::npos) << result.error().message;
+    }
+}
+
 } // namespace
 
 TEST(FileAssociationsSetting, ReadsPatternsAndLanguageIds) {

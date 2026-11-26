@@ -1,6 +1,7 @@
 #include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
 #include "anvil/ui/line_layout.hpp"
+#include "anvil/ui/wheel_input.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -17,6 +18,7 @@
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTest>
+#include <QWheelEvent>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -2360,8 +2362,7 @@ TEST_F(WrapTest, TheVerticalScrollRangeCoversEveryRow) {
     open_wrapped(long_lines(40));
     const int rows = static_cast<int>(expected_rows());
     ASSERT_GT(rows, 200);
-    EXPECT_EQ(view_.verticalScrollBar()->maximum(),
-              rows * view_.line_height() - view_.viewport()->height() + view_.line_height());
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(), (rows - 1) * view_.line_height());
     EXPECT_EQ(view_.verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOn);
 }
 
@@ -2938,4 +2939,184 @@ TEST_F(LayoutCacheTest, TextStandsInTheMiddleOfItsLine) {
     ASSERT_GE(top, 0);
     EXPECT_GT(top, 16);
     EXPECT_GT(view_.line_height() - bottom, 16);
+}
+
+class ScrollingTest : public EditorViewTest {
+protected:
+    static constexpr int lines = 100;
+    static constexpr std::size_t longest = 200;
+
+    void open_large() {
+        std::string text(longest, 'x');
+        for (int line = 1; line < lines; ++line) {
+            text += "\nshort";
+        }
+        open(text);
+        apply();
+    }
+
+    // Applies the settings and paints, which measures the widest line.
+    void apply() {
+        view_.apply_settings(settings_);
+        view_.viewport()->grab();
+    }
+
+    bool wheel(const QPoint& angle, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+        const QPointF at(50, 50);
+        QWheelEvent event(at, view_.viewport()->mapToGlobal(at), QPoint(), angle, Qt::NoButton,
+                          modifiers, Qt::NoScrollPhase, false);
+        event.ignore();
+        QApplication::sendEvent(view_.viewport(), &event);
+        return event.isAccepted();
+    }
+
+    int vertical() const {
+        return view_.verticalScrollBar()->value();
+    }
+    int horizontal() const {
+        return view_.horizontalScrollBar()->value();
+    }
+
+    // The distance from the end of the longest line to the right edge of the text area, when the
+    // view is scrolled as far as it goes.
+    int room_after_the_longest_line() {
+        view_.horizontalScrollBar()->setValue(view_.horizontalScrollBar()->maximum());
+        return view_.viewport()->width() - view_.text_padding() - view_.cursor_rect(longest).x();
+    }
+
+    core::EditorSettings settings_;
+};
+
+TEST_F(ScrollingTest, TheWheelScrollsByItsRules) {
+    open_large();
+    settings_.wheel = {.sensitivity = 1.5, .fast_sensitivity = 3};
+    const QPoint angles[] = {{0, -120}, {0, 120}, {0, -15}, {-120, 0}, {40, -30}, {0, -1}};
+    const Qt::KeyboardModifiers keys[] = {Qt::NoModifier, Qt::AltModifier, Qt::ShiftModifier,
+                                          Qt::ControlModifier};
+    for (const bool predominant : {true, false}) {
+        settings_.wheel.predominant_axis = predominant;
+        apply();
+        for (const QPoint& angle : angles) {
+            for (const Qt::KeyboardModifiers modifiers : keys) {
+                view_.verticalScrollBar()->setValue(600);
+                view_.horizontalScrollBar()->setValue(600);
+                ASSERT_EQ(vertical(), 600);
+                ASSERT_EQ(horizontal(), 600);
+                wheel(angle, modifiers);
+                const core::ScrollDistance expected =
+                    core::wheel_scroll({angle.x() / 120.0, angle.y() / 120.0},
+                                       {.alt = modifiers.testFlag(Qt::AltModifier),
+                                        .shift = modifiers.testFlag(Qt::ShiftModifier)},
+                                       false, settings_.wheel);
+                EXPECT_EQ(horizontal(), 600 + expected.x)
+                    << angle.x() << "," << angle.y() << " " << modifiers.toInt();
+                EXPECT_EQ(vertical(), 600 + expected.y)
+                    << angle.x() << "," << angle.y() << " " << modifiers.toInt();
+            }
+        }
+    }
+}
+
+TEST_F(ScrollingTest, ANotchScrollsFiftyPixelsTimesTheSensitivity) {
+    open_large();
+    EXPECT_TRUE(wheel({0, -120}));
+    EXPECT_EQ(vertical(), 50);
+    wheel({0, -120}, Qt::AltModifier);
+    EXPECT_EQ(vertical(), 300);
+    settings_.wheel.sensitivity = 2;
+    apply();
+    const int before = vertical();
+    wheel({0, -120});
+    EXPECT_EQ(vertical(), before + 100);
+}
+
+TEST_F(ScrollingTest, TheViewKeepsAWheelEventThatCannotScrollIt) {
+    open_large();
+    EXPECT_TRUE(wheel({0, 120}));
+    EXPECT_EQ(vertical(), 0);
+    EXPECT_TRUE(wheel({0, 0}));
+}
+
+TEST_F(ScrollingTest, TheLastLineGoesToTheTopUnlessScrollingBeyondItIsOff) {
+    open_large();
+    const int line = view_.line_height();
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(), (lines - 1) * line);
+    settings_.scroll_beyond_last_line = false;
+    apply();
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(), lines * line - view_.viewport()->height());
+    settings_.scroll_beyond_last_line = true;
+    apply();
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(), (lines - 1) * line);
+}
+
+TEST_F(ScrollingTest, ATextThatFitsScrollsOnlyBeyondItsLastLine) {
+    open("one\ntwo\nthree");
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(), 2 * view_.line_height());
+    settings_.scroll_beyond_last_line = false;
+    apply();
+    EXPECT_EQ(view_.verticalScrollBar()->maximum(), 0);
+}
+
+TEST_F(ScrollingTest, TheViewScrollsTheSetColumnsPastTheLongestLine) {
+    open_large();
+    const int column = view_.char_width();
+    EXPECT_EQ(room_after_the_longest_line(), 4 * column);
+    settings_.scroll_beyond_last_column = 12;
+    apply();
+    EXPECT_EQ(room_after_the_longest_line(), 12 * column);
+    // The caret at the end of the line stays in view.
+    settings_.scroll_beyond_last_column = 0;
+    apply();
+    EXPECT_EQ(room_after_the_longest_line(), view_.cursor_rect(longest).width());
+}
+
+TEST_F(ScrollingTest, TextThatFitsHasNoSidewaysRange) {
+    open("short");
+    view_.viewport()->grab();
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+}
+
+TEST_F(ScrollingTest, ColumnsPastTheLastOneCountWhereLinesDoNotWrapAtTheView) {
+    // The line ends two characters short of the width of the view.
+    open("");
+    const int fits = (view_.viewport()->width() - view_.cursor_rect(0).x()) / view_.char_width();
+    open(std::string(static_cast<std::size_t>(fits) - 2, 'x'));
+    settings_.scroll_beyond_last_column = 40;
+    apply();
+    EXPECT_GT(view_.horizontalScrollBar()->maximum(), 0);
+
+    view_.set_wrapping(EditorView::Wrapping::column, 500);
+    view_.viewport()->grab();
+    EXPECT_GT(view_.horizontalScrollBar()->maximum(), 0);
+
+    for (const auto wrapping : {EditorView::Wrapping::view, EditorView::Wrapping::bounded}) {
+        view_.set_wrapping(wrapping, 500);
+        view_.viewport()->grab();
+        EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+    }
+}
+
+TEST(WheelInput, AnglesAreCountedInNotches) {
+    const QWheelEvent event(QPointF(), QPointF(), QPoint(), QPoint(60, -240), Qt::NoButton,
+                            Qt::NoModifier, Qt::NoScrollPhase, false);
+    const core::WheelTurn turn = anvil::ui::wheel_turn(event, u"xcb");
+    EXPECT_EQ(turn.x, 0.5);
+    EXPECT_EQ(turn.y, -2);
+}
+
+TEST(WheelInput, TheSwapOfTheAxesThatQtMakesForAltIsUndone) {
+    const auto turn = [](Qt::KeyboardModifiers modifiers, QStringView platform) {
+        const QWheelEvent event(QPointF(), QPointF(), QPoint(), QPoint(-120, 0), Qt::NoButton,
+                                modifiers, Qt::NoScrollPhase, false);
+        return anvil::ui::wheel_turn(event, platform);
+    };
+    for (const auto* platform : {u"xcb", u"windows"}) {
+        EXPECT_EQ(turn(Qt::AltModifier, platform).x, 0);
+        EXPECT_EQ(turn(Qt::AltModifier, platform).y, -1);
+        EXPECT_EQ(turn(Qt::NoModifier, platform).x, -1);
+    }
+    for (const auto* platform : {u"wayland", u"cocoa"}) {
+        EXPECT_EQ(turn(Qt::AltModifier, platform).x, -1);
+        EXPECT_EQ(turn(Qt::AltModifier, platform).y, 0);
+    }
 }

@@ -143,6 +143,7 @@ const std::map<std::string, std::string> not_sizes = {
     {"include/anvil/ui/window_frame.hpp:handle_width",
      "the grab area at the edge of a window that has no frame of its own, which the window "
      "system's own frame has at one size whatever the zoom"},
+    {"wheel_input.cpp:angle_per_notch", "an angle of the wheel"},
     {"main_window.cpp:language_priority", "a priority of a status bar item"},
     {"main_window.cpp:position_priority", "a priority of a status bar item"},
     {"panel.cpp:action_pen_width", "the width of a stroke, in units of the level 0 size, "

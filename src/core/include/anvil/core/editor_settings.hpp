@@ -4,6 +4,7 @@
 #include "anvil/core/language_registry.hpp"
 #include "anvil/core/settings.hpp"
 #include "anvil/core/text_file.hpp"
+#include "anvil/core/wheel_scroll.hpp"
 
 #include <expected>
 #include <string>
@@ -60,6 +61,7 @@ struct EditorSettings {
     static constexpr int max_font_size = 100;
     static constexpr int max_tab_size = 1024;
     static constexpr int max_word_wrap_column = 1 << 30;
+    static constexpr int max_scroll_beyond_last_column = 1 << 30;
     static constexpr int max_auto_save_delay = 24 * 60 * 60 * 1000;
 
     // editor.fontFamily
@@ -98,6 +100,14 @@ struct EditorSettings {
     WordWrap word_wrap = WordWrap::off;
     // editor.wordWrapColumn
     int word_wrap_column = 80;
+
+    // editor.mouseWheelScrollSensitivity, editor.fastScrollSensitivity and
+    // editor.scrollPredominantAxis
+    WheelSettings wheel;
+    // editor.scrollBeyondLastLine: the editor scrolls until the last line is at the top
+    bool scroll_beyond_last_line = true;
+    // editor.scrollBeyondLastColumn: the characters that the editor scrolls past the longest line
+    int scroll_beyond_last_column = 4;
 
     // editor.renderWhitespace
     RenderWhitespace render_whitespace = RenderWhitespace::selection;
@@ -148,7 +158,9 @@ struct EditorSettings {
 
     // Absent keys take their defaults, and numbers outside their range are clamped (font size to
     // 6-100, zoom level to -8-8, tab size to 1-1024: the upper bound keeps a typo from making Tab
-    // insert gigabytes; the word wrap column to 1-2^30; the auto save delay to 0 ms-24 h). A value
+    // insert gigabytes; the word wrap column to 1-2^30; the columns scrolled beyond the last one to
+    // 0-2^30; the auto save delay to 0 ms-24 h). A wheel sensitivity of 0 stands for 1, and a fast
+    // scroll sensitivity of 0 or less for 5. A value
     // of the wrong type, an `editor.wordWrap` that is not "off", "on", "wordWrapColumn" or
     // "bounded", a `files.eol`
     // that is not one of "\n", "\r\n" and "auto", an `editor.multiCursorModifier` that is not "alt"
