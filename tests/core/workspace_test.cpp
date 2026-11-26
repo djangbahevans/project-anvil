@@ -106,6 +106,32 @@ TEST_F(WorkspaceTest, TheFirstFolderOnTheCommandLineIsTheWorkspaceAndTheRestAreF
     EXPECT_TRUE(launch.problems.empty());
 }
 
+TEST_F(WorkspaceTest, NewWindowIsAnOptionAndNotAFile) {
+    for (const char* option : {"--new-window", "-n"}) {
+        SCOPED_TRACE(option);
+        const auto launch =
+            anvil::core::parse_launch_arguments({option, "a.txt", (root_ / "project").string()});
+        EXPECT_TRUE(launch.new_window);
+        EXPECT_EQ(launch.files, (std::vector<fs::path>{"a.txt"}));
+        EXPECT_TRUE(launch.workspace.has_value());
+        EXPECT_TRUE(launch.problems.empty());
+    }
+    EXPECT_FALSE(anvil::core::parse_launch_arguments({"a.txt"}).new_window);
+}
+
+TEST_F(WorkspaceTest, TheFolderOpenLastMayBeReopenedWhenNoneIsAskedFor) {
+    const auto may = [](const std::vector<std::string>& arguments) {
+        return anvil::core::parse_launch_arguments(arguments).may_reopen_folder();
+    };
+    EXPECT_TRUE(may({}));
+    EXPECT_TRUE(may({"a.txt"}));
+    EXPECT_FALSE(may({(root_ / "project").string()}));
+    // A folder that was asked for and is not there is not replaced by another.
+    EXPECT_FALSE(may({(root_ / "missing").string() + "/"}));
+    EXPECT_FALSE(may({"--new-window"}));
+    EXPECT_FALSE(may({"-n", "a.txt"}));
+}
+
 TEST_F(WorkspaceTest, ArgumentsWithoutAFolderAreAllFiles) {
     const auto launch = anvil::core::parse_launch_arguments({"x.txt", "dir/y.txt"});
     EXPECT_FALSE(launch.workspace.has_value());

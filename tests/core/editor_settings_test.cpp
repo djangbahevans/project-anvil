@@ -151,6 +151,24 @@ TEST(EditorSettings, TheCommandCenterAndTheLayoutControlsAreOnUnlessTheSettingsT
     EXPECT_TRUE(read(R"j({"window.commandCenter": true})j")->command_center);
 }
 
+TEST(EditorSettings, RestoreWindowsHasTheValuesOfVsCode) {
+    using anvil::core::RestoreWindows;
+    EXPECT_EQ(read("{}")->restore_windows, RestoreWindows::all);
+    const std::pair<const char*, RestoreWindows> values[] = {{"preserve", RestoreWindows::preserve},
+                                                             {"all", RestoreWindows::all},
+                                                             {"folders", RestoreWindows::folders},
+                                                             {"one", RestoreWindows::one},
+                                                             {"none", RestoreWindows::none}};
+    for (const auto& [name, value] : values) {
+        SCOPED_TRACE(name);
+        const std::string text = std::string(R"j({"window.restoreWindows": ")j") + name + "\"}";
+        EXPECT_EQ(read(text)->restore_windows, value);
+    }
+    const auto result = read(R"j({"window.restoreWindows": "sometimes"})j");
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("window.restoreWindows"), std::string::npos);
+}
+
 TEST(EditorSettings, ThePartsOfTheWindowAreShownAtTheirDefaultPlacesUnlessTheSettingsSayOtherwise) {
     using anvil::core::ActivityBarLocation;
     using anvil::core::SideBarLocation;

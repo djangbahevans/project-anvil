@@ -36,12 +36,20 @@ struct LaunchArguments {
     std::vector<std::filesystem::path> files;
     // What was wrong with the arguments that were ignored, one message each.
     std::vector<std::string> problems;
+    // `--new-window` or `-n`: the window is to start empty, not with the folder open last.
+    bool new_window = false;
+
+    // Whether the arguments leave it open which folder the window starts with: they name none,
+    // none that could not be opened, and do not ask for an empty window.
+    bool may_reopen_folder() const {
+        return !workspace && problems.empty() && !new_window;
+    }
 };
 
-// The first argument that names an existing directory is the workspace folder. An argument that
-// ends in a separator names a folder too, so one that does not exist is reported instead of being
-// opened as a new file, as is every directory after the first. All other arguments are files,
-// whether or not they exist.
+// `--new-window` and `-n` are options. Of the other arguments, the first that names an existing
+// directory is the workspace folder. An argument that ends in a separator names a folder too, so
+// one that does not exist is reported instead of being opened as a new file, as is every directory
+// after the first. All the rest are files, whether or not they exist.
 LaunchArguments parse_launch_arguments(const std::vector<std::string>& arguments);
 
 } // namespace anvil::core

@@ -88,6 +88,8 @@ int main(int argc, char* argv[]) {
 
     anvil::ui::MainWindowOptions options;
     options.workspace = launch.workspace;
+    options.reopen_folder = launch.may_reopen_folder();
+    options.opens_files = !launch.files.empty();
     options.extension_host = extension_host_config();
     const QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     options.ripgrep =

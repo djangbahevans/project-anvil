@@ -72,6 +72,8 @@ protected:
         options.settings_file = settings_file_;
         options.keybindings_file = keybindings_file_;
         options.state_directory = state_directory_;
+        options.reopen_folder = reopen_folder_;
+        options.opens_files = opens_files_;
         options.themes_directory = themes_directory_;
         options.executable = executable_;
         options.start_process = start_process_;
@@ -329,6 +331,8 @@ protected:
                                         const core::FileSearchOptions&)>
         list_files_;
     std::filesystem::path state_directory_;
+    bool reopen_folder_ = false;
+    bool opens_files_ = false;
     // The tests keep the system frame except those about the title bar.
     bool custom_title_bar_ = false;
     std::vector<std::filesystem::path> extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION};
@@ -8226,7 +8230,7 @@ TEST_F(NewWindowTest, TheItemIsEnabledAndShowsItsKey) {
     EXPECT_TRUE(item->text().endsWith("\tCtrl+Shift+N")) << item->text().toStdString();
 }
 
-TEST_F(NewWindowTest, TheCommandStartsTheProgramWithNoArgumentsInADirectoryThatExists) {
+TEST_F(NewWindowTest, TheCommandStartsTheProgramForAnEmptyWindowInADirectoryThatExists) {
     record_starts();
     executable_ = scratch_ / "stand-in";
     create_window();
@@ -8235,7 +8239,7 @@ TEST_F(NewWindowTest, TheCommandStartsTheProgramWithNoArgumentsInADirectoryThatE
     ASSERT_EQ(started_.size(), 1U);
     const platform::ProcessSpec& spec = started_[0];
     EXPECT_EQ(spec.executable, scratch_ / "stand-in");
-    EXPECT_TRUE(spec.arguments.empty());
+    EXPECT_EQ(spec.arguments, std::vector<std::string>{"--new-window"});
     ASSERT_TRUE(spec.working_directory.has_value());
     EXPECT_TRUE(std::filesystem::is_directory(*spec.working_directory));
     EXPECT_EQ(spec.environment, platform::current_environment());
@@ -8292,10 +8296,10 @@ TEST_F(NewWindowTest, AWorkingDirectoryThatIsGoneIsReplacedByOneThatExists) {
     EXPECT_TRUE(std::filesystem::is_directory(*started_[0].working_directory));
 }
 
-TEST_F(NewWindowTest, TheStandInProgramRunsWithNoArgumentsInADirectoryThatExists) {
+TEST_F(NewWindowTest, TheStandInProgramIsAskedForAnEmptyWindowInADirectoryThatExists) {
     const auto output = scratch_ / "output.txt";
     const auto program = scratch_ / "stand-in.sh";
-    ASSERT_TRUE(platform::write_file(program, "#!/bin/sh\necho \"$#\" > '" + output.string() +
+    ASSERT_TRUE(platform::write_file(program, "#!/bin/sh\necho \"$*\" > '" + output.string() +
                                                   "'\npwd >> '" + output.string() + "'\n")
                     .has_value());
     std::filesystem::permissions(program, std::filesystem::perms::owner_all);
@@ -8315,7 +8319,7 @@ TEST_F(NewWindowTest, TheStandInProgramRunsWithNoArgumentsInADirectoryThatExists
         },
         5000));
     ASSERT_EQ(lines.size(), 2U);
-    EXPECT_EQ(lines[0], "0");
+    EXPECT_EQ(lines[0], "--new-window");
     EXPECT_TRUE(std::filesystem::is_directory(lines[1])) << lines[1];
 }
 
@@ -12246,4 +12250,123 @@ TEST_F(FileIconWindowTest, EachFileOfGoToFileHasItsIcon) {
     const std::map<std::string, char16_t> found = row_icons();
     EXPECT_EQ(found.at("data.zzz"), ui::seti_default_icon().dark.code);
     EXPECT_EQ(found.at("main.cpp"), ui::seti_icon("cpp").dark.code);
+}
+
+namespace {
+
+class ReopenFolderTest : public WindowStateTest {
+protected:
+    // A window on the folder, closed by the user.
+    void leave(const std::string& name) {
+        workspace_ = folder(name);
+        create_window();
+        close_window();
+        workspace_.reset();
+    }
+    // The name of the folder of a window started without one, or nothing.
+    std::string reopened(const std::string& settings = "{}") {
+        settings_file_ = write("settings.json", settings);
+        reopen_folder_ = true;
+        create_window();
+        const std::string name = window_->workspace() ? window_->workspace()->name : std::string();
+        window_.reset();
+        reopen_folder_ = false;
+        return name;
+    }
+};
+
+} // namespace
+
+TEST_F(ReopenFolderTest, TheFolderOfTheWindowClosedLastIsOpenedWithItsState) {
+    std::filesystem::create_directories(scratch_ / "first" / "src");
+    write("first/src/main.cpp", "int main() {}\n");
+    write_workspace_state("first",
+                          R"({"layout.panel.visible": true, "explorer.expandedFolders": ["src"]})");
+    leave("second");
+    leave("first");
+
+    reopen_folder_ = true;
+    create_window();
+    ASSERT_TRUE(window_->workspace().has_value());
+    EXPECT_EQ(*window_->workspace(), folder("first"));
+    EXPECT_TRUE(window_->windowTitle().contains("first")) << window_->windowTitle().toStdString();
+    EXPECT_TRUE(panel_shown());
+    auto* explorer = qobject_cast<ui::ExplorerView*>(
+        window_->sidebar()->container_widget("workbench.view.explorer"));
+    ASSERT_NE(explorer, nullptr);
+    EXPECT_EQ(explorer->folder_name(), "first");
+    EXPECT_TRUE(wait_until(
+        [&] { return explorer->expanded_folders() == std::vector<std::string>{"src"}; }));
+
+    // What the window saves goes to the folder's state.
+    window_->workbench()->set_visible(ui::Part::panel, false);
+    close_window();
+    EXPECT_EQ(workspace_state("first").at("layout.panel.visible"), false);
+}
+
+TEST_F(ReopenFolderTest, AFolderOpenedOrClosedInTheWindowIsWhatCounts) {
+    std::filesystem::create_directories(scratch_ / "second");
+    workspace_ = folder("first");
+    create_window();
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    close_window();
+    workspace_.reset();
+    EXPECT_EQ(reopened(), "second");
+
+    leave("first");
+    create_window();
+    close_window();
+    EXPECT_EQ(reopened(), "");
+}
+
+TEST_F(ReopenFolderTest, TheWindowClosedLastCountsAlsoWithTheFolderItStartedWith) {
+    leave("first");
+    workspace_ = folder("first");
+    create_window();
+    // Another window on another folder is closed while this one is open.
+    std::filesystem::create_directories(scratch_ / "second");
+    workbench::StateStore other(state_directory_, std::nullopt, logger_);
+    other.set(workbench::StateScope::global, "window.lastFolder", folder("second").folder.string());
+    ASSERT_TRUE(other.flush().has_value());
+    close_window();
+    workspace_.reset();
+    EXPECT_EQ(reopened(), "first");
+}
+
+TEST_F(ReopenFolderTest, WithoutAFolderToReopenTheWindowStartsWithNone) {
+    EXPECT_EQ(reopened(), "");
+
+    leave("first");
+    std::filesystem::remove_all(scratch_ / "first");
+    EXPECT_EQ(reopened(), "");
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "first", "state"));
+}
+
+TEST_F(ReopenFolderTest, AWindowAskedToBeEmptyOrForAFolderDoesNotReopen) {
+    leave("first");
+    // As for `--new-window`, which leaves `reopen_folder` off.
+    create_window();
+    EXPECT_FALSE(window_->workspace().has_value());
+    window_.reset();
+
+    std::filesystem::create_directories(scratch_ / "second");
+    workspace_ = folder("second");
+    EXPECT_EQ(reopened(), "second");
+}
+
+TEST_F(ReopenFolderTest, TheSettingSaysWhetherTheFolderIsReopened) {
+    leave("first");
+    const auto with = [](const char* value) {
+        return std::string(R"j({"window.restoreWindows": ")j") + value + "\"}";
+    };
+    for (const char* value : {"all", "folders", "one", "preserve", "sometimes"}) {
+        EXPECT_EQ(reopened(with(value)), "first") << value;
+    }
+    EXPECT_EQ(reopened(with("none")), "");
+
+    opens_files_ = true;
+    for (const char* value : {"all", "folders", "one", "none"}) {
+        EXPECT_EQ(reopened(with(value)), "") << value;
+    }
+    EXPECT_EQ(reopened(with("preserve")), "first");
 }
