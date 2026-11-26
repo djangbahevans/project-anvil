@@ -124,6 +124,8 @@ struct EditorSettings {
     bool zen_hide_activity_bar = true;
     // explorer.confirmDelete: the Explorer asks before it deletes
     bool explorer_confirm_delete = true;
+    // `explorer.confirmDragAndDrop`: whether the Explorer asks before a drag moves items.
+    bool explorer_confirm_drag_and_drop = true;
     // files.enableTrash: the Explorer moves what it deletes to the trash; without it a delete is
     // for good
     bool enable_trash = true;

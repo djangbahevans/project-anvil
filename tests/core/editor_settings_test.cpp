@@ -411,8 +411,18 @@ TEST(EditorSettings, TheExplorerAsksBeforeDeletingAndUsesTheTrashUnlessTheSettin
     EXPECT_TRUE(read(R"j({"files.enableTrash": false})j")->explorer_confirm_delete);
 }
 
+TEST(EditorSettings, TheExplorerAsksBeforeADragMovesUnlessTheSettingsSayOtherwise) {
+    EXPECT_TRUE(read("{}")->explorer_confirm_drag_and_drop);
+    EXPECT_FALSE(
+        read(R"j({"explorer.confirmDragAndDrop": false})j")->explorer_confirm_drag_and_drop);
+    EXPECT_FALSE(
+        read(R"j({"explorer": {"confirmDragAndDrop": false}})j")->explorer_confirm_drag_and_drop);
+    EXPECT_TRUE(read(R"j({"explorer.confirmDelete": false})j")->explorer_confirm_drag_and_drop);
+}
+
 TEST(EditorSettings, AnExplorerSettingOfTheWrongKindIsReportedByName) {
-    for (const char* key : {"explorer.confirmDelete", "files.enableTrash"}) {
+    for (const char* key :
+         {"explorer.confirmDelete", "explorer.confirmDragAndDrop", "files.enableTrash"}) {
         const auto result = read(std::string(R"j({")j") + key + R"j(": "no"})j");
         ASSERT_FALSE(result.has_value()) << key;
         EXPECT_NE(result.error().message.find(key), std::string::npos) << key;

@@ -1,11 +1,14 @@
 #include "../timing.hpp"
 #include "anvil/ui/explorer_view.hpp"
 
+#include <QAbstractButton>
 #include <QApplication>
+#include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -1297,6 +1300,13 @@ protected:
             }
             return answer_;
         };
+        actions.confirm_move = [this](QWidget*, const QString& message, const QString& detail) {
+            move_questions_.push_back({message, detail, QString()});
+            if (while_asking_to_move_) {
+                while_asking_to_move_();
+            }
+            return move_answer_;
+        };
         view_ = std::make_unique<ExplorerView>(*colors_, nullptr, platform_directory_lister(),
                                                DirectoryWatchFactory{}, immediate_listing_runner(),
                                                std::move(actions));
@@ -1360,6 +1370,9 @@ protected:
     std::function<void()> while_asking_;
     bool trash_fails_ = false;
     bool answer_ = true;
+    std::vector<Question> move_questions_;
+    std::function<void()> while_asking_to_move_;
+    MoveAnswer move_answer_{.move = true};
 };
 
 } // namespace
@@ -2270,4 +2283,193 @@ TEST_F(ExplorerExpandedTest, AFolderThatIsThereWithoutARowStaysSaved) {
     EXPECT_FALSE(view.model()->index_of(root / ".git").isValid());
     EXPECT_EQ(view.expanded_folders(), (Names{".git", ".git/objects", "src"}));
     std::filesystem::remove_all(root);
+}
+
+TEST_F(ExplorerDragTest, AMoveAsksBeforeAnythingChanges) {
+    bool untouched = false;
+    while_asking_to_move_ = [&] {
+        untouched = std::filesystem::exists(root_ / "a.txt") &&
+                    !std::filesystem::exists(root_ / "docs" / "a.txt") && renamed_->count() == 0;
+    };
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    ASSERT_EQ(move_questions_.size(), 1U);
+    EXPECT_EQ(move_questions_[0].message, "Are you sure you want to move 'a.txt' into 'docs'?");
+    EXPECT_EQ(move_questions_[0].detail, "");
+    EXPECT_TRUE(untouched);
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, DecliningAMoveChangesNothingAndAsksNothingElse) {
+    write(root_ / "docs" / "a.txt");
+    move_answer_ = {};
+    QSignalSpy turned_off(view_.get(), &ExplorerView::move_confirmation_turned_off);
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_EQ(move_questions_.size(), 1U);
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_TRUE(std::filesystem::exists(root_ / "a.txt"));
+    EXPECT_EQ(renamed_->count(), 0);
+    EXPECT_EQ(deleted_->count(), 0);
+    EXPECT_EQ(failed_->count(), 0);
+    EXPECT_EQ(turned_off.count(), 0);
+}
+
+TEST_F(ExplorerDragTest, SeveralItemsAreNamedAndTheWorkspaceFolderByTheNameOfTheWorkspace) {
+    select(root_ / "a.txt");
+    also_select(root_ / "b.md");
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    ASSERT_EQ(move_questions_.size(), 1U);
+    EXPECT_EQ(move_questions_[0].message,
+              "Are you sure you want to move the following 2 files into 'docs'?");
+    EXPECT_EQ(move_questions_[0].detail, "a.txt\nb.md");
+
+    open(root_ / "src");
+    drag(root_ / "src" / "main.cpp", below_the_rows());
+    ASSERT_EQ(move_questions_.size(), 2U);
+    EXPECT_EQ(move_questions_[1].message,
+              "Are you sure you want to move 'main.cpp' into 'project'?");
+}
+
+TEST_F(ExplorerDragTest, AtMostTenNamesAreListed) {
+    for (const std::size_t count : {11U, 13U}) {
+        for (std::size_t i = 0; i < count; ++i) {
+            write(root_ / ("file" + std::to_string(100 + i)));
+        }
+        view_->model()->reload(root_);
+        settle();
+        view_->tree()->clearSelection();
+        select(root_ / "file100");
+        for (std::size_t i = 1; i < count; ++i) {
+            also_select(root_ / ("file" + std::to_string(100 + i)));
+        }
+        move_answer_ = {};
+        move_questions_.clear();
+        view_->tree()->scrollTo(row_of(root_ / "file100"));
+        drag(root_ / "file100", on(root_ / "src"));
+        ASSERT_EQ(move_questions_.size(), 1U);
+        const QStringList lines = move_questions_[0].detail.split('\n');
+        ASSERT_EQ(lines.size(), 11);
+        EXPECT_EQ(lines.front(), "file100");
+        EXPECT_EQ(lines[9], "file109");
+        EXPECT_EQ(lines.back(), count == 11U ? "...1 additional file not shown"
+                                             : "...3 additional files not shown");
+    }
+}
+
+TEST_F(ExplorerDragTest, TheQuestionBeforeAReplaceFollowsTheOneBeforeTheMove) {
+    write(root_ / "docs" / "a.txt");
+    std::vector<std::string> asked;
+    while_asking_to_move_ = [&] { asked.push_back("move"); };
+    while_asking_ = [&] { asked.push_back("replace"); };
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_EQ(asked, (std::vector<std::string>{"move", "replace"}));
+}
+
+TEST_F(ExplorerDragTest, ACopyDoesNotAskBeforeMoving) {
+    drag(root_ / "a.txt", on(root_ / "docs"), Qt::ControlModifier);
+    EXPECT_TRUE(move_questions_.empty());
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, ADropThatIsRefusedOrHasNothingToMoveDoesNotAsk) {
+    drag(root_ / "a.txt", below_the_rows()); // where it is already
+    drag(root_ / "src", on(root_ / "src"));  // onto itself
+    // A name that is taken by a document with unsaved changes.
+    write(root_ / "docs" / "b.md");
+    view_->set_unsaved_changes_check(
+        [&](const std::filesystem::path& path) { return path == root_ / "docs" / "b.md"; });
+    drag(root_ / "b.md", on(root_ / "docs"));
+    EXPECT_EQ(failed_->count(), 1);
+    // A folder that holds the item and has its name.
+    std::filesystem::create_directories(root_ / "docs" / "docs");
+    view_->model()->reload(root_ / "docs");
+    settle();
+    open(root_ / "docs");
+    drag(root_ / "docs" / "docs", below_the_rows());
+    EXPECT_EQ(failed_->count(), 2);
+    EXPECT_TRUE(move_questions_.empty());
+}
+
+TEST_F(ExplorerDragTest, TheQuestionNamesOnlyTheItemsThatWouldMove) {
+    open(root_ / "docs");
+    select(root_ / "a.txt");
+    also_select(root_ / "docs" / "guide.md");
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    ASSERT_EQ(move_questions_.size(), 1U);
+    EXPECT_EQ(move_questions_[0].message, "Are you sure you want to move 'a.txt' into 'docs'?");
+}
+
+TEST_F(ExplorerDragTest, WithoutTheSettingAMoveDoesNotAsk) {
+    view_->set_confirm_drag_and_drop(false);
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_TRUE(move_questions_.empty());
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+}
+
+TEST_F(ExplorerDragTest, AMoveActsOnWhatWasDraggedWhateverIsSelectedByTheTimeItIsAnswered) {
+    while_asking_to_move_ = [&] {
+        view_->tree()->setCurrentIndex(row_of(root_ / "b.md"));
+        view_->tree()->collapseAll();
+    };
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "docs" / "a.txt"));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "b.md"));
+    EXPECT_FALSE(std::filesystem::exists(root_ / "docs" / "b.md"));
+}
+
+TEST_F(ExplorerDragTest, OnlyAMoveWithTheBoxCheckedTurnsTheQuestionOff) {
+    QSignalSpy turned_off(view_.get(), &ExplorerView::move_confirmation_turned_off);
+    drag(root_ / "a.txt", on(root_ / "docs"));
+    EXPECT_EQ(turned_off.count(), 0);
+    move_answer_ = {.move = false, .do_not_ask_again = true};
+    drag(root_ / "b.md", on(root_ / "docs"));
+    EXPECT_EQ(turned_off.count(), 0);
+    move_answer_ = {.move = true, .do_not_ask_again = true};
+    drag(root_ / "b.md", on(root_ / "docs"));
+    EXPECT_EQ(turned_off.count(), 1);
+}
+
+// The message box itself, answered from the event loop that it runs.
+TEST(ExplorerMoveQuestionTest, TheBoxHasAMoveButtonCancelAndDoNotAskAgain) {
+    const ExplorerActions actions = default_explorer_actions();
+    for (const bool move : {true, false}) {
+        for (const bool again : {true, false}) {
+            QString message;
+            QString detail;
+            QStringList buttons;
+            QString box_label;
+            QTimer::singleShot(0, [&] {
+                auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                ASSERT_NE(box, nullptr);
+                message = box->text();
+                detail = box->informativeText();
+                QAbstractButton* accept = nullptr;
+                for (QAbstractButton* button : box->buttons()) {
+                    const QString text = button->text().remove('&');
+                    buttons.push_back(text);
+                    if (text == "Move") {
+                        accept = button;
+                    }
+                }
+                ASSERT_NE(box->checkBox(), nullptr);
+                box_label = box->checkBox()->text();
+                box->checkBox()->setChecked(again);
+                if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+                    box->grab().save(QString::fromUtf8(directory) + "/explorer_move_question.png");
+                }
+                if (move && accept) {
+                    accept->click();
+                } else {
+                    box->reject();
+                }
+            });
+            const MoveAnswer answer = actions.confirm_move(nullptr, "Move it?", "a\nb");
+            EXPECT_EQ(answer.move, move);
+            EXPECT_EQ(answer.do_not_ask_again, again);
+            EXPECT_EQ(message, "Move it?");
+            EXPECT_EQ(detail, "a\nb");
+            EXPECT_TRUE(buttons.contains("Move")) << buttons.join(',').toStdString();
+            EXPECT_EQ(buttons.size(), 2);
+            EXPECT_EQ(box_label, "Do not ask me again");
+        }
+    }
 }

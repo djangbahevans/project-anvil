@@ -300,7 +300,8 @@ private:
     void register_explorer();
     // Gives the explorer the folder of the workspace, with the folders that were expanded in it.
     void show_workspace_in(ExplorerView& explorer);
-    // Gives the explorer `explorer.confirmDelete` and `files.enableTrash`.
+    // Gives the explorer `explorer.confirmDelete`, `explorer.confirmDragAndDrop` and
+    // `files.enableTrash`.
     void apply_explorer_settings();
     // Shows the explorer, for a command that works on it, and returns it.
     ExplorerView* show_explorer();

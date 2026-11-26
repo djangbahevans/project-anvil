@@ -514,7 +514,10 @@ void MainWindow::register_explorer() {
         view->set_unsaved_changes_check(
             [this](const std::filesystem::path& path) { return has_unsaved_changes_within(path); });
         view->set_excludes(file_excludes_);
+        connect(view, &ExplorerView::move_confirmation_turned_off, this,
+                [this] { change_setting("explorer.confirmDragAndDrop", false); });
         view->set_confirm_delete(settings_->editor().explorer_confirm_delete);
+        view->set_confirm_drag_and_drop(settings_->editor().explorer_confirm_drag_and_drop);
         view->set_trash_enabled(settings_->editor().enable_trash);
         connect(view, &ExplorerView::expanded_folders_changed, this, [this] {
             if (state_keeper_) {
@@ -544,6 +547,7 @@ void MainWindow::show_workspace_in(ExplorerView& explorer) {
 void MainWindow::apply_explorer_settings() {
     if (explorer_) {
         explorer_->set_confirm_delete(settings_->editor().explorer_confirm_delete);
+        explorer_->set_confirm_drag_and_drop(settings_->editor().explorer_confirm_drag_and_drop);
         explorer_->set_trash_enabled(settings_->editor().enable_trash);
     }
 }
