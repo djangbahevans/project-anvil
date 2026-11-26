@@ -11097,9 +11097,11 @@ TEST_F(QuickOpenWindowTest, TheKeysOpenItAndPressedAgainMoveDown) {
     }
 }
 
-TEST_F(QuickOpenWindowTest, ARenamedFileIsOfferedUnderItsNewName) {
+TEST_F(QuickOpenWindowTest, ARenamedFileIsOfferedUnderItsNewNameInItsPlace) {
     create_active_window();
     ASSERT_TRUE(open("a.txt"));
+    // Not the shown document, which would be recorded again when its name changes.
+    ASSERT_TRUE(open("b.txt"));
     window_->sidebar()->activate("workbench.view.explorer");
     auto* explorer = qobject_cast<ui::ExplorerView*>(
         window_->sidebar()->container_widget("workbench.view.explorer"));
@@ -11109,7 +11111,7 @@ TEST_F(QuickOpenWindowTest, ARenamedFileIsOfferedUnderItsNewName) {
         QString::fromStdString((window_->workspace()->folder / "a.txt").string()),
         QString::fromStdString((window_->workspace()->folder / "renamed.txt").string()));
     go_to_file();
-    EXPECT_EQ(rows().front(), "renamed.txt|");
+    EXPECT_EQ(rows(), (std::vector<std::string>{"b.txt|", "renamed.txt|"}));
 }
 
 TEST_F(QuickOpenWindowTest, ItListsTheFilesOfTheFolderWithRipgrep) {

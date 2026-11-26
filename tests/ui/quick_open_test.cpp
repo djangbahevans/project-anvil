@@ -75,7 +75,9 @@ public:
         std::unique_lock lock(listings_->mutex);
         if (listings_->held) {
             listings_->waiting = true;
-            listings_->changed.wait(lock, [&] { return !listings_->held; });
+            // Not for ever: a test that goes wrong while holding must fail rather than hang.
+            listings_->changed.wait_for(lock, std::chrono::seconds(3),
+                                        [&] { return !listings_->held; });
             listings_->waiting = false;
         }
         listings_->changed.wait_for(lock, timeout, [&] { return !listings_->batches.empty(); });
@@ -158,6 +160,11 @@ protected:
     std::string current() const {
         const auto active = quick_open_->pick()->active_item();
         return active ? shown().at(*active) : std::string();
+    }
+    // Holds the thread of the listing in a read, so that it cannot answer.
+    void hold_listing() {
+        listings_->hold(true);
+        ASSERT_TRUE(QTest::qWaitFor([&] { return listings_->is_waiting(); }, 3000));
     }
     template <class Done> bool wait_until(Done done) {
         return QTest::qWaitFor(done, 5000);
@@ -327,10 +334,7 @@ TEST_F(QuickOpenTest, ResultsForAnOlderFilterNeverReplaceThoseForANewerOne) {
     // The results of "al" are on their way, and the thread is held before it hears of "ab".
     type("al");
     std::this_thread::sleep_for(milliseconds(300));
-    listings_->hold(true);
-    while (!listings_->is_waiting()) {
-        std::this_thread::sleep_for(milliseconds(5));
-    }
+    hold_listing();
     type("ab");
     QApplication::processEvents();
     EXPECT_EQ(std::ranges::count(shown(), "alpha"), 0) << ::testing::PrintToString(shown());
@@ -341,10 +345,7 @@ TEST_F(QuickOpenTest, ResultsForAnOlderFilterNeverReplaceThoseForANewerOne) {
 TEST_F(QuickOpenTest, EnterBeforeTheAnswerChoosesWhatTheTypedFilterFinds) {
     open({"recent.txt"});
     ASSERT_TRUE(wait_until([&] { return listings_->count_of(&Listings::started) == 1; }));
-    listings_->hold(true);
-    while (!listings_->is_waiting()) {
-        std::this_thread::sleep_for(milliseconds(5));
-    }
+    hold_listing();
     listings_->give({"target.txt"}, true);
     type("target");
     press(Qt::Key_Return);
@@ -361,10 +362,7 @@ TEST_F(QuickOpenTest, EnterBeforeTheAnswerChoosesWhatTheTypedFilterFinds) {
 TEST_F(QuickOpenTest, TypingOnDropsAHeldEnter) {
     open();
     ASSERT_TRUE(wait_until([&] { return listings_->count_of(&Listings::started) == 1; }));
-    listings_->hold(true);
-    while (!listings_->is_waiting()) {
-        std::this_thread::sleep_for(milliseconds(5));
-    }
+    hold_listing();
     listings_->give({"target.txt"}, true);
     type("tar");
     press(Qt::Key_Return);
@@ -450,11 +448,19 @@ TEST_F(QuickOpenTest, TypingDoesNotWaitForAHundredThousandFilesToBeMatched) {
 
     qint64 slowest_key = 0;
     qint64 slowest_turn = 0;
-    for (const char key : std::string("mo4file9")) {
+    const auto press_timed = [&](char key) {
         QElapsedTimer timer;
         timer.start();
         QTest::keyClick(field(), key);
         slowest_key = std::max(slowest_key, timer.nsecsElapsed());
+    };
+    const std::string keys = "mo4file9";
+    for (std::size_t i = 0; i < keys.size(); i += 2) {
+        press_timed(keys[i]);
+        // The next key comes while the files are being matched against the filter so far.
+        std::this_thread::sleep_for(milliseconds(5));
+        press_timed(keys[i + 1]);
+        QElapsedTimer timer;
         // The turns of the event loop until the answer is in, which show it.
         waiting.restart();
         while (!quick_open_->is_complete() && waiting.elapsed() < 30000) {
