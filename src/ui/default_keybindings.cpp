@@ -287,6 +287,7 @@ const Row rows[] = {
      {"cmd+backspace"}},
 
     // The window.
+    {"workbench.action.quickOpen", "", {"ctrl+p", "ctrl+e"}, {"ctrl+p", "ctrl+e"}, {"cmd+p"}},
     {"workbench.action.showCommands",
      "",
      {"ctrl+shift+p", "f1"},

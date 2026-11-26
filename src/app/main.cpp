@@ -2,6 +2,7 @@
 #include "anvil/core/workspace.hpp"
 #include "anvil/platform/paths.hpp"
 #include "anvil/platform/working_directory.hpp"
+#include "anvil/search/ripgrep.hpp"
 #include "anvil/ui/main_window.hpp"
 
 #include <QApplication>
@@ -22,15 +23,18 @@ using anvil::ui::ExtensionHostBridge;
 //   ANVIL_VSCODE_DIR   the checkout (default: .deps/vscode of the source tree)
 //   ANVIL_EXTENSIONS   unpacked extension directories, separated like PATH entries
 //   ANVIL_EXTENSION_HOST=off  runs the editor without it
+std::filesystem::path vscode_directory(const QProcessEnvironment& environment) {
+    return environment.contains("ANVIL_VSCODE_DIR")
+               ? environment.value("ANVIL_VSCODE_DIR").toStdString()
+               : std::string(ANVIL_DEFAULT_VSCODE_DIR);
+}
+
 std::optional<ExtensionHostBridge::Config> extension_host_config() {
     const QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     if (environment.value("ANVIL_EXTENSION_HOST") == "off") {
         return std::nullopt;
     }
-    const std::filesystem::path vscode_dir =
-        environment.contains("ANVIL_VSCODE_DIR")
-            ? environment.value("ANVIL_VSCODE_DIR").toStdString()
-            : std::string(ANVIL_DEFAULT_VSCODE_DIR);
+    const std::filesystem::path vscode_dir = vscode_directory(environment);
     if (!std::filesystem::exists(vscode_dir / "out" / "bootstrap-fork.js")) {
         return std::nullopt;
     }
@@ -85,6 +89,11 @@ int main(int argc, char* argv[]) {
     anvil::ui::MainWindowOptions options;
     options.workspace = launch.workspace;
     options.extension_host = extension_host_config();
+    const QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    options.ripgrep =
+        anvil::search::find_ripgrep({.override_path = environment.value("ANVIL_RG").toStdString(),
+                                     .vscode_dir = vscode_directory(environment),
+                                     .path_variable = environment.value("PATH").toStdString()});
     if (const auto config_dir = anvil::platform::user_config_dir()) {
         options.settings_file = *config_dir / "settings.json";
         options.keybindings_file = *config_dir / "keybindings.json";

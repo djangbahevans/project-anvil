@@ -609,3 +609,56 @@ TEST_F(QuickPickTest, TypingTellsWhichItemTheFilterLeavesChosen) {
     ASSERT_GE(active.count(), 1);
     EXPECT_EQ(active.last().at(0).toULongLong(), 2U);
 }
+
+TEST_F(QuickPickTest, AListThatTheCallerFiltersIsDrawnWithTheCallersHighlights) {
+    QuickPickItem item{.label = "main.cpp", .description = "src", .detail = {}, .keybinding = {}};
+    item.label_match = {{0, 2}};
+    pick_->set_filtering(false);
+    pick_->set_items({item});
+    pick_->open();
+    type("zz");
+    ASSERT_EQ(pick_->shown_items(), std::vector<std::size_t>{0});
+    EXPECT_EQ(pick_->label_highlights(0), item.label_match);
+    // A pick that filters computes its own.
+    pick_->filter_field()->clear();
+    pick_->set_filtering(true);
+    EXPECT_TRUE(pick_->label_highlights(0).empty());
+}
+
+TEST_F(QuickPickTest, EnterIsHeldWhileTheItemsAreAwaitedAndThenChooses) {
+    QSignalSpy accepted(pick_, &QuickPick::accepted);
+    pick_->open();
+    pick_->set_awaiting_items(true);
+    QTest::keyClick(pick_->filter_field(), Qt::Key_Return);
+    EXPECT_EQ(accepted.count(), 0);
+    EXPECT_TRUE(pick_->isVisible());
+    pick_->set_items(items_of({"new first", "new second"}));
+    pick_->set_awaiting_items(false);
+    ASSERT_EQ(accepted.count(), 1);
+    EXPECT_EQ(accepted.at(0).at(0).value<std::size_t>(), 0U);
+    EXPECT_FALSE(pick_->isVisible());
+
+    // Without a held Enter nothing happens, and one is not remembered over an opening.
+    pick_->open();
+    pick_->set_awaiting_items(true);
+    pick_->set_awaiting_items(false);
+    pick_->set_awaiting_items(true);
+    QTest::keyClick(pick_->filter_field(), Qt::Key_Return);
+    pick_->cancel();
+    pick_->open();
+    pick_->set_awaiting_items(false);
+    EXPECT_EQ(accepted.count(), 1);
+}
+
+TEST_F(QuickPickTest, TheNextRowIsChosenAndTheActiveItemTold) {
+    pick_->set_items(items_of({"a", "b"}));
+    pick_->open();
+    EXPECT_EQ(pick_->active_item(), 0U);
+    pick_->select_next();
+    EXPECT_EQ(pick_->active_item(), 1U);
+    pick_->select_next();
+    EXPECT_EQ(pick_->active_item(), 0U);
+    pick_->set_items({});
+    EXPECT_EQ(pick_->active_item(), std::nullopt);
+    pick_->select_next();
+}

@@ -307,7 +307,10 @@ QuickPick::QuickPick(QWidget* window, const WorkbenchColors& colors)
                     emit active_changed(model_->rows()[row].item);
                 }
             });
-    connect(filter_, &QLineEdit::textChanged, this, [this] { refilter(); });
+    connect(filter_, &QLineEdit::textChanged, this, [this] {
+        enter_held_ = false;
+        refilter();
+    });
     connect(list_, &QListView::clicked, this, [this](const QModelIndex& index) { choose(index); });
     connect(qApp, &QApplication::focusChanged, this,
             [this](QWidget*, QWidget* now) { on_focus_changed(now); });
@@ -459,12 +462,18 @@ void QuickPick::open(const QString& text) {
     if (focused && focused != this && !isAncestorOf(focused)) {
         previous_focus_ = focused;
     }
-    filter_->setText(text);
+    awaiting_items_ = false;
+    enter_held_ = false;
+    // A popup that is showing and keeps its text keeps its cursor too, since its use changed
+    // under the user's typing; setting the same text would move the cursor to the end.
+    if (!isVisible() || filter_->text() != text) {
+        filter_->setText(text);
+        filter_->setCursorPosition(static_cast<int>(text.size()));
+    }
     refilter();
     show();
     raise();
     filter_->setFocus();
-    filter_->setCursorPosition(static_cast<int>(text.size()));
 }
 
 void QuickPick::set_active_item(std::size_t item) {
@@ -474,6 +483,26 @@ void QuickPick::set_active_item(std::size_t item) {
             list_->setCurrentIndex(model_->index(static_cast<int>(row)));
             return;
         }
+    }
+}
+
+std::optional<std::size_t> QuickPick::active_item() const {
+    const QModelIndex current = list_->currentIndex();
+    const auto row = static_cast<std::size_t>(current.row());
+    if (!current.isValid() || row >= model_->rows().size()) {
+        return std::nullopt;
+    }
+    return model_->rows()[row].item;
+}
+
+void QuickPick::select_next() {
+    move_selection(1, true);
+}
+
+void QuickPick::set_awaiting_items(bool awaiting) {
+    awaiting_items_ = awaiting;
+    if (!awaiting && std::exchange(enter_held_, false)) {
+        choose(list_->currentIndex());
     }
 }
 
@@ -518,7 +547,10 @@ void QuickPick::refilter() {
                 pending = i;
                 continue;
             }
-            rows.push_back({i, {}, {}, std::exchange(pending, no_separator)});
+            rows.push_back(
+                {i, filtering_ ? std::vector<core::MatchRange>{} : items_[i].label_match,
+                 filtering_ ? std::vector<core::MatchRange>{} : items_[i].description_match,
+                 std::exchange(pending, no_separator)});
         }
     } else {
         std::vector<core::ItemScore> scores(items_.size());
@@ -654,7 +686,11 @@ bool QuickPick::eventFilter(QObject* watched, QEvent* event) {
         return true;
     case Qt::Key_Return:
     case Qt::Key_Enter:
-        choose(list_->currentIndex());
+        if (awaiting_items_) {
+            enter_held_ = true;
+        } else {
+            choose(list_->currentIndex());
+        }
         return true;
     case Qt::Key_Escape:
         cancel();

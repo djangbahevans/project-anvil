@@ -19,6 +19,7 @@
 #include "anvil/ui/keybinding_service.hpp"
 #include "anvil/ui/keybindings_store.hpp"
 #include "anvil/ui/panel.hpp"
+#include "anvil/ui/quick_open.hpp"
 #include "anvil/ui/quick_pick.hpp"
 #include "anvil/ui/settings_store.hpp"
 #include "anvil/ui/sidebar.hpp"
@@ -83,6 +84,13 @@ struct MainWindowOptions {
     // The directory with what a window starts with again (ADR 0019): its layout, size and
     // position. Empty keeps them for the life of the window only.
     std::filesystem::path state_directory;
+    // The ripgrep that lists the files for Go to File; none when there is no ripgrep to be found.
+    std::optional<std::filesystem::path> ripgrep;
+    // How Go to File lists a folder; ripgrep when unset. Tests replace it to decide which files
+    // there are and when they arrive.
+    std::function<FileSourceFactory(const std::filesystem::path& folder,
+                                    const core::FileSearchOptions& options)>
+        list_files;
     // The directory with the color themes; the application's own when unset.
     std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
@@ -228,6 +236,9 @@ public:
     QuickPick* go_to_line_pick() {
         return go_to_line_;
     }
+    QuickOpen* quick_open() {
+        return quick_open_.get();
+    }
     SettingsStore& settings() {
         return *settings_;
     }
@@ -324,6 +335,23 @@ private:
     bool has_unsaved_changes_within(const std::filesystem::path& path) const;
     // Reads `files.exclude` and, when it changed, gives it to the explorer.
     void apply_file_excludes();
+    // Reads the settings of file search, and logs what is wrong with those of its own.
+    void apply_search_settings();
+    // Go to File: opens the quick pick over the files of the workspace folder, or over the open
+    // documents without one. Run again while it is open, it chooses the next row.
+    void show_quick_open();
+    // The two uses of the popup of quick access, as in VS Code, where `>` at the start of the text
+    // turns a search for files into the command palette and removing it turns back.
+    void show_files(const QString& filter);
+    void follow_quick_access_text(const QString& text);
+    // Ends the list that `pick_from` shows, when another use takes the popup over.
+    void dismiss_pick();
+    // The documents that the window has shown, in the form that quick open offers them.
+    std::vector<QuickOpenEntry> recent_entries(bool open_only) const;
+    QuickOpenEntry quick_open_entry(const core::Uri& uri) const;
+    void open_chosen(const core::Uri& uri);
+    // Puts the document first among those that were shown.
+    void remember_shown(const core::Uri& uri);
     // Builds the comment tokens of the registered languages from the built-in table and from the
     // language configuration files that extensions contribute.
     void rebuild_language_comments();
@@ -471,7 +499,7 @@ private:
     // created.
     bool open_user_file(const std::filesystem::path& file, std::string_view initial);
     // Shows the command palette, unless a dialog is open.
-    void show_command_palette();
+    void show_command_palette(const QString& text = QStringLiteral(">"));
     // Opens Go to Line/Column over the shown document: the caret follows the text typed, Enter
     // keeps it and Escape puts the caret and the scroll position back.
     void show_go_to_line();
@@ -550,6 +578,11 @@ private:
     Panel* panel_ = nullptr;
     QuickPick* palette_ = nullptr;
     QuickPick* go_to_line_ = nullptr;
+    std::unique_ptr<QuickOpen> quick_open_;
+    // What the popup of the command palette is used for; `other` is a list of `pick_from`.
+    enum class QuickAccess { other, commands, files };
+    QuickAccess quick_access_ = QuickAccess::other;
+    core::FileSearchOptions search_options_;
     // What Go to Line/Column puts back when it is cancelled. `document` is empty while it is
     // closed.
     struct GoToLineState {
@@ -600,6 +633,8 @@ private:
     std::map<std::shared_ptr<core::Document>, bool> wrap_overrides_;
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
+    // The documents that the window has shown, the most recently first.
+    std::vector<core::Uri> recent_documents_;
     workbench::NavigationHistory history_;
     workbench::ClosedEditors closed_editors_;
     // What Zen Mode changed, to be given back when it ends.

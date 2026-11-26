@@ -175,6 +175,7 @@ if(TARGET anvil_ui)
     ui/keybindings_store_test.cpp
     ui/main_window_test.cpp
     ui/panel_test.cpp
+    ui/quick_open_test.cpp
     ui/quick_pick_test.cpp
     ui/resources_test.cpp
     ui/settings_store_test.cpp

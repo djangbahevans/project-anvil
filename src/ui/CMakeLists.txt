@@ -40,6 +40,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/menu_style.hpp
   include/anvil/ui/painted_accessibility.hpp
   include/anvil/ui/panel.hpp
+  include/anvil/ui/quick_open.hpp
   include/anvil/ui/quick_pick.hpp
   include/anvil/ui/resources.hpp
   include/anvil/ui/settings_store.hpp
@@ -60,6 +61,7 @@ add_library(anvil_ui STATIC
   main_window.cpp
   painted_accessibility.cpp
   panel.cpp
+  quick_open.cpp
   quick_pick.cpp
   resources.cpp
   settings_store.cpp
@@ -88,7 +90,7 @@ qt_add_resources(anvil_ui anvil_codicons
 target_include_directories(anvil_ui PUBLIC include)
 target_compile_definitions(anvil_ui PRIVATE ANVIL_VERSION="${PROJECT_VERSION}")
 target_link_libraries(anvil_ui
-  PUBLIC Qt6::Widgets anvil::core anvil::exthost anvil::workbench
+  PUBLIC Qt6::Widgets anvil::core anvil::exthost anvil::search anvil::workbench
   PRIVATE anvil::platform anvil_compile_options
 )
 target_compile_definitions(anvil_ui PRIVATE ANVIL_THEMES_SOURCE_DIR="${CMAKE_SOURCE_DIR}/resources/themes")
