@@ -101,6 +101,20 @@ bool is_high_contrast(core::ThemeKind kind) {
            kind == core::ThemeKind::high_contrast_light;
 }
 
+// The theme's `contrastBorder`, which the registry gives to high contrast themes that set none.
+std::optional<core::Rgba> contrast_border(const core::ColorTheme& theme, core::ThemeKind kind) {
+    if (const auto color = theme.color("contrastBorder")) {
+        return color;
+    }
+    if (kind == core::ThemeKind::high_contrast_dark) {
+        return core::Rgba{0x6f, 0xc3, 0xdf, 0xff};
+    }
+    if (kind == core::ThemeKind::high_contrast_light) {
+        return core::Rgba{0x0f, 0x4a, 0x85, 0xff};
+    }
+    return std::nullopt;
+}
+
 // The registry's slider of a scroll bar, which high contrast themes derive from their
 // `contrastBorder`.
 std::optional<core::Rgba> slider_default(std::string_view key, const core::ColorTheme& theme,
@@ -113,9 +127,7 @@ std::optional<core::Rgba> slider_default(std::string_view key, const core::Color
     const bool light = kind == core::ThemeKind::light;
     if (is_high_contrast(kind)) {
         const bool light_contrast = kind == core::ThemeKind::high_contrast_light;
-        core::Rgba color = theme.color("contrastBorder")
-                               .value_or(light_contrast ? core::Rgba{0x0f, 0x4a, 0x85, 0xff}
-                                                        : core::Rgba{0x6f, 0xc3, 0xdf, 0xff});
+        core::Rgba color = *contrast_border(theme, kind);
         const double opacity = rest ? (light_contrast ? 0.4 : 0.6) : hover ? 0.8 : 1.0;
         color.alpha = static_cast<std::uint8_t>(std::lround(color.alpha * opacity));
         return color;
@@ -136,13 +148,9 @@ std::optional<core::Rgba> registry_default(std::string_view key, const core::Col
     if (const auto slider = slider_default(key, theme, kind)) {
         return slider;
     }
-    if (key == "contrastBorder") {
-        if (kind == core::ThemeKind::high_contrast_dark) {
-            return core::Rgba{0x6f, 0xc3, 0xdf, 0xff};
-        }
-        if (kind == core::ThemeKind::high_contrast_light) {
-            return core::Rgba{0x0f, 0x4a, 0x85, 0xff};
-        }
+    // VS Code outlines the activity bar with the contrast border where a theme gives it no border.
+    if (key == "contrastBorder" || key == "activityBar.border") {
+        return contrast_border(theme, kind);
     }
     if (key == "editorGroup.border") {
         if (kind == core::ThemeKind::dark) {

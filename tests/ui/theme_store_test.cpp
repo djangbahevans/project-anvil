@@ -407,6 +407,34 @@ TEST_F(ThemeStoreTest, TheShadowOfAScrolledEditorTakesTheRegistrysColorUnlessThe
     }
 }
 
+TEST_F(ThemeStoreTest, TheBorderOfTheActivityBarIsTheThemesOrItsContrastBorder) {
+    write("contrast.json", R"j({"colors": {"contrastBorder": "#ff0000"}})j");
+    write("both.json",
+          R"j({"colors": {"contrastBorder": "#ff0000", "activityBar.border": "#00ff00"}})j");
+    open_shipped();
+    store_->add_themes({{.id = "red",
+                         .label = "Red",
+                         .kind = core::ThemeKind::dark,
+                         .file = scratch_ / "contrast.json"},
+                        {.id = "both",
+                         .label = "Both",
+                         .kind = core::ThemeKind::high_contrast_dark,
+                         .file = scratch_ / "both.json"}});
+
+    ASSERT_TRUE(store_->select("Dark 2026"));
+    EXPECT_EQ(colors_.color("activityBar.border"), QColor("#2A2B2C"));
+    ASSERT_TRUE(store_->select("Dark+"));
+    EXPECT_FALSE(colors_.is_themed("activityBar.border"));
+    ASSERT_TRUE(store_->select("Dark High Contrast"));
+    EXPECT_EQ(colors_.color("activityBar.border"), QColor("#6fc3df"));
+    ASSERT_TRUE(store_->select("Default High Contrast Light"));
+    EXPECT_EQ(colors_.color("activityBar.border"), QColor("#0f4a85"));
+    ASSERT_TRUE(store_->select("red"));
+    EXPECT_EQ(colors_.color("activityBar.border"), QColor("#ff0000"));
+    ASSERT_TRUE(store_->select("both"));
+    EXPECT_EQ(colors_.color("activityBar.border"), QColor("#00ff00"));
+}
+
 TEST_F(ThemeStoreTest, AKeyThatDefaultsToAnotherTakesItsValue) {
     open_shipped();
     ASSERT_TRUE(store_->select("Dark 2026"));

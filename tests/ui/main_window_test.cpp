@@ -4880,6 +4880,25 @@ TEST_F(MainWindowTest, APanelContainerOpensInThePanelAndTheCommandsMaximizeIt) {
 
 // --- color themes ---
 
+TEST_F(MainWindowTest, TheDefaultThemeSeparatesTheActivityBarFromTheSideBar) {
+    create_window();
+    window_->workbench()->set_visible(ui::Part::activity_bar, true);
+    window_->workbench()->set_visible(ui::Part::sidebar, true);
+    window_->resize(900, 600);
+    window_->show();
+    QApplication::processEvents();
+    // The whole window is drawn, so that the buttons of the activity bar are over the line.
+    QWidget* bar = window_->workbench()->activity_bar();
+    const QImage image = window_->grab().toImage();
+    const QPoint top = bar->mapTo(window_.get(), QPoint(bar->width() - 1, 0));
+    for (int y = 0; y < bar->height(); ++y) {
+        ASSERT_EQ(image.pixelColor(top.x(), top.y() + y), QColor("#2A2B2C")) << y;
+    }
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        image.save(QString::fromUtf8(directory) + "/activity_bar_border.png");
+    }
+}
+
 TEST_F(MainWindowTest, TheEditorStartsInVsCodesDefaultTheme) {
     create_window();
     EXPECT_EQ(window_->themes().current(), "Dark 2026");
