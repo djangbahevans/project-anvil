@@ -91,12 +91,9 @@ std::size_t column_after(std::string_view line, std::size_t offset, std::size_t 
 } // namespace
 
 std::size_t visible_column(std::string_view line, std::size_t offset, std::size_t tab_size) {
-    // Only the text before the offset is split into clusters, so that a cluster that the offset
-    // cuts counts for the part before it, as in VS Code.
-    const std::string_view prefix = line.substr(0, offset);
     std::size_t column = 0;
-    for (std::size_t at = 0; at < prefix.size(); at = cluster_end(prefix, at)) {
-        column = column_after(prefix, at, column, tab_size);
+    for (std::size_t at = 0; at < offset; at = cluster_end(line, at)) {
+        column = column_after(line, at, column, tab_size);
     }
     return column;
 }
