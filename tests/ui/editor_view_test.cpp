@@ -1,5 +1,6 @@
 #include "anvil/ui/chunked_line.hpp"
 #include "anvil/ui/editor_view.hpp"
+#include "anvil/ui/line_layout.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -2625,4 +2626,120 @@ TEST_F(WrapTest, ScreenshotOfWrappedCode) {
     if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
         image.save(QString::fromUtf8(directory) + "/editor_view_wrapped_code.png");
     }
+}
+
+TEST_F(WrapTest, ARowInTheMiddleOfALineStaysAtTheTopWhenTheRowsChange) {
+    open_wrapped(long_lines(30));
+    // The fifth row of a line.
+    const std::size_t offset = offset_of_line(10, view_.rows()->row(document_->text(), 0).end);
+    const std::size_t inside = offset_of_line(10, 83);
+    view_.verticalScrollBar()->setValue(view_.cursor_rect(inside).top());
+    ASSERT_EQ(view_.cursor_rect(inside).top(), 0);
+    ASSERT_NE(view_.cursor_rect(offset).top(), 0);
+    settings_.font_size = 18;
+    view_.apply_settings(settings_);
+    EXPECT_EQ(view_.cursor_rect(inside).top(), 0) << "a larger font";
+    view_.set_wrapping(Wrapping::column, 30);
+    EXPECT_EQ(view_.cursor_rect(inside).top(), 0) << "wider rows";
+}
+
+TEST_F(WrapTest, ARowThatFillsTheViewAsksForNoHorizontalScrolling) {
+    open(std::string(500, 'a'));
+    view_.set_wrapping(Wrapping::view);
+    // A width that leaves almost nothing after a full row.
+    for (int width = 640; width > 500; --width) {
+        view_.resize(width, 320);
+        QApplication::processEvents();
+        const int gutter = left_of(0) - view_.text_padding();
+        const int room = view_.viewport()->width() - gutter - 2 * view_.text_padding();
+        if (room - fitting_columns() * advance() < 4) {
+            break;
+        }
+    }
+    view_.select_range(core::Selection::caret(0));
+    paint();
+    EXPECT_EQ(view_.horizontalScrollBar()->maximum(), 0);
+}
+
+TEST_F(WrapTest, ACaretWhereALineBreaksIsDrawnOnTheLaterRowAlone) {
+    open_wrapped(words(16));
+    set_selections({core::Selection::caret(0), core::Selection::caret(79)});
+    const QImage without = paint();
+    set_selections(
+        {core::Selection::caret(0), core::Selection::caret(40), core::Selection::caret(79)});
+    EXPECT_EQ(changed_rows(without, paint()), (std::set<int>{2}));
+}
+
+TEST_F(WrapTest, WhitespaceMarksStandOnTheirSpacesOnALaterRow) {
+    settings_.render_whitespace = core::RenderWhitespace::none;
+    view_.apply_settings(settings_);
+    // Two spaces at columns 2 and 3 of the second row.
+    open_wrapped(words(4) + "ab  cdefghij");
+    const QImage plain = paint();
+    settings_.render_whitespace = core::RenderWhitespace::boundary;
+    view_.apply_settings(settings_);
+    const QImage marked = paint();
+    const int lh = view_.line_height();
+    const int from = left_of(22);
+    const int to = left_of(24);
+    int inside = 0;
+    for (int y = lh; y < 2 * lh; ++y) {
+        for (int x = 0; x < plain.width(); ++x) {
+            if (plain.pixel(x, y) != marked.pixel(x, y)) {
+                EXPECT_GE(x, from);
+                EXPECT_LE(x, to);
+                ++inside;
+            }
+        }
+    }
+    EXPECT_GT(inside, 0);
+}
+
+TEST_F(WrapTest, EveryRowBeginsAtTheColumnThatTheRowMapGives) {
+    // Characters of one to four bytes, one and two UTF-16 units.
+    std::string line;
+    for (int i = 0; i < 12; ++i) {
+        line += "\xF0\x9F\x98\x80\xF0\x9F\x98\x80 \xC3\xA9\xC3\xA9 \xE4\xB8\xAD ab ";
+    }
+    open_wrapped(line, 9);
+    const std::size_t rows = view_.rows()->row_count();
+    ASSERT_GT(rows, 10U);
+    for (std::size_t row = 0; row < 10; ++row) {
+        const std::size_t offset = view_.rows()->row(document_->text(), row).begin;
+        EXPECT_EQ(row_of(offset), static_cast<int>(row)) << row;
+        EXPECT_EQ(left_of(offset), left_of(0)) << row;
+    }
+}
+
+TEST_F(WrapTest, TheRowsOfALongLineFarFromViewAreLaidOutAgain) {
+    open_wrapped(words(4000), 20);
+    paint();
+    const int page = view_.viewport()->height();
+    const int far = static_cast<int>(ui::LineLayout::kept_rows) * view_.line_height() + 2 * page;
+    for (int value = 0; value <= far; value += page) {
+        view_.verticalScrollBar()->setValue(value);
+        paint();
+    }
+    view_.verticalScrollBar()->setValue(page);
+    EXPECT_GT(built_by([&] { paint(); }), 0U);
+}
+
+TEST_F(SyntaxHighlightingTest, ARefreshPaintsEveryRowOfAWrappedLine) {
+    open("aaaa aaaa if aaaa\nlast");
+    view_.set_wrapping(EditorView::Wrapping::column, 5);
+    highlight({{"if", "string.fake"}});
+    painted();
+    const std::size_t rows = view_.rows()->rows_of(0);
+    ASSERT_GT(rows, 2U);
+    PaintCounter counter;
+    view_.viewport()->installEventFilter(&counter);
+
+    highlighter_->set_scopes({{"if", "invalid.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    QApplication::processEvents();
+
+    EXPECT_EQ(counter.painted.boundingRect().top(), 0);
+    EXPECT_EQ(counter.painted.boundingRect().height(),
+              static_cast<int>(rows) * view_.line_height());
 }
