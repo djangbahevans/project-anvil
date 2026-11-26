@@ -334,7 +334,12 @@ TEST_F(QuickOpenTest, ResultsForAnOlderFilterNeverReplaceThoseForANewerOne) {
     // The results of "al" are on their way, and the thread is held before it hears of "ab".
     type("al");
     std::this_thread::sleep_for(milliseconds(300));
-    hold_listing();
+    // Waiting without a turn of the event loop, which would show them.
+    listings_->hold(true);
+    for (int i = 0; i < 600 && !listings_->is_waiting(); ++i) {
+        std::this_thread::sleep_for(milliseconds(5));
+    }
+    ASSERT_TRUE(listings_->is_waiting());
     type("ab");
     QApplication::processEvents();
     EXPECT_EQ(std::ranges::count(shown(), "alpha"), 0) << ::testing::PrintToString(shown());
