@@ -108,10 +108,11 @@ Sidebar::Sidebar(Workbench& workbench, ViewContainerRegistry& registry,
         if (part != Part::sidebar) {
             return;
         }
-        if (visible && active_.empty()) {
+        if (visible) {
             if (const auto containers = registry_.containers(ViewContainerLocation::sidebar);
                 !containers.empty()) {
-                activate(containers.front()->id);
+                const std::string chosen = active_.empty() ? containers.front()->id : active_;
+                activate(chosen);
             }
         }
         update_buttons();
@@ -131,6 +132,24 @@ void Sidebar::activate(std::string_view id) {
     const bool changed = active_ != container->id;
     active_ = container->id;
     workbench_.set_visible(Part::sidebar, true);
+    update_buttons();
+    if (changed) {
+        emit active_container_changed(QString::fromStdString(active_));
+    }
+}
+
+void Sidebar::set_active_container(std::string_view id) {
+    const ViewContainer* container = registry_.find(id);
+    if (!container || container->location != ViewContainerLocation::sidebar) {
+        return;
+    }
+    if (workbench_.is_visible(Part::sidebar)) {
+        activate(id);
+        return;
+    }
+    title_->set_text(container->title);
+    const bool changed = active_ != container->id;
+    active_ = container->id;
     update_buttons();
     if (changed) {
         emit active_container_changed(QString::fromStdString(active_));

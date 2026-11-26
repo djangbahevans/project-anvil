@@ -395,6 +395,21 @@ MainWindow::MainWindow(Options options, QWidget* parent)
 
     apply_settings();
     add_untitled_document();
+
+    // After the settings, whose zoom replaces a part size that is the default one.
+    state_ = std::make_unique<workbench::StateStore>(
+        options_.state_directory,
+        options_.workspace ? std::optional(options_.workspace->id) : std::nullopt, logger);
+    state_keeper_ =
+        std::make_unique<WindowStateKeeper>(*state_, *this, *workbench_, *sidebar_, *panel_);
+    state_keeper_->set_parts_outside_mode([this]() -> std::optional<WindowStateKeeper::PartsShown> {
+        if (!zen_.active) {
+            return std::nullopt;
+        }
+        return WindowStateKeeper::PartsShown{.sidebar = zen_.sidebar_was_visible,
+                                             .panel = zen_.panel_was_visible};
+    });
+    state_keeper_->restore();
 }
 
 MainWindow::~MainWindow() {
@@ -637,6 +652,8 @@ void MainWindow::explorer_deleted(const std::vector<std::filesystem::path>& path
 }
 
 void MainWindow::workspace_changed() {
+    state_keeper_->set_workspace(options_.workspace ? std::optional(options_.workspace->id)
+                                                    : std::nullopt);
     if (options_.extension_host) {
         core::NullLogger discarded;
         core::Logger& logger = options_.logger ? *options_.logger : discarded;
@@ -3077,6 +3094,7 @@ void MainWindow::use_native_frame() {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (resolve_unsaved_changes()) {
+        state_keeper_->save();
         event->accept();
     } else {
         event->ignore();

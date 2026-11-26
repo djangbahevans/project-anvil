@@ -41,6 +41,10 @@ public:
     // Shows the panel with the container. Nothing happens for an id that is not registered for the
     // panel.
     void activate(std::string_view id);
+    // Makes the container the one that the panel shows when it is shown, without showing the
+    // panel or making the container's widget while it is hidden. Nothing happens for an id that
+    // is not registered for the panel.
+    void set_active_container(std::string_view id);
 
     // The widget of the container, or null before it was first shown.
     QWidget* container_widget(std::string_view id) const;

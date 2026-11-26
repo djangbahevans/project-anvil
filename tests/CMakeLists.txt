@@ -100,6 +100,7 @@ add_executable(anvil_workbench_tests
   workbench/editor_layout_test.cpp
   workbench/navigation_history_test.cpp
   workbench/menu_model_test.cpp
+  workbench/state_store_test.cpp
 )
 target_link_libraries(anvil_workbench_tests
   PRIVATE anvil::workbench GTest::gtest_main anvil_compile_options)
@@ -165,6 +166,7 @@ if(TARGET anvil_ui)
     ui/theme_store_test.cpp
     ui/title_bar_test.cpp
     ui/window_frame_test.cpp
+    ui/window_state_keeper_test.cpp
     ui/view_container_registry_test.cpp
     ui/workbench_colors_test.cpp
     ui/workbench_test.cpp

@@ -814,3 +814,39 @@ TEST(WorkbenchFocusTest, MovingThePartsKeepsTheKeyboardFocusInTheEditorArea) {
         }
     }
 }
+
+TEST(WorkbenchBeforeShownTest, APartKeepsItsSizeThoughItWasNeverOnScreen) {
+    WorkbenchColors colors{QApplication::palette()};
+    Workbench workbench(colors);
+    workbench.set_editor_area(new QLabel("editor"));
+    workbench.set_size(Part::sidebar, 260);
+    workbench.set_size(Part::panel, 190);
+    EXPECT_EQ(workbench.size(Part::sidebar), 260);
+
+    workbench.set_visible(Part::sidebar, true);
+    workbench.set_visible(Part::panel, true);
+    EXPECT_EQ(workbench.size(Part::sidebar), 260);
+    EXPECT_EQ(workbench.size(Part::panel), 190);
+    workbench.set_maximized(Part::panel, true);
+    workbench.set_maximized(Part::panel, false);
+    workbench.set_visible(Part::sidebar, false);
+    workbench.set_visible(Part::panel, false);
+    EXPECT_EQ(workbench.size(Part::sidebar), 260);
+    EXPECT_EQ(workbench.size(Part::panel), 190);
+}
+
+TEST_F(WorkbenchTest, ThePanelHasASizeAtEachPosition) {
+    using anvil::ui::PanelPosition;
+    workbench_->set_visible(Part::panel, true);
+    workbench_->set_panel_size_at(PanelPosition::top, 150);
+    workbench_->set_panel_size_at(PanelPosition::right, 1);
+    EXPECT_EQ(workbench_->panel_size_at(PanelPosition::right), Workbench::panel_minimum_width);
+    EXPECT_EQ(workbench_->panel_size_at(PanelPosition::bottom), Workbench::default_size);
+    workbench_->set_panel_size_at(PanelPosition::bottom, 220);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->panel()->height(), 220);
+    workbench_->set_panel_position(PanelPosition::top);
+    QApplication::processEvents();
+    EXPECT_EQ(workbench_->panel()->height(), 150);
+    EXPECT_EQ(workbench_->panel_size_at(PanelPosition::bottom), 220);
+}

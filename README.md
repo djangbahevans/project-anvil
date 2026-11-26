@@ -124,6 +124,10 @@ The editor reads `keybindings.json` from the same directory as `settings.json` a
 
 A key is one to four steps (`ctrl+k ctrl+c`), a `when` is VS Code's context key expression, and a command that starts with `-` removes the default bindings of that command. Your bindings win over the default ones, and among them the later entry wins. A missing file means the default bindings; the editor never creates it. A file with a syntax error leaves the previous bindings in force, and an entry that cannot be used is skipped while the others apply; each problem is shown once in the status bar and written to standard error. Only the key spelling of the platform you run on is read, and the `mac`, `win` and `linux` fields of an entry are not.
 
+## Window state
+
+The window opens with the size, position and layout it had when it was last closed: the sidebar and the panel, their sizes and the views they show, with the visibility and the views remembered for each folder. The editor keeps this in the `state` directory next to `settings.json`; deleting it restores the defaults.
+
 ## Extension host tests
 
 `scripts/fetch-vscode.sh` fetches and transpiles the pinned VS Code release into `.deps/vscode` and builds the two native modules the extension host uses (this needs make, a C++ compiler and Python). With it and Node.js on `PATH`, the integration test starts the real extension host and runs an extension command; without them that test is skipped.

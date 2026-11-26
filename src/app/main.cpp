@@ -88,6 +88,7 @@ int main(int argc, char* argv[]) {
     if (const auto config_dir = anvil::platform::user_config_dir()) {
         options.settings_file = *config_dir / "settings.json";
         options.keybindings_file = *config_dir / "keybindings.json";
+        options.state_directory = *config_dir / "state";
     }
     options.logger =
         std::make_shared<anvil::core::StreamLogger>(std::cerr, anvil::core::LogLevel::info);

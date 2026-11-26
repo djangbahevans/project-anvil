@@ -200,10 +200,11 @@ Panel::Panel(Workbench& workbench, ViewContainerRegistry& registry, const Workbe
         if (part != Part::panel) {
             return;
         }
-        if (visible && active_.empty()) {
+        if (visible) {
             if (const auto containers = registry_.containers(ViewContainerLocation::panel);
                 !containers.empty()) {
-                activate(containers.front()->id);
+                const std::string chosen = active_.empty() ? containers.front()->id : active_;
+                activate(chosen);
             }
         }
     });
@@ -246,6 +247,23 @@ void Panel::activate(std::string_view id) {
     const bool changed = active_ != container->id;
     active_ = container->id;
     workbench_.set_visible(Part::panel, true);
+    update_tabs();
+    if (changed) {
+        emit active_container_changed(QString::fromStdString(active_));
+    }
+}
+
+void Panel::set_active_container(std::string_view id) {
+    const ViewContainer* container = registry_.find(id);
+    if (!container || container->location != ViewContainerLocation::panel) {
+        return;
+    }
+    if (workbench_.is_visible(Part::panel)) {
+        activate(id);
+        return;
+    }
+    const bool changed = active_ != container->id;
+    active_ = container->id;
     update_tabs();
     if (changed) {
         emit active_container_changed(QString::fromStdString(active_));
