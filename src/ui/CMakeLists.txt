@@ -51,6 +51,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/view_container_stack.hpp
   include/anvil/ui/watched_file.hpp
   include/anvil/ui/window_frame.hpp
+  include/anvil/ui/window_state_keeper.hpp
   include/anvil/ui/workbench.hpp
   include/anvil/ui/workbench_colors.hpp
   include/anvil/ui/zoom.hpp
@@ -70,6 +71,7 @@ add_library(anvil_ui STATIC
   view_container_stack.cpp
   watched_file.cpp
   window_frame.cpp
+  window_state_keeper.cpp
   workbench.cpp
   workbench_colors.cpp
   zoom.cpp

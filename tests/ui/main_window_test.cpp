@@ -67,6 +67,7 @@ protected:
         options.confirm_unsaved_changes = confirm_unsaved_changes;
         options.settings_file = settings_file_;
         options.keybindings_file = keybindings_file_;
+        options.state_directory = state_directory_;
         options.themes_directory = themes_directory_;
         options.executable = executable_;
         options.start_process = start_process_;
@@ -317,6 +318,7 @@ protected:
     std::shared_ptr<core::RecordingLogger> logger_ = std::make_shared<core::RecordingLogger>();
     std::filesystem::path settings_file_;
     std::filesystem::path keybindings_file_;
+    std::filesystem::path state_directory_;
     // The tests keep the system frame except those about the title bar.
     bool custom_title_bar_ = false;
     std::vector<std::filesystem::path> extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION};
@@ -10478,4 +10480,171 @@ TEST_F(ExplorerDragWindowTest, ExtensionsSeeADraggedDocumentUnderItsNewName) {
     const auto moved = core::Uri::file(project() / "src" / "a.txt");
     EXPECT_TRUE(wait_until([&] { return extension_has_document(moved); }));
     EXPECT_FALSE(extension_has_document(core::Uri::file(a)));
+}
+
+namespace {
+
+class WindowStateTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        state_directory_ = scratch_ / "state";
+        for (const char* name : {"first", "second"}) {
+            std::filesystem::create_directories(scratch_ / name);
+        }
+    }
+
+    core::Workspace folder(const std::string& name) const {
+        return *core::Workspace::open(scratch_ / name);
+    }
+    // Closes the window as the user does, which writes its state.
+    void close_window() {
+        ASSERT_TRUE(window_->close());
+        window_.reset();
+    }
+    nlohmann::json state_of(const std::filesystem::path& file) const {
+        const auto text = platform::read_file(state_directory_ / file);
+        return text ? nlohmann::json::parse(*text) : nlohmann::json::object();
+    }
+    nlohmann::json workspace_state(const std::string& name) const {
+        return state_of(std::filesystem::path("workspaces") / (folder(name).id + ".json"));
+    }
+    bool sidebar_shown() const {
+        return window_->workbench()->is_visible(ui::Part::sidebar);
+    }
+    bool panel_shown() const {
+        return window_->workbench()->is_visible(ui::Part::panel);
+    }
+};
+
+} // namespace
+
+TEST_F(WindowStateTest, AWindowOpensAsTheLastOneWasClosed) {
+    workspace_ = folder("first");
+    create_window();
+    EXPECT_FALSE(sidebar_shown());
+    window_->setGeometry(4, 30, 790, 500);
+    window_->sidebar()->activate("workbench.view.explorer");
+    window_->workbench()->set_size(ui::Part::sidebar, 230);
+    window_->workbench()->set_panel_position(ui::PanelPosition::top);
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    QApplication::processEvents();
+    close_window();
+
+    create_window();
+    EXPECT_TRUE(sidebar_shown());
+    EXPECT_TRUE(panel_shown());
+    EXPECT_EQ(window_->workbench()->panel_position(), ui::PanelPosition::top);
+    EXPECT_EQ(window_->geometry(), QRect(4, 30, 790, 500));
+    EXPECT_EQ(window_->workbench()->sidebar()->width(), 230);
+    EXPECT_NE(window_->sidebar()->container_widget("workbench.view.explorer"), nullptr);
+}
+
+TEST_F(WindowStateTest, TheStateIsAppliedBeforeTheWindowIsShown) {
+    std::filesystem::create_directories(state_directory_);
+    ASSERT_TRUE(platform::write_file(state_directory_ / "no-folder.json",
+                                     R"({"layout.sidebar.visible": true})")
+                    .has_value());
+    ASSERT_TRUE(platform::write_file(state_directory_ / "global.json",
+                                     R"({"window.x": 4, "window.y": 30, "window.width": 790,)"
+                                     R"( "window.height": 500, "layout.sidebar.width": 240})")
+                    .has_value());
+    ui::MainWindowOptions options;
+    options.state_directory = state_directory_;
+    options.logger = logger_;
+    window_ = std::make_unique<MainWindow>(std::move(options));
+    EXPECT_FALSE(window_->isVisible());
+    EXPECT_TRUE(sidebar_shown());
+    EXPECT_EQ(window_->workbench()->size(ui::Part::sidebar), 240);
+    EXPECT_EQ(window_->geometry(), QRect(4, 30, 790, 500));
+}
+
+TEST_F(WindowStateTest, TheEditorHasTheFocusWhenAShownSideBarIsRestored) {
+    workspace_ = folder("first");
+    create_window();
+    window_->sidebar()->activate("workbench.view.explorer");
+    close_window();
+
+    create_window();
+    window_->activateWindow();
+    QApplication::processEvents();
+    ASSERT_TRUE(sidebar_shown());
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+}
+
+TEST_F(WindowStateTest, EachFolderAndAWindowWithoutOneHaveTheirOwnLayout) {
+    workspace_ = folder("first");
+    create_window();
+    window_->sidebar()->activate("workbench.view.explorer");
+    close_window();
+
+    workspace_ = folder("second");
+    create_window();
+    EXPECT_FALSE(sidebar_shown());
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    close_window();
+
+    workspace_.reset();
+    create_window();
+    EXPECT_FALSE(sidebar_shown());
+    EXPECT_FALSE(panel_shown());
+    close_window();
+
+    workspace_ = folder("first");
+    create_window();
+    EXPECT_TRUE(sidebar_shown());
+    EXPECT_FALSE(panel_shown());
+}
+
+TEST_F(WindowStateTest, OpeningAFolderSavesTheOneLeftKeepsTheLayoutAndSavesToTheNewOne) {
+    workspace_ = folder("first");
+    create_window();
+    window_->sidebar()->activate("workbench.view.explorer");
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    EXPECT_TRUE(sidebar_shown());
+    EXPECT_EQ(workspace_state("first").at("layout.sidebar.visible"), true);
+
+    window_->workbench()->set_visible(ui::Part::sidebar, false);
+    window_->workbench()->set_visible(ui::Part::panel, true);
+    window_->close_folder();
+    EXPECT_EQ(workspace_state("second").at("layout.sidebar.visible"), false);
+    EXPECT_EQ(workspace_state("second").at("layout.panel.visible"), true);
+
+    window_->workbench()->set_visible(ui::Part::panel, false);
+    close_window();
+    EXPECT_EQ(state_of("no-folder.json").at("layout.panel.visible"), false);
+    EXPECT_EQ(workspace_state("first").at("layout.sidebar.visible"), true);
+    EXPECT_EQ(workspace_state("second").at("layout.panel.visible"), true);
+}
+
+TEST_F(WindowStateTest, AWindowClosedInZenModeSavesThePartsItHadOutsideIt) {
+    create_window();
+    window_->sidebar()->activate("workbench.view.explorer");
+    ASSERT_TRUE(window_->commands().execute("workbench.action.toggleZenMode"));
+    ASSERT_TRUE(window_->zen_mode_active());
+    EXPECT_FALSE(sidebar_shown());
+    close_window();
+    EXPECT_EQ(state_of("no-folder.json").at("layout.sidebar.visible"), true);
+    EXPECT_EQ(state_of("no-folder.json").at("layout.panel.visible"), false);
+
+    create_window();
+    EXPECT_TRUE(sidebar_shown());
+    EXPECT_FALSE(window_->zen_mode_active());
+}
+
+TEST_F(WindowStateTest, ADamagedStateFileDoesNotStopTheStart) {
+    std::filesystem::create_directories(state_directory_);
+    ASSERT_TRUE(platform::write_file(state_directory_ / "global.json", "{not json").has_value());
+    ASSERT_TRUE(platform::write_file(state_directory_ / "no-folder.json", "[]").has_value());
+    create_window();
+    EXPECT_FALSE(sidebar_shown());
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "global.json", "state"));
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "no-folder.json", "state"));
+}
+
+TEST_F(WindowStateTest, AWindowThatIsNotClosedWritesNothingWhenItIsDestroyed) {
+    create_window();
+    window_->sidebar()->activate("workbench.view.explorer");
+    window_.reset();
+    EXPECT_FALSE(std::filesystem::exists(state_directory_));
 }

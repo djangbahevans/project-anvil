@@ -190,6 +190,20 @@ Workbench::Workbench(const WorkbenchColors& colors, QWidget* parent)
     row_layout_->addWidget(across_, 1);
     apply_minimums();
 
+    // A drag is recorded at once, so that the size of a part is known when it is not on screen.
+    connect(across_, &QSplitter::splitterMoved, this, [this] {
+        if (sidebar_->isVisible()) {
+            sidebar_size_ = sidebar_->width();
+        }
+        emit sizes_changed();
+    });
+    connect(down_, &QSplitter::splitterMoved, this, [this] {
+        if (panel_->isVisible() && !panel_maximized_) {
+            panel_size() = panel_extent();
+        }
+        emit sizes_changed();
+    });
+
     root_layout_ = new QVBoxLayout(this);
     root_layout_->setContentsMargins(0, 0, 0, 0);
     root_layout_->setSpacing(0);
@@ -273,7 +287,9 @@ void Workbench::set_visible(Part part, bool visible) {
             sidebar_->show();
             apply_sizes();
         } else {
-            sidebar_size_ = sidebar_->width();
+            if (sidebar_->isVisible()) {
+                sidebar_size_ = sidebar_->width();
+            }
             sidebar_->hide();
         }
         break;
@@ -284,7 +300,7 @@ void Workbench::set_visible(Part part, bool visible) {
         } else {
             if (panel_maximized_) {
                 set_maximized(Part::panel, false);
-            } else {
+            } else if (panel_->isVisible()) {
                 panel_size() = panel_extent();
             }
             panel_->hide();
@@ -308,7 +324,7 @@ void Workbench::set_maximized(Part part, bool maximized) {
         return;
     }
     if (maximized) {
-        const bool was_shown = !panel_->isHidden();
+        const bool was_shown = panel_->isVisible();
         set_visible(Part::panel, true);
         if (was_shown) {
             panel_size() = panel_extent();
@@ -334,11 +350,11 @@ int Workbench::size(Part part) const {
     case Part::activity_bar:
         return activity_bar_->isHidden() ? 0 : activity_bar_->width();
     case Part::sidebar:
-        return sidebar_->isHidden() ? sidebar_size_ : sidebar_->width();
+        return sidebar_->isVisible() ? sidebar_->width() : sidebar_size_;
     case Part::editor:
         return editor_host_->width();
     case Part::panel:
-        return panel_->isHidden() ? panel_size() : panel_extent();
+        return panel_->isVisible() ? panel_extent() : panel_size();
     case Part::status_bar:
         return status_bar_ ? status_bar_->height() : 0;
     }
@@ -348,13 +364,28 @@ int Workbench::size(Part part) const {
 void Workbench::set_size(Part part, int pixels) {
     if (part == Part::sidebar) {
         sidebar_size_ = std::max(pixels, sidebar_minimum());
+        apply_sizes();
+        emit sizes_changed();
     } else if (part == Part::panel) {
-        panel_size() = std::max(
-            pixels, zoomed(panel_is_beside_editor() ? panel_minimum_width : panel_minimum_height));
-    } else {
-        return;
+        set_panel_size_at(panel_position_, pixels);
+        emit sizes_changed();
     }
-    apply_sizes();
+}
+
+int Workbench::panel_size_at(PanelPosition position) const {
+    if (position == panel_position_ && panel_->isVisible() && !panel_maximized_) {
+        return panel_extent();
+    }
+    return panel_sizes_[static_cast<std::size_t>(position)];
+}
+
+void Workbench::set_panel_size_at(PanelPosition position, int pixels) {
+    const bool beside = position == PanelPosition::left || position == PanelPosition::right;
+    panel_sizes_[static_cast<std::size_t>(position)] =
+        std::max(pixels, zoomed(beside ? panel_minimum_width : panel_minimum_height));
+    if (position == panel_position_) {
+        apply_sizes();
+    }
 }
 
 Side Workbench::sidebar_side() const {

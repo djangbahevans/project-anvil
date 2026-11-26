@@ -28,6 +28,7 @@
 #include "anvil/ui/title_bar.hpp"
 #include "anvil/ui/view_container_registry.hpp"
 #include "anvil/ui/window_frame.hpp"
+#include "anvil/ui/window_state_keeper.hpp"
 #include "anvil/ui/workbench.hpp"
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/ui/zoom.hpp"
@@ -79,6 +80,9 @@ struct MainWindowOptions {
     // The user key bindings file, read at startup and whenever it changes. A missing file means
     // the default bindings alone; empty means no such file at all.
     std::filesystem::path keybindings_file;
+    // The directory with what a window starts with again (ADR 0019): its layout, size and
+    // position. Empty keeps them for the life of the window only.
+    std::filesystem::path state_directory;
     // The directory with the color themes; the application's own when unset.
     std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
@@ -595,6 +599,8 @@ private:
         bool entered_centered_layout = false;
     };
     ZenMode zen_;
+    std::unique_ptr<workbench::StateStore> state_;
+    std::unique_ptr<WindowStateKeeper> state_keeper_;
     // How many operations that close editors are running, so that the closes of a nested one are
     // one batch with the outer one.
     int closing_depth_ = 0;

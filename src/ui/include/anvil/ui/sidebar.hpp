@@ -38,6 +38,10 @@ public:
     // Shows the sidebar with the container. Nothing happens for an id that is not registered for
     // the sidebar.
     void activate(std::string_view id);
+    // Makes the container the one that the sidebar shows when it is shown, without showing the
+    // sidebar or making the container's widget while it is hidden. Nothing happens for an id that
+    // is not registered for the sidebar.
+    void set_active_container(std::string_view id);
 
     // Whether the activity bar may show; it shows while it may and a container is registered.
     void set_activity_bar_allowed(bool allowed);

@@ -112,19 +112,27 @@ public:
 
     // How far the part reaches along the axis it is resized on: the width of the activity bar, the
     // sidebar and the editor area, the height of the panel at the top or the bottom and its width
-    // at the left or the right, and the height of the status bar and the title bar. A hidden
-    // sidebar or panel reports the size it has when shown again.
+    // at the left or the right, and the height of the status bar and the title bar. A sidebar or
+    // panel that is not on screen reports the size it has when shown.
     int size(Part part) const;
     // Resizes the sidebar or the panel, to its minimum at least; the editor area keeps its own
     // minimum whatever is asked. Other parts keep their size. The panel is resized at its current
     // position.
     void set_size(Part part, int pixels);
 
+    // The size of the panel at a position, whether or not it is there: a height at the top and the
+    // bottom and a width at the left and the right. A maximized panel reports the size that it is
+    // restored to.
+    int panel_size_at(PanelPosition position) const;
+    void set_panel_size_at(PanelPosition position, int pixels);
+
 signals:
     void visibility_changed(anvil::ui::Part part, bool visible);
     void maximized_changed(anvil::ui::Part part, bool maximized);
     void sidebar_side_changed(anvil::ui::Side side);
     void panel_position_changed(anvil::ui::PanelPosition position);
+    // A sash was dragged, or `set_size` resized a part.
+    void sizes_changed();
 
 protected:
     void showEvent(QShowEvent* event) override;

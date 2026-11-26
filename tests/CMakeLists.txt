@@ -166,6 +166,7 @@ if(TARGET anvil_ui)
     ui/theme_store_test.cpp
     ui/title_bar_test.cpp
     ui/window_frame_test.cpp
+    ui/window_state_keeper_test.cpp
     ui/view_container_registry_test.cpp
     ui/workbench_colors_test.cpp
     ui/workbench_test.cpp

@@ -150,6 +150,12 @@ const std::map<std::string, std::string> not_sizes = {
     {"tab_strip.cpp:cross_pen_width", "the width of a stroke, in units of the level 0 size, "
                                       "multiplied by the factor where it is drawn"},
     {"workbench_colors.cpp:max_chain", "a count of links"},
+    {"window_state_keeper.cpp:reachable_height",
+     "screen pixels that decide whether a saved window is moved"},
+    {"window_state_keeper.cpp:reachable_strip_height",
+     "screen pixels that decide whether a saved window is moved"},
+    {"window_state_keeper.cpp:reachable_width",
+     "screen pixels that decide whether a saved window is moved"},
 };
 
 TEST(ZoomSourcesTest, EveryConstexprNumberIsASizeThatIsReadThroughTheZoomOrSaysWhyItIsNot) {
