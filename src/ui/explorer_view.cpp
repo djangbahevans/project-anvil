@@ -360,6 +360,13 @@ public:
         return problem_->text();
     }
 
+    // A line edit and a label have fonts of their own that the font of the view does not reach.
+    void set_scaled_font(const QFont& font) {
+        setFont(font);
+        problem_->setFont(font);
+        place_problem();
+    }
+
 protected:
     void keyPressEvent(QKeyEvent* event) override {
         if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
@@ -539,6 +546,9 @@ void ExplorerView::apply_zoom() {
     // A push button has a font of its own that a parent's font does not reach.
     message_->setFont(view_font);
     open_folder_->setFont(view_font);
+    if (editor_) {
+        editor_->set_scaled_font(view_font);
+    }
     const int padding = scaled_by(zoom_, header_padding);
     empty_layout_->setContentsMargins(padding, scaled_by(zoom_, empty_top_padding), padding, 0);
     empty_layout_->setSpacing(scaled_by(zoom_, empty_spacing));
@@ -716,6 +726,7 @@ void ExplorerView::begin_editing(Edit kind, const QModelIndex& row, std::filesys
 
 QWidget* ExplorerView::make_name_editor(QWidget* parent, const QModelIndex&) {
     auto* editor = new NameEditor(colors_, parent);
+    editor->set_scaled_font(font());
     if (editing_ && editing_->kind == Edit::rename) {
         editor->setText(QString::fromStdString(file_name_of(editing_->original)));
     }

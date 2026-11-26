@@ -800,4 +800,26 @@ TEST_F(ExplorerZoomTest, TheRowsTheIndentationTheScrollBarAndTheFontAreScaled) {
     }
 }
 
+TEST_F(ExplorerZoomTest, TheFieldForANameAndTheReasonUnderItAreScaled) {
+    const int base_font = QFontInfo(view_->font()).pixelSize();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return view_->tree()->model()->rowCount() == 3; }));
+    zoom_.set_level(3);
+    view_->new_file();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return view_->is_editing(); }));
+    view_->name_editor()->setText("a.txt");
+    const auto reason = [&] {
+        const auto labels = view_->tree()->viewport()->findChildren<QLabel*>();
+        return labels.isEmpty() ? nullptr : labels.last();
+    };
+    ASSERT_NE(reason(), nullptr);
+    for (const double level : levels) {
+        zoom_.set_level(level);
+        QApplication::processEvents();
+        SCOPED_TRACE(level);
+        ASSERT_TRUE(view_->is_editing());
+        EXPECT_EQ(view_->name_editor()->font().pixelSize(), zoom_.scaled(base_font));
+        EXPECT_EQ(reason()->font().pixelSize(), zoom_.scaled(base_font));
+    }
+}
+
 } // namespace
