@@ -47,6 +47,10 @@ std::expected<Workspace, Error> Workspace::open(const std::filesystem::path& fol
 LaunchArguments parse_launch_arguments(const std::vector<std::string>& arguments) {
     LaunchArguments result;
     for (const std::string& argument : arguments) {
+        if (argument == "--new-window" || argument == "-n") {
+            result.new_window = true;
+            continue;
+        }
         std::error_code ec;
         const std::filesystem::path path(argument);
         const bool is_folder = std::filesystem::is_directory(path, ec);

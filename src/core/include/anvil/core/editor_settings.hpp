@@ -44,6 +44,11 @@ enum class WordWrap { off, on, word_wrap_column, bounded };
 // on macOS.
 enum class MultiCursorModifier { alt, ctrl_cmd };
 
+// window.restoreWindows: what a start opens again. With one window to a process, `all`, `folders`
+// and `one` open the folder of the window closed last when nothing is named, `preserve` also when
+// files are, and `none` never does.
+enum class RestoreWindows { preserve, all, folders, one, none };
+
 // workbench.sideBar.location: the edge of the window the primary side bar is on.
 enum class SideBarLocation { left, right };
 
@@ -124,6 +129,9 @@ struct EditorSettings {
     // workbench.layoutControl.enabled: the title bar shows the buttons that toggle the side bar and
     // the panel
     bool layout_controls = true;
+
+    // window.restoreWindows
+    RestoreWindows restore_windows = RestoreWindows::all;
 
     // workbench.statusBar.visible
     bool status_bar_visible = true;

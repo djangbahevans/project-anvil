@@ -161,6 +161,21 @@ TEST_F(StateStoreTest, SettingTheValueThatIsThereIsNotAChange) {
     EXPECT_EQ(read_json(global_file()), nlohmann::json({{"width", 301}}));
 }
 
+TEST_F(StateStoreTest, OverwritingWritesAlsoAValueThatTheStoreHasAlready) {
+    write_text(global_file(), R"({"last": "mine"})");
+    StateStore state = store();
+    write_text(global_file(), R"({"last": "theirs"})");
+    state.set(StateScope::global, "last", "mine");
+    ASSERT_TRUE(state.flush().has_value());
+    EXPECT_EQ(read_json(global_file()), nlohmann::json({{"last", "theirs"}}));
+
+    state.overwrite(StateScope::global, "last", "mine");
+    state.overwrite(StateScope::workspace, "here", 1);
+    ASSERT_TRUE(state.flush().has_value());
+    EXPECT_EQ(read_json(global_file()), nlohmann::json({{"last", "mine"}}));
+    EXPECT_EQ(read_json(workspace_file()), nlohmann::json({{"here", 1}}));
+}
+
 TEST_F(StateStoreTest, AValueOfAnotherTypeIsNoValue) {
     write_text(global_file(), R"({"text": "7", "number": 7, "real": 7.5, "flag": 1,)"
                               R"( "huge": 18446744073709551615, "null": null})");

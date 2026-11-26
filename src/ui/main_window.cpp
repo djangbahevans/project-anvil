@@ -49,6 +49,8 @@ namespace {
 
 // The folders that are expanded in the explorer, in the state of the workspace.
 constexpr const char* expanded_folders_key = "explorer.expandedFolders";
+// The folder of the window closed last, empty when it had none.
+constexpr const char* last_folder_key = "window.lastFolder";
 
 constexpr const char* position_item_id = "status.editor.position";
 constexpr const char* language_item_id = "status.editor.language";
@@ -250,6 +252,10 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             tr("Settings not applied, keeping the previous ones: %1").arg(message), 15000);
     });
     settings_->start();
+    state_ = std::make_unique<workbench::StateStore>(
+        options_.state_directory,
+        options_.workspace ? std::optional(options_.workspace->id) : std::nullopt, logger);
+    reopen_last_folder(*logger);
 
     custom_title_bar_ = options_.custom_title_bar &&
                         settings_->editor().title_bar_style == core::TitleBarStyle::custom &&
@@ -432,9 +438,6 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     add_untitled_document();
 
     // After the settings, whose zoom replaces a part size that is the default one.
-    state_ = std::make_unique<workbench::StateStore>(
-        options_.state_directory,
-        options_.workspace ? std::optional(options_.workspace->id) : std::nullopt, logger);
     state_keeper_ =
         std::make_unique<WindowStateKeeper>(*state_, *this, *workbench_, *sidebar_, *panel_);
     state_keeper_->set_parts_outside_mode([this]() -> std::optional<WindowStateKeeper::PartsShown> {
@@ -2801,6 +2804,7 @@ void MainWindow::open_new_window() {
         options_.executable.empty()
             ? std::filesystem::path(QCoreApplication::applicationFilePath().toStdString())
             : options_.executable;
+    spec.arguments = {"--new-window"};
     spec.environment = platform::current_environment();
     std::error_code error;
     std::filesystem::path directory = std::filesystem::current_path(error);
@@ -2815,6 +2819,26 @@ void MainWindow::open_new_window() {
                                       .arg(QString::fromStdString(started.error().message)),
                                   8000);
     }
+}
+
+void MainWindow::reopen_last_folder(core::Logger& logger) {
+    const core::RestoreWindows restore = settings_->editor().restore_windows;
+    if (options_.workspace || !options_.reopen_folder || restore == core::RestoreWindows::none ||
+        (options_.opens_files && restore != core::RestoreWindows::preserve)) {
+        return;
+    }
+    const auto saved = state_->string(workbench::StateScope::global, last_folder_key);
+    if (!saved || saved->empty()) {
+        return;
+    }
+    auto workspace =
+        core::Workspace::open(std::filesystem::path(std::u8string(saved->begin(), saved->end())));
+    if (!workspace) {
+        logger.log(core::LogLevel::warning, "state", workspace.error().message);
+        return;
+    }
+    options_.workspace = std::move(*workspace);
+    state_->set_workspace(options_.workspace->id);
 }
 
 void MainWindow::zoom_by(int step) {
@@ -3448,6 +3472,10 @@ void MainWindow::use_native_frame() {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (resolve_unsaved_changes()) {
+        const std::u8string folder =
+            options_.workspace ? options_.workspace->folder.u8string() : std::u8string();
+        state_->overwrite(workbench::StateScope::global, last_folder_key,
+                          std::string(folder.begin(), folder.end()));
         state_keeper_->save();
         event->accept();
     } else {

@@ -82,6 +82,11 @@ struct MainWindowOptions {
     // The user key bindings file, read at startup and whenever it changes. A missing file means
     // the default bindings alone; empty means no such file at all.
     std::filesystem::path keybindings_file;
+    // Whether the folder of the window closed last is opened where `workspace` is unset, if
+    // `window.restoreWindows` says so.
+    bool reopen_folder = false;
+    // Whether files are opened at the start, for which only `preserve` reopens the folder.
+    bool opens_files = false;
     // The directory with what a window starts with again (ADR 0021): its layout, size and
     // position. Empty keeps them for the life of the window only.
     std::filesystem::path state_directory;
@@ -96,7 +101,8 @@ struct MainWindowOptions {
     std::optional<std::filesystem::path> themes_directory;
     // Whether closing asks what to do with unsaved documents.
     bool confirm_unsaved_changes = true;
-    // The program that File > New Window starts, with no arguments; the running program when empty.
+    // The program that File > New Window starts, with `--new-window`; the running program when
+    // empty.
     std::filesystem::path executable;
     // Starts that program; the platform's start of a process that outlives this one when unset.
     // Tests replace it to see what would be started.
@@ -504,6 +510,9 @@ private:
     // Starts another editor in a window of its own: the same program, with no arguments, in a
     // directory that exists, with the environment of this one.
     void open_new_window();
+    // Makes the folder of the window closed last the workspace, when the options and
+    // `window.restoreWindows` ask for it. Before anything reads the workspace.
+    void reopen_last_folder(core::Logger& logger);
     // Opens a file of the user's configuration in the editor, creating it with `initial` when it
     // is missing. Says so in the status bar when the window has no such file, or it cannot be
     // created.

@@ -137,6 +137,23 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             }
         }
     }
+    if (settings.contains("window.restoreWindows")) {
+        const auto restore = settings.get<std::string>("window.restoreWindows");
+        if (restore == "preserve") {
+            result.restore_windows = RestoreWindows::preserve;
+        } else if (restore == "all") {
+            result.restore_windows = RestoreWindows::all;
+        } else if (restore == "folders") {
+            result.restore_windows = RestoreWindows::folders;
+        } else if (restore == "one") {
+            result.restore_windows = RestoreWindows::one;
+        } else if (restore == "none") {
+            result.restore_windows = RestoreWindows::none;
+        } else {
+            problems.emplace_back("window.restoreWindows must be \"preserve\", \"all\", "
+                                  "\"folders\", \"one\" or \"none\"");
+        }
+    }
     if (settings.contains("workbench.sideBar.location")) {
         const auto location = settings.get<std::string>("workbench.sideBar.location");
         if (location == "left") {
