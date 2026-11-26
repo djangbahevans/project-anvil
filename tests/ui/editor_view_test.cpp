@@ -1542,6 +1542,51 @@ TEST_F(SyntaxHighlightingTest, SpansThatChangeOnOneLineLayThatLineOutAgain) {
     EXPECT_GT(green, 3);
 }
 
+TEST_F(SyntaxHighlightingTest, LayoutsOutOfViewAreMadeAgainFromTheNewSpans) {
+    std::string text;
+    for (int line = 0; line < 100; ++line) {
+        text += "let a\n";
+    }
+    open(text);
+    highlight({{"let", "keyword.control.fake"}});
+    painted();
+    view_.verticalScrollBar()->setValue(view_.verticalScrollBar()->maximum());
+    painted();
+
+    highlighter_->set_scopes({{"let", "string.quoted.fake"}});
+    highlighter_->bump();
+    view_.refresh_highlighting();
+    view_.verticalScrollBar()->setValue(0);
+    const QImage image = painted();
+    EXPECT_GT(count_in(image, 0, 3, is_green), 10);
+    EXPECT_EQ(count_in(image, 0, 3, is_red), 0);
+}
+
+TEST_F(SyntaxHighlightingTest, ANewHighlighterColorsTheCachedLayoutsAgain) {
+    open("let name = 'hi';");
+    highlight({{"let", "keyword.control.fake"}});
+    EXPECT_GT(count_in(painted(), 0, 3, is_red), 10);
+
+    highlight({{"let", "string.quoted.fake"}});
+    const QImage image = painted();
+    EXPECT_GT(count_in(image, 0, 3, is_green), 10);
+    EXPECT_EQ(count_in(image, 0, 3, is_red), 0);
+}
+
+TEST_F(SyntaxHighlightingTest, OtherColorsAreShownInsteadOfTheCachedLayouts) {
+    open("let name = 'hi';");
+    highlight({{"let", "keyword.control.fake"}});
+    EXPECT_GT(count_in(painted(), 0, 3, is_red), 10);
+
+    WorkbenchColors other(QApplication::palette());
+    other.set_token_theme(token_theme_of(R"j([
+        {"settings": {"foreground": "#d4d4d4"}},
+        {"scope": "keyword.control", "settings": {"foreground": "#00ff00"}}])j"));
+    view_.set_colors(&other);
+    EXPECT_GT(count_in(painted(), 0, 3, is_green), 10);
+    view_.set_colors(&colors_);
+}
+
 TEST_F(SyntaxHighlightingTest, ANewTokenThemeColorsTheCachedLayoutsAgain) {
     open("let name = 'hi';");
     highlight({{"let", "keyword.control.fake"}});
@@ -1693,6 +1738,9 @@ protected:
     void SetUp() override {
         flash_time_ = QApplication::cursorFlashTime();
         QApplication::setCursorFlashTime(0);
+        settings_.font_family = "monospace";
+        settings_.font_size = 14;
+        view_.apply_settings(settings_);
     }
     void TearDown() override {
         QApplication::setCursorFlashTime(flash_time_);
@@ -1709,9 +1757,9 @@ protected:
     QImage paint() {
         return view_.viewport()->grab().toImage();
     }
-    // The view painted with nothing cached.
+    // The view painted with nothing cached, which applying the settings again causes.
     QImage painted_afresh() {
-        view_.document_changed_elsewhere();
+        view_.apply_settings(settings_);
         return paint();
     }
     std::size_t built_by(const std::function<void()>& action) {
@@ -1730,6 +1778,7 @@ protected:
     }
 
     int flash_time_ = 0;
+    core::EditorSettings settings_;
 };
 
 } // namespace
@@ -1839,20 +1888,18 @@ TEST_F(LayoutCacheTest, AnEditThroughAnotherViewOfTheDocumentIsShown) {
 
 TEST_F(LayoutCacheTest, TheLayoutsAreMadeAgainWhenTheTabSizeOrTheFontChanges) {
     open(numbered(100));
-    core::EditorSettings settings;
-    settings.font_family = "monospace";
-    settings.font_size = 12;
-    view_.apply_settings(settings);
+    settings_.font_size = 12;
+    view_.apply_settings(settings_);
     const QImage narrow = paint();
 
-    settings.tab_size = 8;
-    view_.apply_settings(settings);
-    EXPECT_NE(paint(), narrow);
-    EXPECT_EQ(paint(), painted_afresh());
+    settings_.tab_size = 8;
+    view_.apply_settings(settings_);
+    const QImage wide = paint();
+    EXPECT_NE(wide, narrow);
 
-    settings.font_size = 16;
-    view_.apply_settings(settings);
-    EXPECT_EQ(paint(), painted_afresh());
+    settings_.font_size = 16;
+    view_.apply_settings(settings_);
+    EXPECT_NE(paint(), wide);
     EXPECT_GT(built_by([&] {
                   view_.setFont(QFont("monospace", 9));
                   paint();
@@ -1863,7 +1910,7 @@ TEST_F(LayoutCacheTest, TheLayoutsAreMadeAgainWhenTheTabSizeOrTheFontChanges) {
 TEST_F(LayoutCacheTest, TheControlCharacterSettingLaysTheLinesOutAgain) {
     open("a\x01"
          "b\nsecond");
-    core::EditorSettings settings;
+    core::EditorSettings settings = settings_;
     settings.render_control_characters = true;
     view_.apply_settings(settings);
     const QImage shown = paint();
@@ -1880,4 +1927,41 @@ TEST_F(LayoutCacheTest, OnlyTheMostRecentlyUsedLayoutsAreKept) {
     }
     EXPECT_EQ(built_by([&] { view_.cursor_rect(offset_of_line(2999)); }), 0U);
     EXPECT_EQ(built_by([&] { view_.cursor_rect(offset_of_line(0)); }), 1U);
+}
+
+TEST_F(LayoutCacheTest, ALayoutThatIsUsedAgainOutlivesOnesThatAreNot) {
+    open(numbered(3000));
+    for (std::size_t line = 0; line < 3000; ++line) {
+        view_.cursor_rect(offset_of_line(line));
+        view_.cursor_rect(offset_of_line(0));
+    }
+    EXPECT_EQ(built_by([&] { view_.cursor_rect(offset_of_line(0)); }), 0U);
+}
+
+TEST_F(LayoutCacheTest, AViewTallerThanTheCacheKeepsEveryLineInView) {
+    open(numbered(1000));
+    view_.resize(640, 400 * view_.line_height());
+    paint();
+    EXPECT_GT(lines_in_view(), 300U);
+    EXPECT_EQ(built_by([&] { paint(); }), 0U);
+}
+
+TEST_F(LayoutCacheTest, AnotherDocumentIsShownEvenWhenItsVersionIsTheSame) {
+    open(numbered(20));
+    paint();
+    document_ = make_document("something\nelse\nentirely");
+    view_.set_document(document_);
+    EXPECT_EQ(paint(), painted_afresh());
+}
+
+TEST_F(LayoutCacheTest, AnEditAfterAnEditThroughAnotherViewIsShown) {
+    open(numbered(100));
+    paint();
+    EditorView other;
+    other.resize(640, 320);
+    other.set_document(document_);
+    other.replace_ranges({{offset_of_line(3, 0), offset_of_line(3, 0), "inserted\n"}});
+    caret_at(offset_of_line(10, 2));
+    type("z");
+    EXPECT_EQ(paint(), painted_afresh());
 }

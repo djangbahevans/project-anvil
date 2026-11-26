@@ -235,7 +235,6 @@ void EditorView::set_document(std::shared_ptr<core::Document> document) {
 }
 
 void EditorView::document_changed_elsewhere() {
-    clear_layouts();
     update_scroll_bars();
     viewport()->update();
     emit content_changed();
