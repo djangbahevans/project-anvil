@@ -474,7 +474,7 @@ TEST_F(WorkbenchZoomTest, TheMinimumSizesTheSashesAndTheHeadersAreTheSizesAtLeve
         EXPECT_EQ(workbench_->size(Part::sidebar), zoom_.scaled(Workbench::sidebar_minimum_width));
         EXPECT_EQ(workbench_->size(Part::panel), zoom_.scaled(Workbench::panel_minimum_height));
         for (const QSplitter* splitter : workbench_->findChildren<QSplitter*>()) {
-            EXPECT_EQ(splitter->handleWidth(), zoom_.scaled(Splitter::sash_width));
+            EXPECT_EQ(splitter->handleWidth(), Splitter::line_width);
         }
         EXPECT_EQ(sidebar_->title_height(), zoom_.scaled(35));
         const QWidget* title = sidebar_->title_actions()->parentWidget();
