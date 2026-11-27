@@ -1421,6 +1421,32 @@ TEST_F(SyntaxHighlightingTest, ASelectionChangesTheBackgroundAndKeepsTheSyntaxCo
     EXPECT_EQ(count_in(image, 0, 3, is_white), 0);
 }
 
+TEST_F(SyntaxHighlightingTest, ASelectionForegroundColorsSelectedTextOverItsSyntaxColor) {
+    colors_.set_colors({{"editor.background", QColor("#000000")},
+                        {"editor.foreground", QColor("#ffffff")},
+                        {"editor.selectionBackground", QColor("#ffffff")},
+                        {"editor.selectionForeground", QColor("#000000")},
+                        {"editor.lineHighlightBackground", QColor("#000000")},
+                        {"editorCursor.foreground", QColor("#000000")}});
+    colors_.set_token_theme(token_theme_of(syntax_rules));
+    open("MMMM MMMM");
+    highlight({{"MMMM", "keyword.control"}});
+    view_.select_range({0, 4});
+    QApplication::processEvents();
+    const QImage image = view_.viewport()->grab().toImage();
+    const auto area = [&](std::size_t from, std::size_t to) {
+        const QRect first = view_.cursor_rect(from);
+        return QRect(first.x() + 2, first.y(), view_.cursor_rect(to).x() - first.x() - 4,
+                     view_.line_height());
+    };
+    // The selected word is black on white, with nothing of the red of its scope.
+    EXPECT_LE(nearest(image, area(0, 4), QColor("#000000")), 40);
+    // Not 0, since smoothing by subpixel gives the edges of black on white colors of their own.
+    EXPECT_GT(nearest(image, area(0, 4), QColor("#ff0000")), 60);
+    // The word beside it keeps its color.
+    EXPECT_LE(nearest(image, area(5, 9), QColor("#ff0000")), 60);
+}
+
 TEST_F(SyntaxHighlightingTest, ANewTokenThemePaintsOnceAndTheNewColorShows) {
     open("let");
     highlight({{"let", "keyword.control.fake"}});
@@ -2868,6 +2894,63 @@ TEST_F(LayoutCacheTest, ASelectedUnderscoreShowsOnItsOwnLine) {
                 return count;
             };
             EXPECT_GT(others(0, QColor("#000080")), 0) << "the underscores are on their own line";
+            EXPECT_EQ(others(view_.line_height(), QColor("#000000")), 0)
+                << "nothing of them is on the next line";
+        }
+    }
+    EXPECT_GE(fonts, 1);
+    view_.set_colors(nullptr);
+}
+
+TEST_F(LayoutCacheTest, ASelectedUnderscoreInTheSelectionForegroundShowsOnItsOwnLine) {
+    // As with a high contrast theme, which gives selected text a color.
+    WorkbenchColors colors(QApplication::palette());
+    colors.set_colors({{"editor.background", QColor("#000000")},
+                       {"editor.foreground", QColor("#ffffff")},
+                       {"editor.selectionBackground", QColor("#000080")},
+                       {"editor.selectionForeground", QColor("#ffff00")},
+                       {"editorCursor.foreground", QColor("#ff0000")}});
+    view_.set_colors(&colors);
+    int fonts = 0;
+    for (const char* family :
+         {"monospace", "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Ubuntu Mono"}) {
+        if (std::string(family) != "monospace" &&
+            !QFontDatabase::families().contains(QString::fromLatin1(family))) {
+            continue;
+        }
+        ++fonts;
+        for (const int size : {6, 10, 12, 13, 14, 15, 18, 24, 40}) {
+            SCOPED_TRACE(std::string(family) + " " + std::to_string(size));
+            settings_.font_family = family;
+            settings_.font_size = size;
+            view_.apply_settings(settings_);
+            open("a___b\nc");
+            set_selections({core::Selection{0, 5}});
+            const QImage with = paint();
+            const int left = view_.cursor_rect(1).left() + 1;
+            const int right = view_.cursor_rect(4).left() - 1;
+            // The pixels between these columns, which hold underscores alone, in the rows of the
+            // viewport from `top`, that are not `color`.
+            const auto others = [&](int top, const QColor& color) {
+                int count = 0;
+                for (int y = top; y < top + view_.line_height(); ++y) {
+                    for (int x = left; x < right; ++x) {
+                        count += with.pixelColor(x, y) != color ? 1 : 0;
+                    }
+                }
+                return count;
+            };
+            EXPECT_GT(others(0, QColor("#000080")), 0) << "the underscores are on their own line";
+            // Yellow takes blue from the navy of the selection and adds red, however faint the
+            // stroke; the white of unselected text would add blue.
+            bool yellow = false;
+            for (int y = 0; y < view_.line_height(); ++y) {
+                for (int x = left; x < right; ++x) {
+                    yellow |=
+                        with.pixelColor(x, y).red() > 20 && with.pixelColor(x, y).blue() < 110;
+                }
+            }
+            EXPECT_TRUE(yellow) << "in the color of selected text";
             EXPECT_EQ(others(view_.line_height(), QColor("#000000")), 0)
                 << "nothing of them is on the next line";
         }

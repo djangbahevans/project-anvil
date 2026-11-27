@@ -407,6 +407,35 @@ TEST_F(ThemeStoreTest, TheShadowOfAScrolledEditorTakesTheRegistrysColorUnlessThe
     }
 }
 
+TEST_F(ThemeStoreTest, AHighContrastThemeHasTheSelectionColorsOfVsCodesRegistry) {
+    write("plain.json", R"j({"colors": {}})j");
+    write("own.json", R"j({"colors": {"editor.selectionBackground": "#112233",
+                                      "editor.selectionForeground": "#445566"}})j");
+    open_shipped();
+    store_->add_themes({{.id = "plain",
+                         .label = "Plain",
+                         .kind = core::ThemeKind::high_contrast_dark,
+                         .file = scratch_ / "plain.json"},
+                        {.id = "own",
+                         .label = "Own",
+                         .kind = core::ThemeKind::high_contrast_light,
+                         .file = scratch_ / "own.json"}});
+    const auto selection = [this](const char* theme) {
+        EXPECT_TRUE(store_->select(theme)) << theme;
+        return std::pair{colors_.color("editor.selectionBackground"),
+                         colors_.is_themed("editor.selectionForeground")
+                             ? colors_.color("editor.selectionForeground")
+                             : QColor()};
+    };
+    using Colors = std::pair<QColor, QColor>;
+    EXPECT_EQ(selection("Dark High Contrast"), (Colors{QColor("#ffffff"), QColor("#000000")}));
+    EXPECT_EQ(selection("Light High Contrast"), (Colors{QColor("#0f4a85"), QColor("#ffffff")}));
+    EXPECT_EQ(selection("plain"), (Colors{QColor("#f3f518"), QColor("#000000")}));
+    EXPECT_EQ(selection("own"), (Colors{QColor("#112233"), QColor("#445566")}));
+    EXPECT_FALSE(selection("Dark 2026").second.isValid());
+    EXPECT_FALSE(selection("Light 2026").second.isValid());
+}
+
 TEST_F(ThemeStoreTest, AnOptionOfAnInputHasVsCodesHoverBackgroundExceptInHighContrast) {
     open_shipped();
     ASSERT_TRUE(store_->select("Dark 2026"));

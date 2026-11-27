@@ -239,6 +239,31 @@ void ChunkedLine::draw(QPainter& painter, const QPointF& origin,
     });
 }
 
+void ChunkedLine::draw_in(QPainter& painter, const QPointF& origin, const QColor& color, qreal from,
+                          qreal to) {
+    for_each_between(from, to, [&](std::size_t index) {
+        const QTextLayout& shown = layout(index);
+        QTextLayout copy(shown.text(), shown.font());
+        copy.setTextOption(shown.textOption());
+        QList<QTextLayout::FormatRange> styles = shown.formats();
+        for (QTextLayout::FormatRange& range : styles) {
+            range.format.clearForeground();
+            range.format.clearBackground();
+        }
+        copy.setFormats(styles);
+        copy.beginLayout();
+        if (QTextLine line = copy.createLine(); line.isValid()) {
+            line.setLineWidth(1 << 24);
+            line.setPosition(QPointF(0, 0));
+        }
+        copy.endLayout();
+        painter.save();
+        painter.setPen(color);
+        copy.draw(&painter, origin + QPointF(start(index), 0));
+        painter.restore();
+    });
+}
+
 void ChunkedLine::keep_widths(const ChunkedLine& earlier, std::size_t column) {
     for (std::size_t index = 0; index < chunks_.size() && index < earlier.chunks_.size(); ++index) {
         const Chunk& before = earlier.chunks_[index];
