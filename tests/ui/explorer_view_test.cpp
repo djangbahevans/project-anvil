@@ -2655,13 +2655,24 @@ TEST_F(ExplorerIconTest, APressOnTheTwistieOpensAndClosesTheFolderAndNothingElse
         EXPECT_FALSE(tree()->isExpanded(folder));
         EXPECT_EQ(current_name(), "readme");
     }
-    // Two presses of a double click are two presses.
-    QTest::mousePress(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(8));
-    QTest::mouseRelease(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(8));
-    QMouseEvent twice(QEvent::MouseButtonDblClick, at(8), tree()->viewport()->mapToGlobal(at(8)),
-                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(tree()->viewport(), &twice);
+    // Two presses of a double click are two presses, also where the last press that the tree
+    // handled itself was on the name of the folder.
+    const auto double_click = [&](const QPoint& point) {
+        QTest::mousePress(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+        QTest::mouseRelease(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+        QMouseEvent twice(QEvent::MouseButtonDblClick, point,
+                          tree()->viewport()->mapToGlobal(point), Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(tree()->viewport(), &twice);
+        QTest::mouseRelease(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    };
+    double_click(at(8));
     EXPECT_FALSE(tree()->isExpanded(folder));
+    QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(30));
+    QTest::qWait(QApplication::doubleClickInterval() + 50);
+    double_click(at(8));
+    EXPECT_FALSE(tree()->isExpanded(folder));
+    tree()->setCurrentIndex(index_of("/w/readme"));
     // The name of the folder is not the twistie.
     QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(30));
     EXPECT_FALSE(tree()->isExpanded(folder));

@@ -290,14 +290,6 @@ protected:
         QTreeView::mousePressEvent(event);
     }
 
-    // The second press of a double click is a press on the twistie like the first, not the
-    // double click that opens or closes the row.
-    void mouseDoubleClickEvent(QMouseEvent* event) override {
-        if (!press_on_twistie(event)) {
-            QTreeView::mouseDoubleClickEvent(event);
-        }
-    }
-
     void mouseReleaseEvent(QMouseEvent* event) override {
         if (!dragging() || event->button() != Qt::LeftButton) {
             pressed_rows_.clear();
