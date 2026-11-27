@@ -1713,7 +1713,8 @@ protected:
     // A point on the label of the row.
     QPoint on(const std::filesystem::path& path) const {
         const QRect rect = view_->tree()->visualRect(row_of(path));
-        return {rect.left() + 10, rect.center().y()};
+        // On the name: a press at the left of a folder is on its twistie.
+        return {rect.left() + 26, rect.center().y()};
     }
     QPoint below_the_rows() const {
         return {40, view_->tree()->viewport()->height() - 3};
@@ -1975,7 +1976,7 @@ TEST_F(ExplorerDragTest, AShortMovementIsAClickAndNotADrag) {
 
 TEST_F(ExplorerDragTest, APressOnTheTwistieDoesNotDragTheFolder) {
     const QRect src = view_->tree()->visualRect(row_of(root_ / "src"));
-    press(QPoint(src.left() - 4, src.center().y()));
+    press(QPoint(src.left() + 8, src.center().y()));
     move(on(root_ / "docs"));
     release(on(root_ / "docs"));
     settle();
@@ -2543,7 +2544,8 @@ protected:
         const QRect rect = tree()->visualRect(row);
         long sum = 0;
         long count = 0;
-        for (int x = 0; x < static_cast<int>(18 * ratio); ++x) {
+        for (int x = static_cast<int>(rect.left() * ratio);
+             x < static_cast<int>((rect.left() + 18) * ratio); ++x) {
             for (int y = static_cast<int>(rect.top() * ratio);
                  y < static_cast<int>(rect.bottom() * ratio); ++y) {
                 if (const QColor color = image.pixelColor(x, y); lit(color)) {
@@ -2595,9 +2597,13 @@ TEST_F(ExplorerIconTest, TheIconIsWhereAFolderHasItsTwistieAndTheNamesLineUp) {
     // The icon of `readme` is blue, and the default one and the twistie are not.
     EXPECT_GT(blueness(readme_row), 60);
     EXPECT_LT(std::abs(blueness(index_of("/w/notes.zzz"))), 30);
-    EXPECT_LT(columns(readme_row, lit).first, 8);
-    // The first level: 16 px of the column and 6 px, then the name, for a file as for a folder.
-    EXPECT_NEAR(columns(readme_row, label).first, 22, 2);
+    // The first level: 8 px, as in VS Code, then 16 px of the column and 6 px, then the name, for
+    // a file as for a folder.
+    EXPECT_GE(columns(readme_row, lit).first, 8);
+    EXPECT_LT(columns(readme_row, lit).first, 16);
+    EXPECT_NEAR(columns(readme_row, label).first, 30, 2);
+    EXPECT_GE(columns(folder, label).first, 8);
+    EXPECT_EQ(tree()->visualRect(readme_row).left(), 8);
     EXPECT_EQ(tree()->visualRect(folder).left(), tree()->visualRect(readme_row).left());
 }
 
@@ -2632,17 +2638,58 @@ TEST_F(ExplorerIconTest, TheIconGrowsWithTheZoom) {
     view_->set_zoom(nullptr);
 }
 
+TEST_F(ExplorerIconTest, APressOnTheTwistieOpensAndClosesTheFolderAndNothingElse) {
+    const QModelIndex folder = index_of("/w/src");
+    tree()->setCurrentIndex(index_of("/w/readme"));
+    const auto at = [&](int from_item) {
+        const QRect rect = tree()->visualRect(folder);
+        return QPoint(rect.left() + from_item, rect.center().y());
+    };
+    // Across the twistie, and the space before it.
+    for (const int x : {-6, 1, 8, 15}) {
+        SCOPED_TRACE(x);
+        ASSERT_FALSE(tree()->isExpanded(folder));
+        QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(x));
+        EXPECT_TRUE(tree()->isExpanded(folder));
+        QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(x));
+        EXPECT_FALSE(tree()->isExpanded(folder));
+        EXPECT_EQ(current_name(), "readme");
+    }
+    // Two presses of a double click are two presses, also where the last press that the tree
+    // handled itself was on the name of the folder.
+    const auto double_click = [&](const QPoint& point) {
+        QTest::mousePress(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+        QTest::mouseRelease(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+        QMouseEvent twice(QEvent::MouseButtonDblClick, point,
+                          tree()->viewport()->mapToGlobal(point), Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(tree()->viewport(), &twice);
+        QTest::mouseRelease(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    };
+    double_click(at(8));
+    EXPECT_FALSE(tree()->isExpanded(folder));
+    QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(30));
+    QTest::qWait(QApplication::doubleClickInterval() + 50);
+    double_click(at(8));
+    EXPECT_FALSE(tree()->isExpanded(folder));
+    tree()->setCurrentIndex(index_of("/w/readme"));
+    // The name of the folder is not the twistie.
+    QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier, at(30));
+    EXPECT_FALSE(tree()->isExpanded(folder));
+    EXPECT_EQ(current_name(), "src");
+}
+
 TEST_F(ExplorerIconTest, APressOnTheIconSelectsTheFile) {
     const QModelIndex readme_row = index_of("/w/readme");
     const QRect rect = tree()->visualRect(readme_row);
     QTest::mouseClick(tree()->viewport(), Qt::LeftButton, Qt::NoModifier,
-                      QPoint(rect.left() - 5, rect.center().y()));
+                      QPoint(rect.left() + 8, rect.center().y()));
     EXPECT_EQ(current_name(), "readme");
 }
 
 TEST_F(ExplorerDragTest, ADragThatStartsOnTheIconOfAFileMovesIt) {
     const QRect rect = view_->tree()->visualRect(row_of(root_ / "a.txt"));
-    const QPoint start(rect.left() - 5, rect.center().y());
+    const QPoint start(rect.left() + 8, rect.center().y());
     const QPoint to = on(root_ / "docs");
     press(start);
     move(start + QPoint(0, QApplication::startDragDistance() + 1));
