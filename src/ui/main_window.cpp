@@ -2569,8 +2569,8 @@ void MainWindow::switch_editors() {
         bridge_.remove_document(uri);
         release_document(uri);
     }
-    // What was done in the workspace left does not lead back into it.
-    history_.clear();
+    // What was done in the workspace left does not lead back into it. The navigation history drops
+    // its places with the groups they were in.
     closed_editors_ = {};
     recent_documents_.clear();
     shown_uri_.reset();

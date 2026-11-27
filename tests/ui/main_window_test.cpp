@@ -12446,6 +12446,18 @@ protected:
     void open(const std::string& path) {
         ASSERT_TRUE(window_->open_file(QString::fromStdString(path)));
     }
+    // Whether the saved editors of `first` name `text`.
+    bool saved_editors_name(const std::string& text) {
+        const nlohmann::json state = workspace_state("first");
+        return state.contains("editor.layout") &&
+               state["editor.layout"].dump().find(text) != std::string::npos;
+    }
+    // The group widgets that exist, once those that were let go are deleted.
+    std::size_t group_widgets() {
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        return static_cast<std::size_t>(
+            window_->editor_area()->findChildren<ui::EditorGroupWidget*>().size());
+    }
     // The titles of the tabs of each group, with `*` after the active one of a group.
     std::vector<std::vector<std::string>> groups() {
         std::vector<std::vector<std::string>> result;
@@ -12547,6 +12559,8 @@ TEST_F(RestoreEditorsTest, UntitledDocumentsDoNotComeBackAndTheirGroupGoes) {
     ASSERT_TRUE(window_->commands().execute("workbench.action.files.newUntitledFile"));
     ASSERT_EQ(groups(), (Groups{{"Untitled-1", "a.txt*"}, {"Untitled-2*"}}));
     close_window();
+    EXPECT_TRUE(saved_editors_name("a.txt"));
+    EXPECT_FALSE(saved_editors_name("Untitled"));
     EXPECT_EQ(restarted(), (Groups{{"a.txt*"}}));
 }
 
@@ -12635,13 +12649,24 @@ TEST_F(RestoreEditorsTest, ChangingTheFolderShowsTheEditorsOfTheOneEntered) {
     close_window();
 
     workspace_ = folder("first");
+    list_files_ = [](const std::filesystem::path&,
+                     const core::FileSearchOptions&) -> ui::FileSourceFactory {
+        return []() -> std::expected<std::unique_ptr<ui::FileSource>, Error> {
+            return std::make_unique<ListedFiles>(std::vector<std::string>{}, std::nullopt);
+        };
+    };
     create_window();
     window_->show();
     open(file("first/other.txt"));
     ASSERT_TRUE(window_->commands().execute("workbench.action.splitEditorRight"));
     open(file("first/third.txt"));
+    // A closed editor, which could be opened again.
+    open(file("first/closed.txt"));
+    ASSERT_TRUE(window_->close_document(1));
     const Groups first = groups();
     ASSERT_EQ(first, (Groups{{"a.txt", "other.txt*"}, {"third.txt*"}}));
+    QApplication::processEvents();
+    ASSERT_TRUE(window_->navigation_history().can_go_back());
     ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
     EXPECT_EQ(groups(), (Groups{{"b.txt*"}}));
     EXPECT_EQ(window_->open_document_count(), 1u);
@@ -12651,6 +12676,15 @@ TEST_F(RestoreEditorsTest, ChangingTheFolderShowsTheEditorsOfTheOneEntered) {
     EXPECT_FALSE(window_->navigation_history().can_go_back());
     window_->commands().execute("workbench.action.reopenClosedEditor");
     EXPECT_EQ(groups(), (Groups{{"b.txt*"}}));
+    // Nor does Go to File offer what was shown there, with a listing, which makes it offer files
+    // that are closed too.
+    ASSERT_TRUE(window_->commands().execute("workbench.action.quickOpen"));
+    std::vector<QString> offered;
+    for (const std::size_t item : window_->command_palette()->shown_items()) {
+        offered.push_back(window_->command_palette()->items()[item].label);
+    }
+    EXPECT_EQ(offered, (std::vector<QString>{"b.txt"}));
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
 
     window_->close_folder();
     EXPECT_EQ(groups(), untitled);
@@ -12694,23 +12728,39 @@ TEST_F(RestoreEditorsTest, TheEditorsAreSavedAsTheyChange) {
     workspace_ = folder("first");
     create_window();
     open(file("first/a.txt"));
-    EXPECT_TRUE(wait_until([&] {
-        const nlohmann::json state = workspace_state("first");
-        return state.contains("editor.layout") &&
-               state["editor.layout"].dump().find("a.txt") != std::string::npos;
-    }));
+    ASSERT_TRUE(wait_until([&] { return saved_editors_name("a.txt"); }));
+    // Once the window has settled, a tab is the one change left that asks for a write.
+    QTest::qWait(static_cast<int>(2 * ui::WindowStateKeeper::write_delay.count()));
+    open(file("first/b.txt"));
+    EXPECT_TRUE(wait_until([&] { return saved_editors_name("b.txt"); }));
 }
 
 TEST_F(RestoreEditorsTest, TheWindowClosedLastIsTheOneWhoseEditorsAreKept) {
     leave({file("first/a.txt")});
     workspace_ = folder("first");
     create_window();
-    // Another window of the folder saved other editors while this one was open.
+    open(file("first/b.txt"));
+    // The window has written what it will have at its close.
+    ASSERT_TRUE(wait_until([&] { return saved_editors_name("b.txt"); }));
+    QTest::qWait(static_cast<int>(2 * ui::WindowStateKeeper::write_delay.count()));
+    // Another window of the folder saves other editors while this one is open.
     workbench::StateStore other(state_directory_, folder("first").id, logger_);
     other.set(workbench::StateScope::workspace, "editor.layout", nlohmann::json{{"version", 99}});
     ASSERT_TRUE(other.flush().has_value());
     close_window();
-    EXPECT_EQ(restarted(), (Groups{{"a.txt*"}}));
+    EXPECT_EQ(restarted(), (Groups{{"a.txt", "b.txt*"}}));
+}
+
+TEST_F(RestoreEditorsTest, AGroupThatARestoreReplacesIsDeleted) {
+    leave({file("first/a.txt")});
+    workspace_ = folder("first");
+    create_window();
+    EXPECT_EQ(group_widgets(), 1u);
+    // Each time the one group that is the whole area is replaced.
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    EXPECT_EQ(group_widgets(), 1u);
+    ASSERT_TRUE(window_->open_folder(scratch_ / "first"));
+    EXPECT_EQ(group_widgets(), 1u);
 }
 
 TEST_F(RestoreEditorsTest, ExtensionsAreToldOfTheRestoredFiles) {
