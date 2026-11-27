@@ -266,7 +266,8 @@ void EditorArea::rebuild() {
 
     // The splitters that are no longer used, with the groups that were closed inside them, go after
     // the signal that may have led here has returned. A single group that was the root is kept.
-    if (old_root && qobject_cast<QSplitter*>(old_root)) {
+    if (old_root && (qobject_cast<QSplitter*>(old_root) ||
+                     std::ranges::find(groups_, old_root.data()) == groups_.end())) {
         old_root->hide();
         old_root->deleteLater();
     }

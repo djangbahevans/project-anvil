@@ -90,6 +90,7 @@ int main(int argc, char* argv[]) {
     options.workspace = launch.workspace;
     options.reopen_folder = launch.may_reopen_folder();
     options.opens_files = !launch.files.empty();
+    options.empty_window = launch.new_window;
     options.extension_host = extension_host_config();
     const QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     options.ripgrep =

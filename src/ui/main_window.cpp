@@ -51,6 +51,8 @@ namespace {
 constexpr const char* expanded_folders_key = "explorer.expandedFolders";
 // The folder of the window closed last, empty when it had none.
 constexpr const char* last_folder_key = "window.lastFolder";
+// The editor groups and their file tabs, in the state of the workspace.
+constexpr const char* editor_layout_key = "editor.layout";
 
 constexpr const char* position_item_id = "status.editor.position";
 constexpr const char* language_item_id = "status.editor.language";
@@ -140,19 +142,32 @@ public:
     void structure_changed() override {
         window_.prune_navigation_history();
         window_.refresh_current();
+        save_later();
+    }
+    void ratios_changed() override {
+        save_later();
     }
     void tabs_changed(workbench::GroupId) override {
         window_.prune_navigation_history();
         window_.refresh_current();
+        save_later();
     }
     void active_tab_changed(workbench::GroupId) override {
         window_.refresh_current();
+        save_later();
     }
     void focus_changed(workbench::GroupId) override {
         window_.refresh_current();
+        save_later();
     }
 
 private:
+    void save_later() {
+        if (window_.state_keeper_) {
+            window_.state_keeper_->schedule();
+        }
+    }
+
     MainWindow& window_;
 };
 
@@ -435,7 +450,13 @@ MainWindow::MainWindow(Options options, QWidget* parent)
     rebuild_languages();
 
     apply_settings();
-    add_untitled_document();
+    // After the settings, which say whether to. Files that are named are what opens, unless
+    // `preserve` asks for the editors as well, and so is nothing in an empty window asked for.
+    if ((options_.opens_files &&
+         settings_->editor().restore_windows != core::RestoreWindows::preserve) ||
+        (options_.empty_window && !options_.workspace) || !restore_editors()) {
+        add_untitled_document();
+    }
 
     // After the settings, whose zoom replaces a part size that is the default one.
     state_keeper_ =
@@ -448,6 +469,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                                              .panel = zen_.panel_was_visible};
     });
     state_keeper_->set_content_capture([this](workbench::StateStore& store) {
+        store.set(workbench::StateScope::workspace, editor_layout_key, saved_editors().to_json());
         // An explorer that was never shown has nothing to say about what is expanded.
         if (explorer_ && explorer_->shows_folder()) {
             store.set(workbench::StateScope::workspace, expanded_folders_key,
@@ -460,6 +482,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
         if (explorer_) {
             show_workspace_in(*explorer_);
         }
+        switch_editors();
     });
     state_keeper_->restore();
 }
@@ -493,13 +516,17 @@ bool MainWindow::open_folder(const std::filesystem::path& folder) {
     if (options_.workspace == *workspace) {
         return true;
     }
+    // The editors are closed with the folder, so Cancel keeps both.
+    if (!resolve_unsaved_changes()) {
+        return false;
+    }
     options_.workspace = std::move(*workspace);
     workspace_changed();
     return true;
 }
 
 void MainWindow::close_folder() {
-    if (!options_.workspace) {
+    if (!options_.workspace || !resolve_unsaved_changes()) {
         return;
     }
     options_.workspace.reset();
@@ -2457,8 +2484,8 @@ bool MainWindow::open_file(const QString& path) {
     return true;
 }
 
-std::shared_ptr<core::Document> MainWindow::file_document(const std::filesystem::path& file,
-                                                          const core::Uri& uri) {
+std::expected<std::shared_ptr<core::Document>, QString>
+MainWindow::load_document(const std::filesystem::path& file, const core::Uri& uri) {
     if (const auto found = documents_.find(uri); found != documents_.end()) {
         return found->second;
     }
@@ -2468,19 +2495,89 @@ std::shared_ptr<core::Document> MainWindow::file_document(const std::filesystem:
     }
     auto bytes = platform::read_file(file);
     if (!bytes) {
-        QMessageBox::warning(this, tr("Open"), QString::fromStdString(bytes.error().message));
-        return nullptr;
+        return std::unexpected(QString::fromStdString(bytes.error().message));
     }
     auto decoded = core::Document::from_file_bytes(*bytes);
     if (!decoded) {
-        QMessageBox::warning(
-            this, tr("Open"),
+        return std::unexpected(
             tr("%1 is not a UTF-8 text file.").arg(QString::fromStdString(file.string())));
-        return nullptr;
     }
     auto document = std::make_shared<core::Document>(std::move(*decoded));
     bridge_.add_document(uri, document);
     return document;
+}
+
+std::shared_ptr<core::Document> MainWindow::file_document(const std::filesystem::path& file,
+                                                          const core::Uri& uri) {
+    auto document = load_document(file, uri);
+    if (!document) {
+        QMessageBox::warning(this, tr("Open"), document.error());
+        return nullptr;
+    }
+    return *document;
+}
+
+workbench::EditorLayout MainWindow::saved_editors() const {
+    return layout_.retained([](const core::Uri& uri) { return uri.file_path().has_value(); });
+}
+
+bool MainWindow::restore_editors() {
+    if (!settings_->editor().restore_editors) {
+        return false;
+    }
+    const auto saved = state_->value(workbench::StateScope::workspace, editor_layout_key);
+    if (!saved) {
+        return false;
+    }
+    core::NullLogger discarded;
+    core::Logger& logger = options_.logger ? *options_.logger : discarded;
+    const auto layout = workbench::EditorLayout::from_json(*saved);
+    if (!layout) {
+        logger.log(core::LogLevel::warning, "state", layout.error().message);
+        return false;
+    }
+    // A file that cannot be read is left out, without a dialog for each at every start.
+    const workbench::EditorLayout readable = layout->retained([&](const core::Uri& uri) {
+        const auto path = uri.file_path();
+        if (!path) {
+            return false;
+        }
+        auto document = load_document(*path, uri);
+        if (!document) {
+            logger.log(core::LogLevel::warning, "state", document.error().toStdString());
+            return false;
+        }
+        documents_.try_emplace(uri, std::move(*document));
+        return true;
+    });
+    if (documents_.empty()) {
+        return false;
+    }
+    layout_.restore(readable);
+    refresh_file_icons();
+    return true;
+}
+
+void MainWindow::switch_editors() {
+    // The tabs go first, so that nothing asks for a document that is released.
+    layout_.restore(workbench::EditorLayout());
+    std::vector<core::Uri> open;
+    for (const auto& [uri, document] : documents_) {
+        open.push_back(uri);
+    }
+    for (const core::Uri& uri : open) {
+        bridge_.remove_document(uri);
+        release_document(uri);
+    }
+    // What was done in the workspace left does not lead back into it.
+    history_.clear();
+    closed_editors_ = {};
+    recent_documents_.clear();
+    shown_uri_.reset();
+    next_untitled_ = 1;
+    if (!restore_editors()) {
+        add_untitled_document();
+    }
 }
 
 bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path,
@@ -3476,6 +3573,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
             options_.workspace ? options_.workspace->folder.u8string() : std::u8string();
         state_->overwrite(workbench::StateScope::global, last_folder_key,
                           std::string(folder.begin(), folder.end()));
+        // The window closed last is the one whose editors are kept.
+        state_->overwrite(workbench::StateScope::workspace, editor_layout_key,
+                          saved_editors().to_json());
         state_keeper_->save();
         event->accept();
     } else {

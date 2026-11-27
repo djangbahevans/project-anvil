@@ -74,6 +74,7 @@ protected:
         options.state_directory = state_directory_;
         options.reopen_folder = reopen_folder_;
         options.opens_files = opens_files_;
+        options.empty_window = empty_window_;
         options.themes_directory = themes_directory_;
         options.executable = executable_;
         options.start_process = start_process_;
@@ -333,6 +334,7 @@ protected:
     std::filesystem::path state_directory_;
     bool reopen_folder_ = false;
     bool opens_files_ = false;
+    bool empty_window_ = false;
     // The tests keep the system frame except those about the title bar.
     bool custom_title_bar_ = false;
     std::vector<std::filesystem::path> extension_dirs_ = {ANVIL_DOCUMENTS_EXTENSION};
@@ -1336,7 +1338,7 @@ TEST_F(MainWindowTest, ClosingTheFolderRestartsTheExtensionHostWithoutOne) {
     EXPECT_NE(::kill(static_cast<pid_t>(old_pid), 0), 0) << "the old extension host still runs";
 }
 
-TEST_F(MainWindowTest, ChangingTheFolderKeepsTheTabsAndDocumentsAndAsksNothing) {
+TEST_F(MainWindowTest, ChangingTheFolderClosesTheEditorsAndTheNewHostHasThoseOfTheNewOne) {
     std::filesystem::create_directories(scratch_ / "project");
     extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
     create_window(true, true);
@@ -1346,32 +1348,22 @@ TEST_F(MainWindowTest, ChangingTheFolderKeepsTheTabsAndDocumentsAndAsksNothing) 
     const auto saved = write("saved.txt", "on disk");
     ASSERT_TRUE(window_->open_file(QString::fromStdString(saved.string())));
     type("unsaved edit");
-    const std::string first_text = current_text();
-    window_->commands().execute("workbench.action.splitEditor");
-    window_->commands().execute("workbench.action.files.newUntitledFile");
-    type("second group");
     const auto titles = tab_titles();
-    const std::size_t documents = window_->open_document_count();
-    const std::size_t groups = window_->editor_area()->groups().size();
-    ASSERT_TRUE(window_->current_document()->is_dirty());
 
-    prompt_shown_ = false;
     answer_next_prompt(QMessageBox::Cancel);
+    EXPECT_FALSE(window_->open_folder(scratch_ / "project"));
+    EXPECT_TRUE(prompt_shown_);
+    EXPECT_EQ(tab_titles(), titles);
+    EXPECT_FALSE(window_->workspace().has_value());
+    EXPECT_TRUE(window_->current_document()->is_dirty());
+
+    answer_next_prompt(QMessageBox::Discard);
     ASSERT_TRUE(window_->open_folder(scratch_ / "project"));
     ASSERT_TRUE(wait_host_ready());
-
-    EXPECT_FALSE(prompt_shown_);
-    EXPECT_EQ(tab_titles(), titles);
-    EXPECT_EQ(window_->open_document_count(), documents);
-    EXPECT_EQ(window_->editor_area()->groups().size(), groups);
-    EXPECT_EQ(current_text(), "second group");
+    EXPECT_EQ(tab_titles(), (std::vector<QString>{"Untitled-1"}));
+    EXPECT_EQ(window_->open_document_count(), 1u);
     const json seen = run("anvil.workspace.report", json::array({"/x"}));
-    std::set<std::string> texts;
-    for (const json& document : seen["documents"]) {
-        texts.insert(document["text"].get<std::string>());
-    }
-    EXPECT_TRUE(texts.contains("second group")) << seen["documents"].dump();
-    EXPECT_TRUE(texts.contains(first_text)) << seen["documents"].dump();
+    ASSERT_EQ(seen["documents"].size(), 1u) << seen["documents"].dump();
     EXPECT_EQ(seen["activeEditor"], window_->current_uri().to_string());
 }
 
@@ -7294,12 +7286,13 @@ TEST_F(ChangeLanguageModeTest,
     EXPECT_EQ(shown_language(), "Markdown");
 }
 
-TEST_F(ChangeLanguageModeTest, TheChoiceIsKeptWhenTheExtensionHostRestarts) {
+TEST_F(ChangeLanguageModeTest, TheChoiceGoesWithTheDocumentThatAChangeOfFolderCloses) {
     create_window(true);
     if (!window_) {
         return;
     }
-    ASSERT_TRUE(open(write("a.ts", "abc")));
+    const auto file = write("a.ts", "abc");
+    ASSERT_TRUE(open(file));
     window_->commands().execute(command);
     choose("Python");
     ASSERT_TRUE(host_language_becomes("python"));
@@ -7309,8 +7302,9 @@ TEST_F(ChangeLanguageModeTest, TheChoiceIsKeptWhenTheExtensionHostRestarts) {
         return window_->bridge().host() &&
                window_->bridge().host()->state() == exthost::HostState::ready;
     }));
-    EXPECT_EQ(host_language(), "python");
-    EXPECT_EQ(shown_language(), "Python");
+    ASSERT_TRUE(open(file));
+    ASSERT_TRUE(host_language_becomes("typescript"));
+    EXPECT_EQ(shown_language(), "TypeScript");
 }
 
 TEST_F(ChangeLanguageModeTest, TheChoiceIsNotWrittenToTheSettings) {
@@ -12439,4 +12433,306 @@ TEST_F(MainWindowTest, SelectedTextCanBeReadInTheHighContrastThemes) {
                                  QString(theme).replace(' ', '_') + ".png");
         }
     }
+}
+
+namespace {
+
+class RestoreEditorsTest : public WindowStateTest {
+protected:
+    // A file of the folder.
+    std::string file(const std::string& name, const std::string& text = "text") {
+        return write(name, text).string();
+    }
+    void open(const std::string& path) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(path)));
+    }
+    // The titles of the tabs of each group, with `*` after the active one of a group.
+    std::vector<std::vector<std::string>> groups() {
+        std::vector<std::vector<std::string>> result;
+        for (const auto id : window_->editor_layout().group_ids()) {
+            const ui::TabStrip* tabs = window_->editor_area()->group(id)->tabs();
+            std::vector<std::string> titles;
+            for (int i = 0; i < tabs->count(); ++i) {
+                titles.push_back(tabs->tab(i).title.toStdString() +
+                                 (i == tabs->current_index() ? "*" : ""));
+            }
+            result.push_back(titles);
+        }
+        return result;
+    }
+    using Groups = std::vector<std::vector<std::string>>;
+    const Groups untitled{{"Untitled-1*"}};
+    // A window on the folder `first`, with the files open, closed by the user.
+    void leave(const std::vector<std::string>& paths) {
+        workspace_ = folder("first");
+        create_window();
+        for (const std::string& path : paths) {
+            open(path);
+        }
+        close_window();
+    }
+    Groups restarted() {
+        create_window();
+        const Groups found = groups();
+        close_window();
+        return found;
+    }
+};
+
+} // namespace
+
+TEST_F(RestoreEditorsTest, AStartShowsTheGroupsAndTabsThatTheWindowWasClosedWith) {
+    const std::string a = file("first/a.txt", "alpha");
+    const std::string b = file("first/b.txt", "beta");
+    const std::string c = file("first/c.txt", "gamma");
+    workspace_ = folder("first");
+    settings_file_ = write("settings.json", R"({"editor.fontSize": 28})");
+    create_window();
+    window_->resize(1000, 600);
+    window_->show();
+    open(a);
+    // The untitled document of the start, which would not come back.
+    ASSERT_TRUE(window_->close_document(0));
+    open(b);
+    ASSERT_TRUE(window_->commands().execute("workbench.action.splitEditorRight"));
+    open(c);
+    window_->tab_strip()->set_current_index(0);
+    const auto left = window_->editor_layout().group_ids().front();
+    ASSERT_TRUE(window_->editor_layout().set_ratios({}, {0.3, 0.7}));
+    window_->editor_layout().focus(left);
+    window_->editor_layout().activate(left, 0);
+    QApplication::processEvents();
+    const Groups before = groups();
+    const int line_height = window_->view()->line_height();
+    close_window();
+
+    create_window();
+    EXPECT_EQ(groups(), before);
+    EXPECT_EQ(before.front(), (std::vector<std::string>{"a.txt*", "b.txt"}));
+    EXPECT_EQ(window_->editor_layout().focused(), window_->editor_layout().group_ids().front());
+    EXPECT_EQ(window_->editor_layout().root().ratios, (std::vector<double>{0.3, 0.7}));
+    EXPECT_EQ(current_text(), "alpha");
+    // A restored group has the settings that a split group has.
+    for (auto* group : window_->editor_area()->groups()) {
+        EXPECT_EQ(group->view()->line_height(), line_height);
+    }
+    window_->resize(1000, 600);
+    window_->show();
+    window_->activateWindow();
+    QApplication::processEvents();
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        window_->grab().save(QString::fromUtf8(directory) + "/restored_editors.png");
+    }
+}
+
+TEST_F(RestoreEditorsTest, TheWindowWithoutAFolderHasItsOwnEditors) {
+    const std::string loose = file("loose.txt");
+    leave({file("first/a.txt")});
+    workspace_.reset();
+    create_window();
+    EXPECT_EQ(groups(), untitled);
+    open(loose);
+    close_window();
+    EXPECT_EQ(restarted(), (Groups{{"loose.txt*"}}));
+    workspace_ = folder("first");
+    EXPECT_EQ(restarted(), (Groups{{"a.txt*"}}));
+}
+
+TEST_F(RestoreEditorsTest, UntitledDocumentsDoNotComeBackAndTheirGroupGoes) {
+    workspace_ = folder("first");
+    create_window();
+    open(file("first/a.txt"));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.splitEditorRight"));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.files.newUntitledFile"));
+    ASSERT_EQ(groups(), (Groups{{"Untitled-1", "a.txt*"}, {"Untitled-2*"}}));
+    close_window();
+    EXPECT_EQ(restarted(), (Groups{{"a.txt*"}}));
+}
+
+TEST_F(RestoreEditorsTest, AFileThatIsGoneOrIsNoTextIsLeftOutWithoutADialog) {
+    const std::string a = file("first/a.txt");
+    const std::string b = file("first/b.txt");
+    const std::string c = file("first/c.txt");
+    leave({a, b, c});
+    std::filesystem::remove(b);
+    ASSERT_TRUE(platform::write_file(c, "\xff\xfe\x00 not text").has_value());
+    create_window();
+    EXPECT_EQ(groups(), (Groups{{"a.txt*"}}));
+    EXPECT_EQ(QApplication::activeModalWidget(), nullptr);
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "b.txt", "state"));
+    EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "c.txt", "state"));
+    close_window();
+
+    std::filesystem::remove(a);
+    EXPECT_EQ(restarted(), untitled);
+}
+
+TEST_F(RestoreEditorsTest, DamagedStateGivesWhatAStartShows) {
+    workspace_ = folder("first");
+    for (const char* damaged :
+         {R"({"editor.layout": 7})", R"({"editor.layout": {"version": 99}})",
+          R"({"editor.layout": {"version": 1, "focused": 1, "next_group_id": 2, "root": []}})"}) {
+        SCOPED_TRACE(damaged);
+        write_workspace_state("first", damaged);
+        EXPECT_EQ(restarted(), untitled);
+        EXPECT_TRUE(logger_->contains(core::LogLevel::warning, "editor layout", "state"));
+    }
+}
+
+TEST_F(RestoreEditorsTest, FilesNamedAtTheStartAreWhatOpensUnlessPreserveAsksForBoth) {
+    const std::string a = file("first/a.txt");
+    const std::string named = file("named.txt");
+    leave({a});
+    opens_files_ = true;
+    settings_file_ = write("settings.json", R"({"window.restoreWindows": "preserve"})");
+    create_window();
+    open(named);
+    EXPECT_EQ(groups(), (Groups{{"a.txt", "named.txt*"}}));
+    ASSERT_TRUE(window_->close_document(0));
+    close_window();
+
+    settings_file_ = write("settings.json", "{}");
+    opens_files_ = false;
+    leave({a});
+    opens_files_ = true;
+    create_window();
+    EXPECT_EQ(groups(), untitled);
+    open(named);
+    close_window();
+    // What was named has replaced what was saved.
+    opens_files_ = false;
+    EXPECT_EQ(restarted(), (Groups{{"named.txt*"}}));
+}
+
+TEST_F(RestoreEditorsTest, AnEmptyWindowThatWasAskedForRestoresNothingButAFolderDoes) {
+    workspace_.reset();
+    create_window();
+    open(file("loose.txt"));
+    close_window();
+    leave({file("first/a.txt")});
+
+    empty_window_ = true;
+    EXPECT_EQ(restarted(), (Groups{{"a.txt*"}}));
+    workspace_.reset();
+    EXPECT_EQ(restarted(), untitled);
+}
+
+TEST_F(RestoreEditorsTest, TheSettingTurnsRestoringOff) {
+    leave({file("first/a.txt")});
+    settings_file_ = write("settings.json", R"({"workbench.editor.restoreEditors": false})");
+    create_window();
+    EXPECT_EQ(groups(), untitled);
+}
+
+TEST_F(RestoreEditorsTest, ChangingTheFolderShowsTheEditorsOfTheOneEntered) {
+    const std::string a = file("first/a.txt");
+    file("second/b.txt");
+    leave({a});
+    workspace_ = folder("second");
+    create_window();
+    open(file("second/b.txt"));
+    close_window();
+
+    workspace_ = folder("first");
+    create_window();
+    window_->show();
+    open(file("first/other.txt"));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.splitEditorRight"));
+    open(file("first/third.txt"));
+    const Groups first = groups();
+    ASSERT_EQ(first, (Groups{{"a.txt", "other.txt*"}, {"third.txt*"}}));
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    EXPECT_EQ(groups(), (Groups{{"b.txt*"}}));
+    EXPECT_EQ(window_->open_document_count(), 1u);
+    EXPECT_EQ(window_->editor_area()->groups().size(), 1u);
+    QApplication::processEvents();
+    // Nothing of the folder left is led back to.
+    EXPECT_FALSE(window_->navigation_history().can_go_back());
+    window_->commands().execute("workbench.action.reopenClosedEditor");
+    EXPECT_EQ(groups(), (Groups{{"b.txt*"}}));
+
+    window_->close_folder();
+    EXPECT_EQ(groups(), untitled);
+    ASSERT_TRUE(window_->open_folder(scratch_ / "first"));
+    EXPECT_EQ(groups(), first);
+}
+
+TEST_F(RestoreEditorsTest, CancellingAtAnUnsavedDocumentKeepsTheFolderAndTheEditors) {
+    const std::string a = file("first/a.txt", "alpha");
+    workspace_ = folder("first");
+    create_window(false, true);
+    open(a);
+    type("x");
+    const Groups before = groups();
+    for (const bool closing : {false, true}) {
+        SCOPED_TRACE(closing);
+        answer_next_prompt(QMessageBox::Cancel);
+        if (closing) {
+            window_->close_folder();
+        } else {
+            EXPECT_FALSE(window_->open_folder(scratch_ / "second"));
+        }
+        EXPECT_TRUE(prompt_shown_);
+        ASSERT_TRUE(window_->workspace().has_value());
+        EXPECT_EQ(window_->workspace()->name, "first");
+        EXPECT_EQ(groups(), before);
+        EXPECT_TRUE(window_->current_document()->is_dirty());
+    }
+
+    answer_next_prompt(QMessageBox::Save);
+    ASSERT_TRUE(window_->open_folder(scratch_ / "second"));
+    EXPECT_EQ(platform::read_file(a), "xalpha");
+    EXPECT_EQ(groups(), untitled);
+    // What was discarded or saved is read from disk when the folder comes back.
+    ASSERT_TRUE(window_->open_folder(scratch_ / "first"));
+    EXPECT_EQ(current_text(), "xalpha");
+    EXPECT_FALSE(window_->current_document()->is_dirty());
+}
+
+TEST_F(RestoreEditorsTest, TheEditorsAreSavedAsTheyChange) {
+    workspace_ = folder("first");
+    create_window();
+    open(file("first/a.txt"));
+    EXPECT_TRUE(wait_until([&] {
+        const nlohmann::json state = workspace_state("first");
+        return state.contains("editor.layout") &&
+               state["editor.layout"].dump().find("a.txt") != std::string::npos;
+    }));
+}
+
+TEST_F(RestoreEditorsTest, TheWindowClosedLastIsTheOneWhoseEditorsAreKept) {
+    leave({file("first/a.txt")});
+    workspace_ = folder("first");
+    create_window();
+    // Another window of the folder saved other editors while this one was open.
+    workbench::StateStore other(state_directory_, folder("first").id, logger_);
+    other.set(workbench::StateScope::workspace, "editor.layout", nlohmann::json{{"version", 99}});
+    ASSERT_TRUE(other.flush().has_value());
+    close_window();
+    EXPECT_EQ(restarted(), (Groups{{"a.txt*"}}));
+}
+
+TEST_F(RestoreEditorsTest, ExtensionsAreToldOfTheRestoredFiles) {
+    extension_dirs_ = {ANVIL_WORKSPACE_EXTENSION};
+    leave({file("first/a.txt", "restored text")});
+    workspace_ = folder("first");
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    ASSERT_TRUE(wait_host_ready());
+    const json seen = run("anvil.workspace.report", json::array({"/x"}));
+    ASSERT_EQ(seen["documents"].size(), 1u) << seen["documents"].dump();
+    EXPECT_EQ(seen["documents"][0]["text"], "restored text");
+    EXPECT_EQ(seen["activeEditor"], window_->current_uri().to_string());
+}
+
+TEST_F(RestoreEditorsTest, AStartThatReopensTheLastFolderHasItsEditors) {
+    leave({file("first/a.txt")});
+    workspace_.reset();
+    reopen_folder_ = true;
+    create_window();
+    ASSERT_TRUE(window_->workspace().has_value());
+    EXPECT_EQ(groups(), (Groups{{"a.txt*"}}));
 }
