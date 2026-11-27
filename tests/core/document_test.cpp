@@ -409,6 +409,51 @@ std::size_t undo_depth(Document& document) {
     return depth;
 }
 
+TEST(DocumentFileContent, TellsWhetherAFileStillHoldsWhatWasRead) {
+    const auto document = Document::from_file_bytes("one\ntwo\n");
+    ASSERT_TRUE(document.has_value());
+    EXPECT_TRUE(document->matches_file("one\ntwo\n"));
+    EXPECT_FALSE(document->matches_file("one\ntwo!"));
+    EXPECT_FALSE(document->matches_file("one\ntwO\n"));
+    EXPECT_FALSE(document->matches_file(""));
+}
+
+TEST(DocumentFileContent, RemembersTheBytesAsReadAndNotAsTheDocumentWouldWriteThem) {
+    const std::string mixed = "one\r\ntwo\r\nthree\n";
+    const auto document = Document::from_file_bytes(mixed);
+    ASSERT_TRUE(document.has_value());
+    ASSERT_NE(document->to_file_bytes(), mixed);
+    EXPECT_TRUE(document->matches_file(mixed));
+    EXPECT_FALSE(document->file_conflicts_with(mixed));
+}
+
+TEST(DocumentFileContent, ConflictsWithBytesThatAreNeitherReadNorWritten) {
+    auto document = Document::from_file_bytes("old");
+    ASSERT_TRUE(document.has_value());
+    const std::vector<Edit> edit = {{0, 3, "mine"}};
+    ASSERT_TRUE(document->apply_edits(edit).has_value());
+    EXPECT_FALSE(document->file_conflicts_with("old"));
+    EXPECT_FALSE(document->file_conflicts_with("mine"));
+    EXPECT_TRUE(document->file_conflicts_with("theirs"));
+
+    document->record_file_content("theirs");
+    EXPECT_FALSE(document->file_conflicts_with("theirs"));
+    EXPECT_TRUE(document->file_conflicts_with("old"));
+}
+
+TEST(DocumentFileContent, ADocumentWithoutAFileConflictsWithNothing) {
+    const Document document;
+    EXPECT_FALSE(document.matches_file(""));
+    EXPECT_FALSE(document.file_conflicts_with("anything"));
+}
+
+TEST(DocumentFileContent, TakesTheFormatOfNewContent) {
+    Document document(*Text::from_utf8("a\nb"));
+    document.set_file_format(LineEnding::crlf, true);
+    EXPECT_EQ(document.to_file_bytes(), "\xEF\xBB\xBF"
+                                        "a\r\nb");
+}
+
 } // namespace
 
 TEST(DocumentUndoLimit, TheDefaultKeepsAThousandGroups) {

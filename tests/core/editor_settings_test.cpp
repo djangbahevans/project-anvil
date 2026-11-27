@@ -167,6 +167,19 @@ TEST(EditorSettings, UntitledDocumentsAreNamedAfterTheirContentUnlessTheSettingS
     EXPECT_FALSE(read(R"j({"workbench.editor.untitled.labelFormat": "line"})j").has_value());
 }
 
+TEST(EditorSettings, SaveConflictResolutionHasTheValuesOfVsCode) {
+    using anvil::core::SaveConflictResolution;
+    EXPECT_EQ(read("{}")->save_conflict_resolution, SaveConflictResolution::ask_user);
+    EXPECT_EQ(read(R"j({"files.saveConflictResolution": "overwriteFileOnDisk"})j")
+                  ->save_conflict_resolution,
+              SaveConflictResolution::overwrite_file_on_disk);
+    EXPECT_EQ(read(R"j({"files.saveConflictResolution": "askUser"})j")->save_conflict_resolution,
+              SaveConflictResolution::ask_user);
+    const auto result = read(R"j({"files.saveConflictResolution": "never"})j");
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("files.saveConflictResolution"), std::string::npos);
+}
+
 TEST(EditorSettings, RestoreWindowsHasTheValuesOfVsCode) {
     using anvil::core::RestoreWindows;
     EXPECT_EQ(read("{}")->restore_windows, RestoreWindows::all);

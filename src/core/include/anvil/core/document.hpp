@@ -61,6 +61,16 @@ public:
     static std::expected<Document, Error> from_file_bytes(std::string_view bytes);
     std::string to_file_bytes() const;
 
+    // Remembers what the document's file holds, as it was read or written. from_file_bytes does
+    // this for the bytes it reads.
+    void record_file_content(std::string_view bytes);
+    // Whether the file's bytes are the ones remembered. False when nothing is remembered.
+    bool matches_file(std::string_view bytes) const;
+    // Whether writing the document over a file that holds `bytes` would lose what another writer
+    // put there: the bytes are neither the remembered ones nor the ones the document would write.
+    // False when nothing is remembered.
+    bool file_conflicts_with(std::string_view bytes) const;
+
     const Text& text() const {
         return buffer_.snapshot();
     }
@@ -69,6 +79,11 @@ public:
     }
     bool has_bom() const {
         return bom_;
+    }
+    // Takes the format of a file whose content the document is given. Not part of the undo history.
+    void set_file_format(LineEnding line_ending, bool bom) {
+        line_ending_ = line_ending;
+        bom_ = bom;
     }
 
     // Starts at 1 and grows with every change, including undo and redo.
@@ -148,7 +163,17 @@ private:
     std::uint64_t current_step_id() const;
     void drop_groups_over_the_limit();
 
+    // The size and a hash stand for the bytes, which would otherwise be kept twice.
+    struct FileContent {
+        std::size_t size = 0;
+        std::uint64_t hash = 0;
+
+        bool operator==(const FileContent&) const = default;
+    };
+    static FileContent describe_file(std::string_view bytes);
+
     TextBuffer buffer_;
+    std::optional<FileContent> file_content_;
     SelectionSet selections_;
     LineEnding line_ending_;
     bool bom_;

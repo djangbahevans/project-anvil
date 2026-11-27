@@ -114,7 +114,30 @@ std::expected<Document, Error> Document::from_file_bytes(std::string_view bytes)
     if (!file) {
         return std::unexpected(std::move(file.error()));
     }
-    return Document(std::move(file->text), file->line_ending, file->has_bom);
+    Document document(std::move(file->text), file->line_ending, file->has_bom);
+    document.record_file_content(bytes);
+    return document;
+}
+
+// FNV-1a. What it tells apart is one state of a file from the next, not contents made to collide.
+Document::FileContent Document::describe_file(std::string_view bytes) {
+    std::uint64_t hash = 0xcbf29ce484222325;
+    for (const char byte : bytes) {
+        hash = (hash ^ static_cast<unsigned char>(byte)) * 0x100000001b3;
+    }
+    return {bytes.size(), hash};
+}
+
+void Document::record_file_content(std::string_view bytes) {
+    file_content_ = describe_file(bytes);
+}
+
+bool Document::matches_file(std::string_view bytes) const {
+    return file_content_ == describe_file(bytes);
+}
+
+bool Document::file_conflicts_with(std::string_view bytes) const {
+    return file_content_ && !matches_file(bytes) && bytes != to_file_bytes();
 }
 
 std::string Document::to_file_bytes() const {
