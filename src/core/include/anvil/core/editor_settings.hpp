@@ -60,6 +60,9 @@ enum class ActivityBarLocation { standard, top, bottom, hidden };
 // editor is shown as one large tab, or the group has no strip of tabs.
 enum class TabsMode { multiple, single, none };
 
+// workbench.editor.untitled.labelFormat: what an untitled document is named after.
+enum class UntitledLabel { content, name };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
@@ -132,6 +135,8 @@ struct EditorSettings {
 
     // workbench.editor.restoreEditors: a workspace gets back the editors it was left with
     bool restore_editors = true;
+    // workbench.editor.untitled.labelFormat
+    UntitledLabel untitled_label = UntitledLabel::content;
     // window.restoreWindows
     RestoreWindows restore_windows = RestoreWindows::all;
 

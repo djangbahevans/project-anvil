@@ -36,6 +36,7 @@ add_library(anvil_core STATIC
   token_theme.cpp
   uri.cpp
   workspace.cpp
+  untitled_title.cpp
   utf.cpp
   visible_column.cpp
   wheel_scroll.cpp

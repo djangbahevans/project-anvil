@@ -138,6 +138,17 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             }
         }
     }
+    if (settings.contains("workbench.editor.untitled.labelFormat")) {
+        const auto format = settings.get<std::string>("workbench.editor.untitled.labelFormat");
+        if (format == "content") {
+            result.untitled_label = UntitledLabel::content;
+        } else if (format == "name") {
+            result.untitled_label = UntitledLabel::name;
+        } else {
+            problems.emplace_back(
+                R"(workbench.editor.untitled.labelFormat must be "content" or "name")");
+        }
+    }
     if (settings.contains("window.restoreWindows")) {
         const auto restore = settings.get<std::string>("window.restoreWindows");
         if (restore == "preserve") {
