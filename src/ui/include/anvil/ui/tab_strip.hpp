@@ -5,6 +5,7 @@
 #include "anvil/ui/workbench_colors.hpp"
 #include "anvil/ui/zoom.hpp"
 
+#include <QFont>
 #include <QRect>
 #include <QString>
 #include <QWidget>
@@ -19,7 +20,8 @@ namespace anvil::ui {
 
 // The strip of tabs above an editor: VS Code's tab strip, painted by the widget itself.
 //
-// A tab shows the icon of its file, if it has one, and a title, and on its right a close button
+// A tab shows the icon of its file, if it has one, a title and, dimmer after it, a description if
+// it has one, and on its right a close button
 // that is a dot while the tab is dirty. The selected tab has its own background and a line on top.
 // The close button of the selected tab is always there; that of another tab shows while the mouse
 // is over the tab, and a dirty tab keeps a dot there that turns into the close button when the
@@ -43,6 +45,8 @@ public:
     // The column of an icon before the title, and the space after it.
     static constexpr int icon_width = 16;
     static constexpr int icon_gap = 6;
+    // Between the title and the description.
+    static constexpr int description_gap = 6;
     static constexpr int action_width = 28;
     static constexpr int close_button_size = 16;
 
@@ -55,6 +59,7 @@ public:
         bool has_path = false;
         // Drawn before the title, in the color for the kind of the theme.
         std::optional<SetiIcon> icon = std::nullopt;
+        QString description = {};
 
         bool operator==(const Tab&) const = default;
     };
@@ -147,6 +152,8 @@ public:
 signals:
     // The user selected a tab.
     void current_changed(int index);
+    // The user double-clicked the part of the strip that no tab covers.
+    void new_file_requested();
     // The user dragged a tab past a neighbor: the tab at `from` is now at `to`.
     void tab_moved(int from, int to);
     // The user asked to close the tab with its close button or a middle click, or from the menu.
@@ -171,6 +178,7 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void leaveEvent(QEvent* event) override;
@@ -181,6 +189,8 @@ private:
     struct Entry {
         Tab tab;
         int title_width = 0;
+        // With the gap before it; 0 without a description.
+        int description_width = 0;
         // In the coordinates of the content, before scrolling.
         int x = 0;
         int width = 0;
@@ -211,6 +221,7 @@ private:
     void drag_to(int x);
     void end_drag_out();
     void paint_tab(QPainter& painter, int index, int x) const;
+    QFont description_font() const;
 
     const WorkbenchColors& colors_;
     mutable std::vector<Entry> entries_;

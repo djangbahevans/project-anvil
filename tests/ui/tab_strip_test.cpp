@@ -1365,3 +1365,61 @@ TEST_F(TabStripIconTest, ATabGivenAnotherIconIsPaintedAgainAndLaysOut) {
     EXPECT_GT(paints.count, 0);
     strip_->removeEventFilter(&paints);
 }
+
+// --- descriptions and the empty part of the strip ---
+
+TEST_F(TabStripIconTest, ADescriptionWidensItsTabAndIsDrawnDimmerAfterTheTitle) {
+    const int width = strip_->tab_rect(1).width();
+    strip_->set_tab(1, {.title = long_title, .description = long_title});
+    QApplication::processEvents();
+    EXPECT_GT(strip_->tab_rect(1).width(), width + 100);
+
+    // The title is green, and the description a dimmer green on the black of the tab.
+    const QImage image = strip_->grab().toImage();
+    const QRect tab = strip_->tab_rect(1);
+    const auto brightest = [&](int from, int to) {
+        int best = 0;
+        for (int x = from; x < to; ++x) {
+            for (int y = 0; y < image.height(); ++y) {
+                best = std::max(best, image.pixelColor(x, y).green());
+            }
+        }
+        return best;
+    };
+    const int title_end = tab.left() + TabStrip::title_padding +
+                          QFontMetrics(strip_->font()).horizontalAdvance(long_title);
+    EXPECT_GT(brightest(tab.left(), title_end), 220);
+    const int description =
+        brightest(title_end + TabStrip::description_gap, tab.right() - TabStrip::action_width);
+    EXPECT_GT(description, 100);
+    EXPECT_LT(description, 200);
+
+    PaintCounter paints;
+    strip_->installEventFilter(&paints);
+    strip_->set_tab(1, {.title = long_title, .description = "other"});
+    QApplication::processEvents();
+    EXPECT_GT(paints.count, 0);
+    EXPECT_LT(strip_->tab_rect(1).width(), width + 100);
+    strip_->removeEventFilter(&paints);
+}
+
+TEST_F(TabStripIconTest, ADoubleClickWhereNoTabIsAsksForANewFile) {
+    int asked = 0;
+    QObject::connect(strip_.get(), &TabStrip::new_file_requested, [&] { ++asked; });
+    strip_->resize(1600, TabStrip::height_pixels);
+    QApplication::processEvents();
+    const QPoint empty(strip_->tab_rect(1).right() + 40, 10);
+    ASSERT_TRUE(strip_->rect().contains(empty));
+    QTest::mouseClick(strip_.get(), Qt::LeftButton, Qt::NoModifier, empty);
+    EXPECT_EQ(asked, 0);
+    QTest::mouseDClick(strip_.get(), Qt::LeftButton, Qt::NoModifier, empty);
+    EXPECT_EQ(asked, 1);
+    QTest::mouseDClick(strip_.get(), Qt::RightButton, Qt::NoModifier, empty);
+    QTest::mouseDClick(strip_.get(), Qt::LeftButton, Qt::NoModifier, strip_->tab_rect(1).center());
+    EXPECT_EQ(asked, 1);
+    // The one tab of the single mode takes the whole strip.
+    strip_->set_single(true);
+    QApplication::processEvents();
+    QTest::mouseDClick(strip_.get(), Qt::LeftButton, Qt::NoModifier, empty);
+    EXPECT_EQ(asked, 1);
+}

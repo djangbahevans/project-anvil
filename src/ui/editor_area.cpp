@@ -209,6 +209,7 @@ EditorGroupWidget* EditorArea::add_group(workbench::GroupId id) {
             [this, id](int index) { emit tab_selected(id, index); });
     connect(tabs, &TabStrip::tab_moved, this,
             [this, id](int from, int to) { emit tab_moved(id, from, to); });
+    connect(tabs, &TabStrip::new_file_requested, this, [this, id] { emit new_file_requested(id); });
     connect(tabs, &TabStrip::close_requested, this,
             [this, id](int index) { emit close_requested(id, index); });
     connect(tabs, &TabStrip::close_others_requested, this,
