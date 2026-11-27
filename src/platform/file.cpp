@@ -35,7 +35,11 @@ Error open_error(const std::string& what, const std::filesystem::path& path,
 
 std::expected<std::string, Error> read_file(const std::filesystem::path& path) {
     std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error)) {
+    const std::filesystem::file_status status = std::filesystem::status(path, error);
+    if (status.type() == std::filesystem::file_type::not_found) {
+        return std::unexpected(open_error("cannot read", path, "it does not exist", error.value()));
+    }
+    if (!std::filesystem::is_regular_file(status)) {
         return std::unexpected(io_error("cannot read", path, "not a regular file"));
     }
     errno = 0;
