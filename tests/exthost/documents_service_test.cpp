@@ -723,6 +723,46 @@ TEST_F(DocumentsServiceTest, SaveDocumentWritesTheFileMarksSavedAndAnnounces) {
     EXPECT_NE(out.index_of_call("ExtHostDocuments.$acceptModelSaved"), out.messages.size());
 }
 
+TEST_F(DocumentsServiceTest, SaveDocumentDoesNotOverwriteAFileThatAnotherProgramChanged) {
+    const core::Uri uri = open("changed.txt", "old");
+    const auto path = *uri.file_path();
+    synchronize();
+    ASSERT_TRUE(service_.find(uri)->apply_edits(std::vector<core::Edit>{{0, 3, "mine"}}));
+    ASSERT_TRUE(anvil::platform::write_file(path, "theirs"));
+
+    const Sent refused =
+        request(ProxyId::MainThreadDocuments, "$trySaveDocument", json::array({uri_to_json(uri)}));
+    EXPECT_EQ(refused.reply_to(1), "false");
+    EXPECT_EQ(*anvil::platform::read_file(path), "theirs");
+    EXPECT_TRUE(service_.find(uri)->is_dirty());
+    EXPECT_EQ(refused.index_of_call("ExtHostDocuments.$acceptModelSaved"), refused.messages.size());
+
+    service_.set_overwrite_changed_files(true);
+    request(ProxyId::MainThreadDocuments, "$trySaveDocument", json::array({uri_to_json(uri)}));
+    EXPECT_EQ(*anvil::platform::read_file(path), "mine");
+}
+
+TEST_F(DocumentsServiceTest, SaveDocumentTakesItsOwnWritesAsNoChange) {
+    const core::Uri uri = open("again.txt", "a");
+    const auto path = *uri.file_path();
+    synchronize();
+    for (const char* text : {"b", "c"}) {
+        ASSERT_TRUE(service_.find(uri)->apply_edits(std::vector<core::Edit>{{0, 1, text}}));
+        const Sent out = request(ProxyId::MainThreadDocuments, "$trySaveDocument",
+                                 json::array({uri_to_json(uri)}));
+        EXPECT_EQ(out.reply_to(1), "true") << text;
+    }
+}
+
+TEST_F(DocumentsServiceTest, SaveDocumentWritesAFileThatWasDeletedAgain) {
+    const core::Uri uri = open("gone.txt", "kept");
+    const auto path = *uri.file_path();
+    synchronize();
+    std::filesystem::remove(path);
+    request(ProxyId::MainThreadDocuments, "$trySaveDocument", json::array({uri_to_json(uri)}));
+    EXPECT_EQ(*anvil::platform::read_file(path), "kept");
+}
+
 TEST_F(DocumentsServiceTest, TheObserverLearnsOfExtensionSaves) {
     const auto path = scratch_ / "observed.txt";
     ASSERT_TRUE(anvil::platform::write_file(path, "a").has_value());

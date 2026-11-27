@@ -20,6 +20,11 @@
 
 namespace anvil::exthost {
 
+// Whether writing the document to its file at `path` would overwrite what another program put
+// there. False for a file that does not exist; fails for one that cannot be read.
+std::expected<bool, Error> file_changed_under(const core::Document& document,
+                                              const std::filesystem::path& path);
+
 // The documents and text editors that extensions can see, kept in step with the extension host
 // (VS Code's MainThreadDocuments, MainThreadTextEditors and MainThreadBulkEdits, plus the
 // documents-and-editors delta). Documents are shared with whoever else uses them: the editor
@@ -76,6 +81,12 @@ public:
     void set_editor_options(EditorOptions options);
     const EditorOptions& editor_options() const {
         return editor_options_;
+    }
+
+    // Whether a save that an extension asks for writes over a file that another program changed.
+    // Such a save fails otherwise (`files.saveConflictResolution`).
+    void set_overwrite_changed_files(bool overwrite) {
+        overwrite_changed_files_ = overwrite;
     }
 
     // Picks the language id of a document that is registered without one; "plaintext" without a
@@ -192,6 +203,7 @@ private:
     std::string active_editor_;
     std::size_t next_editor_ = 1;
     std::size_t next_untitled_ = 1;
+    bool overwrite_changed_files_ = false;
     bool synchronized_ = false;
 };
 
