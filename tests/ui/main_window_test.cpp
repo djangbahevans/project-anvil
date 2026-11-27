@@ -13311,6 +13311,85 @@ TEST_F(FilesOnDiskTest, ARenamedDocumentIsFollowedUnderItsNewName) {
     EXPECT_TRUE(shows("second"));
 }
 
+TEST_F(FilesOnDiskTest, AutoSaveOnFocusChangeNeverWritesOverAChangedFile) {
+    settings_file_ = write("settings.json", R"j({"files.autoSave": "onFocusChange"})j");
+    create_window();
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    const auto path = open("a.txt", "old");
+    window_->view()->setFocus();
+    answer_conflicts("Overwrite");
+    type("X");
+    write_in_place(path, "from outside");
+    auto* elsewhere = new QLineEdit(window_.get());
+    elsewhere->show();
+    elsewhere->setFocus();
+    QApplication::processEvents();
+    EXPECT_EQ(window_->status_bar().message(), "Auto save failed: a.txt has changed on disk");
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(FilesOnDiskTest, RestoredAndReopenedEditorsAreFollowed) {
+    state_directory_ = scratch_ / "state";
+    create_window();
+    const auto path = open("a.txt", "first");
+    window_->close();
+    window_.reset();
+
+    create_window();
+    ASSERT_EQ(current_text(), "first");
+    write_in_place(path, "restored and changed");
+    ASSERT_TRUE(shows("restored and changed"));
+
+    ASSERT_TRUE(
+        window_->close_document(static_cast<std::size_t>(window_->tab_strip()->current_index())));
+    window_->commands().execute("workbench.action.reopenClosedEditor");
+    ASSERT_EQ(current_text(), "restored and changed");
+    write_in_place(path, "reopened and changed");
+    EXPECT_TRUE(shows("reopened and changed"));
+}
+
+TEST_F(FilesOnDiskTest, ClosingTheTabOfADeletedFileForgetsThatItWasGone) {
+    create_window();
+    const auto path = open("a.txt", "first");
+    std::filesystem::remove(path);
+    ASSERT_TRUE(wait_until([&] { return current_tab().deleted; }));
+    ASSERT_TRUE(
+        window_->close_document(static_cast<std::size_t>(window_->tab_strip()->current_index())));
+    open("a.txt", "made again");
+    EXPECT_FALSE(current_tab().deleted);
+}
+
+TEST_F(FilesOnDiskTest, ExtensionsLearnOfAChangeOfTheLineEndingAlone) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = open("a.txt", "one\ntwo");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["eol"] == "lf"; }));
+    run("anvil.docs.saves");
+    write_in_place(path, "one\r\ntwo");
+    EXPECT_TRUE(wait_until([&] { return run("anvil.docs.active")["eol"] == "crlf"; }));
+    EXPECT_EQ(run("anvil.docs.active")["isDirty"], false);
+}
+
+TEST_F(FilesOnDiskTest, ExtensionsLearnThatARevertToTheSameTextLeavesTheDocumentClean) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    open("a.txt", "same");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["text"] == "same"; }));
+    type("X");
+    QKeyEvent backspace(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+    QApplication::sendEvent(window_->view(), &backspace);
+    ASSERT_EQ(current_text(), "same");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["isDirty"] == true; }));
+    ASSERT_TRUE(window_->revert());
+    EXPECT_TRUE(wait_until([&] { return run("anvil.docs.active")["isDirty"] == false; }));
+}
+
 TEST_F(FilesOnDiskTest, ExtensionsSeeTheReloadAsAChangeOfACleanDocument) {
     create_window(true);
     if (!window_) {

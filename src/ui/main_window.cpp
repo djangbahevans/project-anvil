@@ -3010,7 +3010,6 @@ bool MainWindow::revert() {
             tr("Revert failed: %1").arg(QString::fromStdString(reloaded.error().message)), 5000);
         return false;
     }
-    set_file_deleted(uri, false);
     return true;
 }
 
@@ -3066,7 +3065,6 @@ void MainWindow::rekey_document(const core::Uri& uri, const core::Uri& new_uri,
         bridge_.language_changed(new_uri, *chosen);
     }
     refresh_file_icons();
-    deleted_files_.erase(uri);
     follow_files();
     history_.replace_uri(uri, new_uri);
     std::erase(recent_documents_, new_uri);
