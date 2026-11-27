@@ -1,5 +1,7 @@
 #include "cursor_commands.hpp"
 
+#include "anvil/core/editing.hpp"
+
 #include <utility>
 
 namespace anvil::core::cursor_commands {
@@ -24,9 +26,10 @@ public:
     }
 
     // Where a position of the old text is in the new one, as VS Code's text model moves a tracked
-    // range: the edits are made from the last one to the first, and a position that an edit
-    // deletes goes to where the deletion was. At an insertion, the position moves after the
-    // inserted text when `moves`.
+    // range: the edits are made from the last one to the first, and a position inside a replaced
+    // range stays as far into the new text as it was, or goes to its end when that is shorter. At
+    // an insertion, and at the end of a replaced range, the position moves after the new text when
+    // `moves`.
     std::size_t map(std::size_t offset, bool moves) const {
         std::size_t position = offset;
         for (auto edit = edits_.rbegin(); edit != edits_.rend(); ++edit) {
@@ -35,10 +38,10 @@ public:
                 if (position > e.start || (position == e.start && moves)) {
                     position += e.text.size();
                 }
-            } else if (position >= e.end) {
+            } else if (position > e.end || (position == e.end && moves)) {
                 position = position - (e.end - e.start) + e.text.size();
             } else if (position > e.start) {
-                position = e.start;
+                position = std::min(position, e.start + e.text.size());
             }
         }
         return position;
@@ -290,3 +293,17 @@ std::vector<Sel> cursors_of(const Model& model, const SelectionSet& selections) 
 }
 
 } // namespace anvil::core::cursor_commands
+
+namespace anvil::core {
+
+EditOutcome EditController::run_commands(const cursor_commands::Model& model,
+                                         const std::vector<cursor_commands::Command>& commands,
+                                         const std::vector<cursor_commands::Sel>& cursors) {
+    cursor_commands::Finished finished = cursor_commands::finish(model, commands, cursors);
+    if (finished.cancelled) {
+        return {};
+    }
+    return apply_line_edit(std::move(finished.edits), std::move(finished.selections), 0);
+}
+
+} // namespace anvil::core

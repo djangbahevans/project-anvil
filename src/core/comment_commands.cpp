@@ -439,11 +439,7 @@ EditOutcome EditController::comment_lines(LineCommentType type, const CommentOpt
         commands.push_back(line_comment(model, model.selection(selections[i]), type, options,
                                         ignore_first_line[i]));
     }
-    Finished finished = finish(model, commands, cursors);
-    if (finished.cancelled) {
-        return {};
-    }
-    return apply_line_edit(std::move(finished.edits), std::move(finished.selections), 0);
+    return run_commands(model, commands, cursors);
 }
 
 EditOutcome EditController::toggle_block_comment(const CommentOptions& options) {
@@ -453,11 +449,7 @@ EditOutcome EditController::toggle_block_comment(const CommentOptions& options) 
     for (const Sel& cursor : cursors) {
         commands.push_back(block_comment(model, cursor, options));
     }
-    Finished finished = finish(model, commands, cursors);
-    if (finished.cancelled) {
-        return {};
-    }
-    return apply_line_edit(std::move(finished.edits), std::move(finished.selections), 0);
+    return run_commands(model, commands, cursors);
 }
 
 } // namespace anvil::core
