@@ -32,9 +32,10 @@ Copy [template.md](template.md) to `NNNN-short-title.md` using the next free num
 | [0013](0013-pcre2-for-search.md) | PCRE2 for regular expressions and case folding in search | Accepted |
 | [0014](0014-workbench-layout.md) | Workbench window built from fixed parts in a purpose-built layout | Accepted |
 | [0015](0015-custom-title-bar.md) | Custom title bar on Linux and Windows, native frame and global menu on macOS | Accepted |
-| [0016](0016-opening-a-folder-restarts-the-extension-host.md) | Opening or closing a folder restarts the extension host | Accepted, in part superseded by 0021 |
+| [0016](0016-opening-a-folder-restarts-the-extension-host.md) | Opening or closing a folder restarts the extension host | Accepted, in part superseded by 0021 and 0022 |
 | [0017](0017-commands-change-settings-by-editing-the-file.md) | Commands change settings by editing the settings file in place | Accepted |
 | [0018](0018-word-wrap-by-rows.md) | Word wrap breaks lines into rows by columns, computed in the core | Accepted |
 | [0019](0019-editor-state-store.md) | The editor keeps its window state in a store of its own | Accepted, in part superseded by 0021 |
 | [0020](0020-listing-workspace-files.md) | The files of a workspace are listed with ripgrep when they are asked for | Accepted |
-| [0021](0021-layout-of-an-opened-folder.md) | A folder opened in a running window takes its own layout | Accepted |
+| [0021](0021-layout-of-an-opened-folder.md) | A folder opened in a running window takes its own layout | Accepted, in part superseded by 0022 |
+| [0022](0022-editors-of-an-opened-folder.md) | A folder opened in a running window brings its own editors | Accepted |

@@ -1,6 +1,6 @@
 # 0016. Opening or closing a folder restarts the extension host
 
-- Status: Accepted, in part superseded by 0021
+- Status: Accepted, in part superseded by 0021 and 0022
 - Date: 2026-11-23
 
 ## Context

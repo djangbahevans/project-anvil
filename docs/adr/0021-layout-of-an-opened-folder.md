@@ -1,6 +1,6 @@
 # 0021. A folder opened in a running window takes its own layout
 
-- Status: Accepted
+- Status: Accepted, in part superseded by 0022
 - Date: 2026-11-26
 
 ## Context
