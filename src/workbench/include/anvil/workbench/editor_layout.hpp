@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
@@ -220,6 +221,13 @@ public:
     // in a group, an active tab out of range, a list of recent tabs that is not the group's tabs
     // with the active one first, or a focused group that does not exist.
     std::optional<std::string> find_inconsistency() const;
+
+    // A copy without observers that has the tabs that `keep` takes. A group that this leaves with
+    // no tab is not in it, unless it is the only one.
+    EditorLayout retained(const std::function<bool(const core::Uri&)>& keep) const;
+    // Arranges the groups, tabs and focus as `other` has them, under new ids so that no group is
+    // taken for one that was there, and keeps the options and the observers, which are told.
+    void restore(const EditorLayout& other);
 
     nlohmann::json to_json() const;
     static std::expected<EditorLayout, Error> from_json(const nlohmann::json& json,

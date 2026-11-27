@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <nlohmann/json.hpp>
 
 namespace anvil::workbench {
@@ -914,6 +915,57 @@ nlohmann::json uri_to_json(const core::Uri& uri) {
 }
 
 } // namespace
+
+EditorLayout EditorLayout::retained(const std::function<bool(const core::Uri&)>& keep) const {
+    EditorLayout copy = *this;
+    copy.observers_.clear();
+    copy.recent_all_.reset();
+    copy.recent_in_group_.reset();
+    for (const GroupId id : group_ids()) {
+        EditorGroup& target = *copy.mutable_group(id);
+        const bool had_tabs = !target.tabs.empty();
+        for (std::size_t index = target.tabs.size(); index > 0; --index) {
+            if (!keep(target.tabs[index - 1])) {
+                copy.remove_tab(target, index - 1);
+            }
+        }
+        if (had_tabs && target.tabs.empty() && copy.groups_.size() > 1) {
+            copy.erase_group(id);
+        }
+    }
+    std::erase_if(copy.recent_groups_, [&](GroupId id) { return !copy.group(id); });
+    return copy;
+}
+
+void EditorLayout::restore(const EditorLayout& other) {
+    const Snapshot before = snapshot();
+    std::map<GroupId, GroupId> renamed;
+    for (const GroupId id : other.group_ids()) {
+        renamed.emplace(id, GroupId{next_id_++});
+    }
+    const auto rename = [&](const auto& self, LayoutNode& node) -> void {
+        if (node.group) {
+            node.group = renamed.at(*node.group);
+        }
+        for (LayoutNode& child : node.children) {
+            self(self, child);
+        }
+    };
+    root_ = other.root_;
+    rename(rename, root_);
+    groups_ = other.groups_;
+    for (EditorGroup& group : groups_) {
+        group.id = renamed.at(group.id);
+    }
+    focused_ = renamed.at(other.focused_);
+    recent_groups_.clear();
+    for (const GroupId id : other.recent_groups_) {
+        recent_groups_.push_back(renamed.at(id));
+    }
+    recent_all_.reset();
+    recent_in_group_.reset();
+    notify(before);
+}
 
 nlohmann::json EditorLayout::to_json() const {
     const auto node_json = [this](const auto& self, const LayoutNode& node) -> nlohmann::json {

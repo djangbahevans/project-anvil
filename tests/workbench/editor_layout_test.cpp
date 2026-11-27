@@ -1037,3 +1037,75 @@ TEST(EditorLayoutJsonTest, ANotJsonObjectIsRefused) {
     ASSERT_FALSE(refused);
     EXPECT_EQ(refused.error().code, anvil::ErrorCode::invalid_argument);
 }
+
+TEST_F(EditorLayoutTest, RetainedHasTheTabsTakenAndNoGroupLeftWithoutOne) {
+    const GroupId first = layout_.focused();
+    open(first, {"a", "x", "b"});
+    const GroupId second = *layout_.split(first, Direction::right);
+    open(second, {"x", "y"});
+    const GroupId third = *layout_.split(second, Direction::down);
+    open(third, {"c", "z"});
+    layout_.focus(second);
+    const EditorLayout before = layout_;
+    recorder_.events.clear();
+
+    const EditorLayout kept = layout_.retained(
+        [](const Uri& uri) { return uri != doc("x") && uri != doc("y") && uri != doc("z"); });
+    EXPECT_EQ(kept.find_inconsistency(), std::nullopt);
+    ASSERT_EQ(kept.group_ids(), (std::vector<GroupId>{first, third}));
+    EXPECT_EQ(names(*kept.group(first)), (Names{"a", "b"}));
+    EXPECT_EQ(names(*kept.group(third)), (Names{"c"}));
+    EXPECT_EQ(kept.group(third)->active, 0u);
+    EXPECT_NE(kept.focused(), second);
+    // The layout itself is as it was, and its observers hear of nothing.
+    EXPECT_EQ(layout_.to_json(), before.to_json());
+    EXPECT_TRUE(recorder_.events.empty());
+}
+
+TEST_F(EditorLayoutTest, RetainedKeepsAGroupThatWasEmptyAndTheOnlyGroup) {
+    const GroupId first = layout_.focused();
+    open(first, {"a"});
+    const GroupId empty = *layout_.split(first, Direction::right);
+    EXPECT_EQ(layout_.retained([](const Uri&) { return true; }).group_ids(),
+              (std::vector<GroupId>{first, empty}));
+
+    const EditorLayout none = layout_.retained([](const Uri&) { return false; });
+    EXPECT_EQ(none.group_ids(), (std::vector<GroupId>{empty}));
+    EXPECT_EQ(none.find_inconsistency(), std::nullopt);
+
+    layout_.close_group(empty);
+    const EditorLayout only = layout_.retained([](const Uri&) { return false; });
+    ASSERT_EQ(only.group_ids().size(), 1u);
+    EXPECT_TRUE(only.group(only.focused())->tabs.empty());
+}
+
+TEST_F(EditorLayoutTest, RestoreTakesTheArrangementUnderNewIdsAndTellsTheObservers) {
+    EditorLayout saved;
+    const GroupId left = saved.focused();
+    ASSERT_TRUE(saved.open(left, doc("a")));
+    ASSERT_TRUE(saved.open(left, doc("b")));
+    saved.activate(left, 0);
+    const GroupId right = *saved.split(left, Direction::right);
+    ASSERT_TRUE(saved.open(right, doc("c")));
+    ASSERT_TRUE(saved.set_ratios({}, {0.25, 0.75}));
+
+    // The group of a new layout has the id that the first saved group has.
+    const GroupId before = layout_.focused();
+    open(before, {"old"});
+    layout_.restore(saved);
+
+    EXPECT_EQ(layout_.find_inconsistency(), std::nullopt);
+    const std::vector<GroupId> ids = layout_.group_ids();
+    ASSERT_EQ(ids.size(), 2u);
+    EXPECT_EQ(layout_.group(before), nullptr);
+    EXPECT_EQ(names(*layout_.group(ids[0])), (Names{"a", "b"}));
+    EXPECT_EQ(layout_.group(ids[0])->active, 0u);
+    EXPECT_EQ(names(*layout_.group(ids[1])), (Names{"c"}));
+    EXPECT_EQ(layout_.focused(), ids[1]);
+    EXPECT_EQ(layout_.root().ratios, (std::vector<double>{0.25, 0.75}));
+    EXPECT_EQ(recorder_.events.front(), "structure");
+    // A group made afterwards has an id of its own.
+    const GroupId more = *layout_.split(ids[1], Direction::right);
+    EXPECT_NE(more, ids[0]);
+    EXPECT_NE(more, ids[1]);
+}
