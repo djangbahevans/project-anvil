@@ -12400,3 +12400,43 @@ TEST_F(ReopenFolderTest, TheSettingSaysWhetherTheFolderIsReopened) {
     }
     EXPECT_EQ(reopened(with("preserve")), "first");
 }
+
+TEST_F(MainWindowTest, SelectedTextCanBeReadInTheHighContrastThemes) {
+    create_window();
+    window_->resize(600, 300);
+    window_->show();
+    QApplication::processEvents();
+    type("MMMMMMMM");
+    window_->view()->select_range({0, 8});
+    const std::pair<const char*, std::pair<QColor, QColor>> themes[] = {
+        {"Dark High Contrast", {QColor("#ffffff"), QColor("#000000")}},
+        {"Light High Contrast", {QColor("#0f4a85"), QColor("#ffffff")}}};
+    for (const auto& [theme, colors] : themes) {
+        SCOPED_TRACE(theme);
+        const auto [background, text] = colors;
+        window_->change_setting("workbench.colorTheme", theme, "Theme");
+        QApplication::processEvents();
+        const QImage image = window_->view()->viewport()->grab().toImage();
+        const QRect first = window_->view()->cursor_rect(0);
+        int of_background = 0;
+        int of_text = 0;
+        for (int x = first.x() + 1; x < window_->view()->cursor_rect(8).x() - 1; ++x) {
+            for (int y = first.y(); y < first.y() + window_->view()->line_height(); ++y) {
+                const QColor found = image.pixelColor(x, y);
+                of_background += found == background ? 1 : 0;
+                // Near, since smoothing by subpixel colors the edges of a stroke.
+                of_text += std::abs(found.red() - text.red()) < 80 &&
+                                   std::abs(found.green() - text.green()) < 80 &&
+                                   std::abs(found.blue() - text.blue()) < 80
+                               ? 1
+                               : 0;
+            }
+        }
+        EXPECT_GT(of_background, 100);
+        EXPECT_GT(of_text, 50);
+        if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+            window_->grab().save(QString::fromUtf8(directory) + "/selection_" +
+                                 QString(theme).replace(' ', '_') + ".png");
+        }
+    }
+}

@@ -1502,12 +1502,17 @@ EditorView::Colors EditorView::current_colors() const {
                 QColor()};
     }
     const QColor foreground = colors_->color("editor.foreground");
+    // Selected text keeps its colors over a theme's selection, unless the theme gives it one.
+    QColor selected_text;
+    if (colors_->is_themed("editor.selectionForeground")) {
+        selected_text = colors_->color("editor.selectionForeground");
+    } else if (!colors_->is_themed("editor.selectionBackground")) {
+        selected_text = palette().color(QPalette::HighlightedText);
+    }
     return {colors_->color("editor.background"),
             foreground,
             colors_->color("editor.selectionBackground"),
-            colors_->is_themed("editor.selectionBackground")
-                ? QColor()
-                : palette().color(QPalette::HighlightedText),
+            selected_text,
             colors_->color("editor.lineHighlightBackground"),
             colors_->color("editorLineNumber.foreground"),
             colors_->color("editorLineNumber.activeForeground"),
@@ -1639,18 +1644,25 @@ void EditorView::paintEvent(QPaintEvent*) {
                 formats.push_back({start_column, end_column - start_column, format});
             }
         }
+        // Where the selected text takes a color of its own.
+        std::vector<QRect> recolored;
         for (const core::Selection& selection : selections) {
             const std::size_t from = std::max(selection.start(), shown_begin);
             const std::size_t to = std::min(selection.end(), shown_end);
             if (from < to) {
                 QTextCharFormat format;
                 format.setBackground(selection_background);
-                if (selection_foreground.isValid()) {
-                    format.setForeground(selection_foreground);
-                }
                 const int start_column = static_cast<int>(text.utf16_offset(from) - line_units);
                 const int end_column = static_cast<int>(text.utf16_offset(to) - line_units);
                 formats.push_back({start_column, end_column - start_column, format});
+                if (selection_foreground.isValid()) {
+                    const qreal first_x =
+                        chunks.x_of(static_cast<std::size_t>(start_column) - begin);
+                    const qreal last_x = chunks.x_of(static_cast<std::size_t>(end_column) - begin);
+                    recolored.push_back(QRectF(left + std::min(first_x, last_x), y,
+                                               std::abs(last_x - first_x), line_height_)
+                                            .toAlignedRect());
+                }
             }
             // A selection that continues past the line break shows a small block after the text.
             if (part + 1 == layout->text.row_count() && selection.start() <= line_end &&
@@ -1679,8 +1691,22 @@ void EditorView::paintEvent(QPaintEvent*) {
                 text_colors.push_back(format);
             }
         }
+        painter.save();
+        if (!recolored.empty()) {
+            QRegion kept(viewport()->rect());
+            for (const QRect& area : recolored) {
+                kept -= area;
+            }
+            painter.setClipRegion(kept);
+        }
         painter.setPen(colors.foreground);
         chunks.draw(painter, QPointF(left, y + text_top_), text_colors, from_x, to_x);
+        for (const QRect& area : recolored) {
+            painter.setClipRect(area);
+            chunks.draw_in(painter, QPointF(left, y + text_top_), selection_foreground, from_x,
+                           to_x);
+        }
+        painter.restore();
         if (render_whitespace_ != core::RenderWhitespace::none) {
             std::vector<core::ColumnRange> selected;
             if (render_whitespace_ == core::RenderWhitespace::selection) {

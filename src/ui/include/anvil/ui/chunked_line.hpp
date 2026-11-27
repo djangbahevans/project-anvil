@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+class QColor;
 class QPainter;
 class QPointF;
 
@@ -65,6 +66,11 @@ public:
     // The `selections` are in columns of the line.
     void draw(QPainter& painter, const QPointF& origin,
               const QList<QTextLayout::FormatRange>& selections, qreal from, qreal to);
+    // Draws the same text all in `color`, with its font styles and without backgrounds. A range of
+    // `draw` that colors text cuts it off at the height of the text; this does not, and the caller
+    // clips the painter to where the color belongs.
+    void draw_in(QPainter& painter, const QPointF& origin, const QColor& color, qreal from,
+                 qreal to);
     // Takes the widths of the chunks that end at or before `column` from `earlier`, a layout of a
     // version of the line with the same text before it, so that the text does not move.
     void keep_widths(const ChunkedLine& earlier, std::size_t column);

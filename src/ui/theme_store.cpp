@@ -141,6 +141,20 @@ std::optional<core::Rgba> slider_default(std::string_view key, const core::Color
     return light ? core::Rgba{0x00, 0x00, 0x00, 0x99} : core::Rgba{0xbf, 0xbf, 0xbf, 0x66};
 }
 
+// The registry's colors of high contrast that stand in front of those of the default themes,
+// which are made for other backgrounds.
+std::optional<core::Rgba> high_contrast_default(std::string_view key, core::ThemeKind kind) {
+    if (key == "editor.selectionBackground") {
+        if (kind == core::ThemeKind::high_contrast_dark) {
+            return core::Rgba{0xf3, 0xf5, 0x18, 0xff};
+        }
+        if (kind == core::ThemeKind::high_contrast_light) {
+            return core::Rgba{0x0f, 0x4a, 0x85, 0xff};
+        }
+    }
+    return std::nullopt;
+}
+
 // Defaults of VS Code's registry for keys that the default themes do not set either, by kind of
 // theme.
 std::optional<core::Rgba> registry_default(std::string_view key, const core::ColorTheme& theme,
@@ -151,6 +165,14 @@ std::optional<core::Rgba> registry_default(std::string_view key, const core::Col
     // VS Code outlines the activity bar with the contrast border where a theme gives it no border.
     if (key == "contrastBorder" || key == "activityBar.border") {
         return contrast_border(theme, kind);
+    }
+    if (key == "editor.selectionForeground") {
+        if (kind == core::ThemeKind::high_contrast_dark) {
+            return core::Rgba{0x00, 0x00, 0x00, 0xff};
+        }
+        if (kind == core::ThemeKind::high_contrast_light) {
+            return core::Rgba{0xff, 0xff, 0xff, 0xff};
+        }
     }
     if (key == "editorGroup.border") {
         if (kind == core::ThemeKind::dark) {
@@ -199,9 +221,10 @@ std::optional<core::Rgba> registry_default(std::string_view key, const core::Col
 
 // Where a theme does not set a key, VS Code's color registry has a default for the kind of theme,
 // which the editor does not have. The default theme of the same kind stands in for it: Dark 2026
-// for dark themes and Light 2026 for light ones, high contrast included. A key that VS Code gives
-// no default (`WorkbenchColorKey::optional`) stays unset unless the theme sets it, and a few keys
-// that the default themes leave out have the registry's own default.
+// for dark themes and Light 2026 for light ones, high contrast included, except for the few high
+// contrast colors of the registry that the editor has. A key that VS Code gives no default
+// (`WorkbenchColorKey::optional`) stays unset unless the theme sets it, and a few keys that the
+// default themes leave out have the registry's own default.
 WorkbenchColors::Colors ThemeStore::compose(const Entry& entry, const core::ColorTheme& theme) {
     const bool light =
         entry.kind == core::ThemeKind::light || entry.kind == core::ThemeKind::high_contrast_light;
@@ -224,6 +247,9 @@ WorkbenchColors::Colors ThemeStore::compose(const Entry& entry, const core::Colo
     WorkbenchColors::Colors table;
     for (const WorkbenchColorKey& key : WorkbenchColors::known_keys()) {
         auto color = own_color(theme, key);
+        if (!color) {
+            color = high_contrast_default(key.key, entry.kind);
+        }
         if (!color && base_theme && !key.optional) {
             color = own_color(*base_theme, key);
         }
