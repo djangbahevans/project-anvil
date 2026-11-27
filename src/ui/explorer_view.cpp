@@ -35,10 +35,10 @@ namespace {
 constexpr int row_height = 22;
 constexpr int indent = 8;
 constexpr int twistie_size = 16;
-// From the start of a row's item to its label. A level starts one indent to the left of the item,
-// and has a column of 16 px for the twistie of a folder or the icon of a file, and 6 px, as in
-// VS Code.
-constexpr int label_padding = 14;
+// From the start of a row's item to its label: a column of 16 px for the twistie of a folder or
+// the icon of a file, and 6 px. The tree puts an item one indent after the start of its level, so
+// the column of the first level is one indent from the edge, as in VS Code.
+constexpr int label_padding = 22;
 constexpr int label_right_padding = 4;
 constexpr int header_padding = 20;
 constexpr int header_right_padding = 8;
@@ -273,6 +273,9 @@ protected:
         end_drag();
         const QPoint position = event->position().toPoint();
         const QModelIndex index = indexAt(position);
+        if (press_on_twistie(event)) {
+            return;
+        }
         // Left of the label of a folder is the twistie, which a press opens and closes; the icon
         // there of a file is part of its row.
         if (event->button() == Qt::LeftButton && index.isValid() &&
@@ -285,6 +288,14 @@ protected:
                                                                 : QModelIndexList{index};
         }
         QTreeView::mousePressEvent(event);
+    }
+
+    // The second press of a double click is a press on the twistie like the first, not the
+    // double click that opens or closes the row.
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        if (!press_on_twistie(event)) {
+            QTreeView::mouseDoubleClickEvent(event);
+        }
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override {
@@ -374,8 +385,8 @@ protected:
         font.setPixelSize(scaled_by(zoom_, twistie_size));
         painter->setFont(font);
         painter->setPen(delegate->text_color(index));
-        const QRect twistie(rect.right() + 1 - scaled_by(zoom_, indent), rect.top(),
-                            scaled_by(zoom_, twistie_size), rect.height());
+        const QRect twistie(rect.right() + 1, rect.top(), scaled_by(zoom_, twistie_size),
+                            rect.height());
         painter->drawText(twistie, Qt::AlignCenter, QString(QChar(*glyph)));
         painter->restore();
     }
@@ -383,7 +394,25 @@ protected:
 private:
     static constexpr int hover_expand_ms = 500;
 
-    // In the column that the twistie of a folder has, at the end of the branches.
+    // Opens or closes the folder whose twistie the left button was pressed on. The tree does that
+    // itself for a press before the item of the row, which covers the indent left of the twistie.
+    bool press_on_twistie(QMouseEvent* event) {
+        const QPoint position = event->position().toPoint();
+        const QModelIndex index = indexAt(position);
+        if (event->button() != Qt::LeftButton || !index.isValid() ||
+            !index.data(ExplorerModel::IsDirectoryRole).toBool() || !model()->hasChildren(index)) {
+            return false;
+        }
+        const int left = visualRect(index).left();
+        if (position.x() < left || position.x() >= left + scaled_by(zoom_, twistie_size)) {
+            return false;
+        }
+        setExpanded(index, !isExpanded(index));
+        event->accept();
+        return true;
+    }
+
+    // In the column that the twistie of a folder has, where the item of the row starts.
     void draw_file_icon(QPainter* painter, const QRect& branches, const QModelIndex& index) const {
         const std::optional<SetiGlyph> glyph = file_icon(index);
         const QString family = seti_font_family();
@@ -397,7 +426,7 @@ private:
         painter->setFont(icon_font);
         painter->setPen(QColor::fromRgba(glyph->color));
         const int width = scaled_by(zoom_, twistie_size);
-        const int left = branches.right() + 1 - scaled_by(zoom_, indent);
+        const int left = branches.right() + 1;
         // Wider than the column, so that a glyph that fills its square is not cut.
         painter->drawText(QRect(left - width / 2, branches.top(), 2 * width, branches.height()),
                           Qt::AlignCenter, QString(QChar(glyph->code)));
