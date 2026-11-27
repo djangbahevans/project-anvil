@@ -12938,3 +12938,511 @@ TEST_F(UntitledTitleTest, ADoubleClickOnTheEmptyStripOpensAnUntitledDocumentAsTh
     EXPECT_EQ(window_->editor_layout().focused(), first);
     EXPECT_EQ(window_->editor_area()->group(first)->tabs()->count(), 5);
 }
+
+namespace {
+
+class FilesOnDiskTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        settings_file_ = write("settings.json", "{}");
+    }
+
+    std::filesystem::path open(const std::string& name, std::string_view bytes) {
+        const auto path = write(name, bytes);
+        EXPECT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+        return path;
+    }
+    // As a program does that writes the file it finds, where `write` renames another over it.
+    static void write_in_place(const std::filesystem::path& path, std::string_view bytes) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << bytes;
+    }
+    static std::string on_disk(const std::filesystem::path& path) {
+        return platform::read_file(path).value_or("<unreadable>");
+    }
+    bool shows(const std::string& text) {
+        return wait_until([&] { return current_text() == text; });
+    }
+    // Longer than the window waits after the first event of a file.
+    static void settle() {
+        QTest::qWait(300);
+    }
+    ui::TabStrip::Tab current_tab() const {
+        return window_->tab_strip()->tab(window_->tab_strip()->current_index());
+    }
+    bool dirty() const {
+        return window_->current_document()->is_dirty();
+    }
+
+    // Clicks the button with this title in each question about a changed file, and counts them.
+    void answer_conflicts(const QString& title) {
+        auto* timer = new QTimer(window_.get());
+        timer->setInterval(5);
+        QObject::connect(timer, &QTimer::timeout, timer, [this, title] {
+            auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (!box || !box->isVisible()) {
+                return;
+            }
+            questions_.push_back(box->text());
+            for (QAbstractButton* button : box->buttons()) {
+                if (button->text().remove('&') == title) {
+                    button->click();
+                    return;
+                }
+            }
+            ADD_FAILURE() << "no button " << title.toStdString();
+            box->reject();
+        });
+        timer->start();
+    }
+
+    std::vector<QString> questions_;
+};
+
+TEST_F(FilesOnDiskTest, ADocumentWithoutUnsavedChangesTakesWhatAnotherProgramWrites) {
+    create_window();
+    const auto path = open("a.txt", "first");
+    write_in_place(path, "written in place");
+    EXPECT_TRUE(shows("written in place"));
+    EXPECT_FALSE(dirty());
+    EXPECT_FALSE(window_->isWindowModified());
+    EXPECT_FALSE(current_tab().dirty);
+
+    ASSERT_TRUE(platform::write_file(path, "renamed over it").has_value());
+    EXPECT_TRUE(shows("renamed over it"));
+    // The file that is watched now is the one that was renamed there.
+    write_in_place(path, "and written in place again");
+    EXPECT_TRUE(shows("and written in place again"));
+    ASSERT_TRUE(platform::write_file(path, "renamed over it again").has_value());
+    EXPECT_TRUE(shows("renamed over it again"));
+}
+
+TEST_F(FilesOnDiskTest, TheFileOfEveryOpenTabIsFollowed) {
+    create_window();
+    const auto first = open("a.txt", "a");
+    std::filesystem::create_directories(scratch_ / "below");
+    const auto second = open("below/b.txt", "b");
+    write_in_place(first, "a changed");
+    write_in_place(second, "b changed");
+    EXPECT_TRUE(shows("b changed"));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(first.string())));
+    EXPECT_EQ(current_text(), "a changed");
+}
+
+TEST_F(FilesOnDiskTest, TheCaretAndTheScrollPositionStayAtTheirLineAndColumn) {
+    create_window();
+    window_->resize(800, 500);
+    std::string before;
+    std::string after;
+    for (int line = 1; line <= 200; ++line) {
+        before += "line " + std::to_string(line) + "\n";
+        after += "LINE number " + std::to_string(line) + "\n";
+    }
+    const auto path = open("a.txt", before);
+    const core::Text& text = window_->current_document()->text();
+    const std::size_t caret = text.offset_at({.line = 120, .column = 3});
+    window_->view()->select_range({caret, caret});
+    QApplication::processEvents();
+    const int scrolled = window_->view()->verticalScrollBar()->value();
+    ASSERT_GT(scrolled, 0);
+    ASSERT_EQ(label_text("Ln "), "Ln 121, Col 4");
+
+    write_in_place(path, after);
+    ASSERT_TRUE(shows(after));
+    EXPECT_EQ(label_text("Ln "), "Ln 121, Col 4");
+    EXPECT_EQ(window_->view()->verticalScrollBar()->value(), scrolled);
+}
+
+TEST_F(FilesOnDiskTest, UndoTakesBackWhatWasReloadedInOneStep) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    type("X");
+    ASSERT_TRUE(window_->save());
+    write_in_place(path, "from outside");
+    ASSERT_TRUE(shows("from outside"));
+    window_->view()->undo();
+    EXPECT_EQ(current_text(), "Xold");
+    EXPECT_TRUE(dirty());
+}
+
+TEST_F(FilesOnDiskTest, ADocumentWithUnsavedChangesKeepsItsText) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    type("X");
+    write_in_place(path, "from outside");
+    settle();
+    EXPECT_EQ(current_text(), "Xold");
+    EXPECT_TRUE(dirty());
+}
+
+TEST_F(FilesOnDiskTest, TheLineEndingOfTheFileIsTakenWithItsContent) {
+    create_window();
+    const auto path = open("a.txt", "a\nb");
+    write_in_place(path, "a\r\nb");
+    settle();
+    EXPECT_EQ(window_->current_document()->line_ending(), core::LineEnding::crlf);
+    EXPECT_FALSE(dirty());
+    type("X");
+    ASSERT_TRUE(window_->save());
+    EXPECT_EQ(on_disk(path), "Xa\r\nb");
+}
+
+TEST_F(FilesOnDiskTest, SavingAsksBeforeItWritesOverAChangedFileAndCancelKeepsBoth) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    type("X");
+    write_in_place(path, "from outside");
+    // At once, before any event of the file has been looked at.
+    answer_conflicts("Cancel");
+    EXPECT_FALSE(window_->save());
+    ASSERT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(questions_[0], "Failed to save 'a.txt': the content of the file is newer.");
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_EQ(current_text(), "Xold");
+    EXPECT_TRUE(dirty());
+}
+
+TEST_F(FilesOnDiskTest, OverwriteWritesTheDocumentAndTheNextSaveDoesNotAsk) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    type("X");
+    write_in_place(path, "from outside");
+    answer_conflicts("Overwrite");
+    EXPECT_TRUE(window_->save());
+    EXPECT_EQ(on_disk(path), "Xold");
+    EXPECT_FALSE(dirty());
+    type("Y");
+    EXPECT_TRUE(window_->save());
+    EXPECT_EQ(on_disk(path), "XYold");
+    EXPECT_EQ(questions_.size(), 1u);
+}
+
+TEST_F(FilesOnDiskTest, RevertInTheQuestionTakesTheFile) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    type("X");
+    write_in_place(path, "from outside");
+    answer_conflicts("Revert");
+    EXPECT_TRUE(window_->save());
+    EXPECT_EQ(current_text(), "from outside");
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_FALSE(dirty());
+}
+
+TEST_F(FilesOnDiskTest, SavingADocumentWithoutUnsavedChangesTakesTheFileInsteadOfWritingOverIt) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    write_in_place(path, "from outside");
+    answer_conflicts("Cancel");
+    EXPECT_TRUE(window_->save());
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_EQ(current_text(), "from outside");
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(FilesOnDiskTest, TheEditorsOwnSavesAreNoChange) {
+    create_window();
+    const auto path = open("a.txt", "a\r\nb\nc\r\n");
+    answer_conflicts("Cancel");
+    for (const char* typed : {"1", "2", "3"}) {
+        type(typed);
+        ASSERT_TRUE(window_->save());
+        settle();
+        EXPECT_FALSE(dirty());
+        type("x");
+        ASSERT_TRUE(window_->save());
+    }
+    EXPECT_TRUE(questions_.empty());
+    EXPECT_EQ(on_disk(path), window_->current_document()->to_file_bytes());
+}
+
+TEST_F(FilesOnDiskTest, SaveAllAsksForTheChangedFileAndCancelStopsTheRest) {
+    create_window();
+    const auto first = open("a.txt", "a");
+    type("1");
+    const auto second = open("b.txt", "b");
+    type("2");
+    write_in_place(first, "outside");
+    answer_conflicts("Cancel");
+    EXPECT_FALSE(window_->save_all());
+    EXPECT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(on_disk(first), "outside");
+    EXPECT_EQ(on_disk(second), "b");
+}
+
+TEST_F(FilesOnDiskTest, SaveAsAsksForTheDocumentsOwnFileAndNotForAnotherThatItReplaces) {
+    create_window();
+    const auto path = open("a.txt", "old");
+    const auto other = write("other.txt", "replaced on purpose");
+    type("X");
+    write_in_place(path, "from outside");
+    answer_conflicts("Cancel");
+    EXPECT_FALSE(window_->save_as(QString::fromStdString(path.string())));
+    EXPECT_EQ(questions_.size(), 1u);
+    EXPECT_EQ(on_disk(path), "from outside");
+
+    EXPECT_TRUE(window_->save_as(QString::fromStdString(other.string())));
+    EXPECT_EQ(on_disk(other), "Xold");
+    EXPECT_EQ(questions_.size(), 1u);
+    // The document is followed under its new name.
+    write_in_place(other, "changed under the new name");
+    EXPECT_TRUE(shows("changed under the new name"));
+}
+
+TEST_F(FilesOnDiskTest, ClosingAndSavingKeepsTheTabWhenTheQuestionIsCancelled) {
+    create_window(false, true);
+    const auto path = open("a.txt", "old");
+    type("X");
+    write_in_place(path, "from outside");
+    std::vector<QString> texts;
+    auto* timer = new QTimer(window_.get());
+    timer->setInterval(5);
+    QObject::connect(timer, &QTimer::timeout, timer, [&] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (!box || !box->isVisible()) {
+            return;
+        }
+        texts.push_back(box->text());
+        box->button(texts.size() == 1 ? QMessageBox::Save : QMessageBox::Cancel)->click();
+    });
+    timer->start();
+    const std::size_t open_before = window_->open_document_count();
+    EXPECT_FALSE(
+        window_->close_document(static_cast<std::size_t>(window_->tab_strip()->current_index())));
+    timer->stop();
+    ASSERT_EQ(texts.size(), 2u);
+    EXPECT_TRUE(texts[1].contains("the content of the file is newer"));
+    EXPECT_EQ(window_->open_document_count(), open_before);
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_TRUE(dirty());
+}
+
+TEST_F(FilesOnDiskTest, AutoSaveAfterADelayNeverWritesOverAChangedFile) {
+    settings_file_ =
+        write("settings.json", R"j({"files.autoSave": "afterDelay", "files.autoSaveDelay": 400})j");
+    create_window();
+    const auto path = open("a.txt", "old");
+    answer_conflicts("Overwrite");
+    type("X");
+    write_in_place(path, "from outside");
+    ASSERT_TRUE(
+        wait_until([&] { return window_->status_bar().message().startsWith("Auto save failed"); }));
+    EXPECT_EQ(window_->status_bar().message(), "Auto save failed: a.txt has changed on disk");
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_TRUE(dirty());
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(FilesOnDiskTest, SavingCanBeSetToOverwriteWithoutAsking) {
+    settings_file_ =
+        write("settings.json", R"j({"files.saveConflictResolution": "overwriteFileOnDisk"})j");
+    create_window();
+    const auto path = open("a.txt", "old");
+    answer_conflicts("Cancel");
+    type("X");
+    write_in_place(path, "from outside");
+    EXPECT_TRUE(window_->save());
+    EXPECT_EQ(on_disk(path), "Xold");
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(FilesOnDiskTest, TheTabOfADeletedFileIsMarkedUntilTheFileIsThereAgain) {
+    create_window();
+    const auto path = open("a.txt", "kept");
+    EXPECT_FALSE(current_tab().deleted);
+    std::filesystem::remove(path);
+    ASSERT_TRUE(wait_until([&] { return current_tab().deleted; }));
+    EXPECT_TRUE(current_tab().tooltip.endsWith(" • Deleted"));
+    EXPECT_EQ(current_text(), "kept");
+    EXPECT_FALSE(dirty());
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        QApplication::processEvents();
+        window_->grab().toImage().save(QString::fromUtf8(directory) + "/deleted_tab.png");
+    }
+
+    ASSERT_TRUE(platform::write_file(path, "back").has_value());
+    ASSERT_TRUE(shows("back"));
+    EXPECT_FALSE(current_tab().deleted);
+    EXPECT_FALSE(current_tab().tooltip.contains("Deleted"));
+}
+
+TEST_F(FilesOnDiskTest, SavingWritesADeletedFileAgainAndTakesTheMarkOff) {
+    create_window();
+    const auto path = open("a.txt", "kept");
+    answer_conflicts("Cancel");
+    type("X");
+    std::filesystem::remove(path);
+    ASSERT_TRUE(wait_until([&] { return current_tab().deleted; }));
+    ASSERT_TRUE(window_->save());
+    EXPECT_FALSE(current_tab().deleted);
+    EXPECT_EQ(on_disk(path), "Xkept");
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(FilesOnDiskTest, AFileIsFollowedWhenItsDirectoryGoesAndComesBack) {
+    create_window();
+    const auto directory = scratch_ / "deep" / "er";
+    std::filesystem::create_directories(directory);
+    const auto path = open("deep/er/a.txt", "first");
+    std::filesystem::remove_all(scratch_ / "deep");
+    ASSERT_TRUE(wait_until([&] { return current_tab().deleted; }));
+    std::filesystem::create_directories(scratch_ / "deep");
+    settle();
+    std::filesystem::create_directories(directory);
+    settle();
+    ASSERT_TRUE(platform::write_file(path, "again").has_value());
+    EXPECT_TRUE(shows("again"));
+    EXPECT_FALSE(current_tab().deleted);
+}
+
+TEST_F(FilesOnDiskTest, ARenamedDocumentIsFollowedUnderItsNewName) {
+    create_window();
+    const auto path = open("a.txt", "first");
+    std::filesystem::remove(path);
+    ASSERT_TRUE(wait_until([&] { return current_tab().deleted; }));
+    const auto renamed = scratch_ / "b.txt";
+    ASSERT_TRUE(window_->save_as(QString::fromStdString(renamed.string())));
+    EXPECT_FALSE(current_tab().deleted);
+    ASSERT_TRUE(platform::write_file(path, "the old name").has_value());
+    settle();
+    EXPECT_EQ(current_text(), "first");
+    write_in_place(renamed, "second");
+    EXPECT_TRUE(shows("second"));
+}
+
+TEST_F(FilesOnDiskTest, AutoSaveOnFocusChangeNeverWritesOverAChangedFile) {
+    settings_file_ = write("settings.json", R"j({"files.autoSave": "onFocusChange"})j");
+    create_window();
+    window_->activateWindow();
+    ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+    const auto path = open("a.txt", "old");
+    window_->view()->setFocus();
+    answer_conflicts("Overwrite");
+    type("X");
+    write_in_place(path, "from outside");
+    auto* elsewhere = new QLineEdit(window_.get());
+    elsewhere->show();
+    elsewhere->setFocus();
+    QApplication::processEvents();
+    EXPECT_EQ(window_->status_bar().message(), "Auto save failed: a.txt has changed on disk");
+    EXPECT_EQ(on_disk(path), "from outside");
+    EXPECT_TRUE(questions_.empty());
+}
+
+TEST_F(FilesOnDiskTest, RestoredAndReopenedEditorsAreFollowed) {
+    state_directory_ = scratch_ / "state";
+    create_window();
+    const auto path = open("a.txt", "first");
+    window_->close();
+    window_.reset();
+
+    create_window();
+    ASSERT_EQ(current_text(), "first");
+    write_in_place(path, "restored and changed");
+    ASSERT_TRUE(shows("restored and changed"));
+
+    ASSERT_TRUE(
+        window_->close_document(static_cast<std::size_t>(window_->tab_strip()->current_index())));
+    window_->commands().execute("workbench.action.reopenClosedEditor");
+    ASSERT_EQ(current_text(), "restored and changed");
+    write_in_place(path, "reopened and changed");
+    EXPECT_TRUE(shows("reopened and changed"));
+}
+
+TEST_F(FilesOnDiskTest, ClosingTheTabOfADeletedFileForgetsThatItWasGone) {
+    create_window();
+    const auto path = open("a.txt", "first");
+    std::filesystem::remove(path);
+    ASSERT_TRUE(wait_until([&] { return current_tab().deleted; }));
+    ASSERT_TRUE(
+        window_->close_document(static_cast<std::size_t>(window_->tab_strip()->current_index())));
+    open("a.txt", "made again");
+    EXPECT_FALSE(current_tab().deleted);
+}
+
+TEST_F(FilesOnDiskTest, ExtensionsLearnOfAChangeOfTheLineEndingAlone) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = open("a.txt", "one\ntwo");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["eol"] == "lf"; }));
+    run("anvil.docs.saves");
+    write_in_place(path, "one\r\ntwo");
+    EXPECT_TRUE(wait_until([&] { return run("anvil.docs.active")["eol"] == "crlf"; }));
+    EXPECT_EQ(run("anvil.docs.active")["isDirty"], false);
+}
+
+TEST_F(FilesOnDiskTest, ExtensionsLearnThatARevertToTheSameTextLeavesTheDocumentClean) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    open("a.txt", "same");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["text"] == "same"; }));
+    type("X");
+    QKeyEvent backspace(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+    QApplication::sendEvent(window_->view(), &backspace);
+    ASSERT_EQ(current_text(), "same");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["isDirty"] == true; }));
+    ASSERT_TRUE(window_->revert());
+    EXPECT_TRUE(wait_until([&] { return run("anvil.docs.active")["isDirty"] == false; }));
+}
+
+TEST_F(FilesOnDiskTest, ExtensionsSeeTheReloadAsAChangeOfACleanDocument) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = open("a.txt", "one\ntwo");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["text"] == "one\ntwo"; }));
+    run("anvil.docs.changes");
+    run("anvil.docs.saves");
+
+    write_in_place(path, "one\r\nTWO");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["text"] == "one\r\nTWO"; }));
+    const json active = run("anvil.docs.active");
+    EXPECT_EQ(active["isDirty"], false);
+    EXPECT_EQ(active["eol"], "crlf");
+    const json changes = run("anvil.docs.changes");
+    ASSERT_EQ(changes.size(), 1u) << changes.dump();
+    EXPECT_EQ(changes[0]["isDirty"], false);
+    EXPECT_EQ(changes[0]["contentChanges"][0]["text"], "one\r\nTWO");
+    EXPECT_EQ(run("anvil.docs.saves"), json::array());
+}
+
+TEST_F(FilesOnDiskTest, AnExtensionCannotSaveOverAChangedFileUnlessTheSettingSaysSo) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = open("a.txt", "old");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.active")["text"] == "old"; }));
+    type("X");
+    write_in_place(path, "from outside");
+    EXPECT_EQ(run("anvil.docs.save"), false);
+    EXPECT_EQ(on_disk(path), "from outside");
+
+    write("settings.json", R"j({"files.saveConflictResolution": "overwriteFileOnDisk"})j");
+    ASSERT_TRUE(wait_until([&] { return run("anvil.docs.save") == true; }));
+    EXPECT_EQ(on_disk(path), "Xold");
+}
+
+TEST_F(FilesOnDiskTest, ADocumentThatAnExtensionOpenedIsCurrentWhenTheWindowShowsIt) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto path = write("later.txt", "first");
+    ASSERT_EQ(run("anvil.docs.open", json::array({path.string()}))["text"], "first");
+    write_in_place(path, "changed while only the extension had it");
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(path.string())));
+    EXPECT_EQ(current_text(), "changed while only the extension had it");
+    EXPECT_FALSE(dirty());
+    ASSERT_TRUE(wait_until([&] {
+        return run("anvil.docs.active")["text"] == "changed while only the extension had it";
+    }));
+}
+
+} // namespace

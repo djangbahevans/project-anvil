@@ -43,8 +43,11 @@ TEST_F(FileTest, WritingReplacesExistingContentsAndLeavesNoTemporaryFile) {
 }
 
 TEST_F(FileTest, ReadingFailsForMissingFilesAndDirectories) {
-    EXPECT_EQ(read_file(directory_ / "missing").error().code, anvil::ErrorCode::io_error);
-    EXPECT_FALSE(read_file(directory_).has_value());
+    EXPECT_EQ(read_file(directory_ / "missing").error().code, anvil::ErrorCode::not_found);
+    EXPECT_EQ(read_file(directory_).error().code, anvil::ErrorCode::io_error);
+    ASSERT_TRUE(write_file(directory_ / "file", "x").has_value());
+    EXPECT_EQ(read_file(directory_ / "file" / "below").error().code,
+              anvil::ErrorCode::not_a_directory);
 }
 
 TEST_F(FileTest, WritingFailsWhenTheDirectoryIsMissing) {

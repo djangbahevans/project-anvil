@@ -113,6 +113,8 @@ public:
 
     // The tab size and indentation style that extensions see on every editor.
     void set_editor_options(exthost::DocumentsService::EditorOptions options);
+    // See DocumentsService::set_overwrite_changed_files.
+    void set_overwrite_changed_files(bool overwrite);
 
     void text_changed(const core::Uri& uri, const core::DocumentChange& change);
     void selections_changed(const core::Uri& uri);

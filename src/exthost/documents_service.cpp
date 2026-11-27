@@ -407,6 +407,19 @@ std::optional<HandlerResult> DocumentsService::try_create_document(const json& a
     return OkJson{uri_to_json(uri).dump()};
 }
 
+std::expected<bool, Error> file_changed_under(const core::Document& document,
+                                              const std::filesystem::path& path) {
+    const auto bytes = platform::read_file(path);
+    if (bytes) {
+        return document.file_conflicts_with(*bytes);
+    }
+    const ErrorCode code = bytes.error().code;
+    if (code == ErrorCode::not_found || code == ErrorCode::not_a_directory) {
+        return false;
+    }
+    return std::unexpected(bytes.error());
+}
+
 std::optional<HandlerResult> DocumentsService::try_save_document(const json& args) {
     auto uri = uri_from_json(args.at(0));
     if (!uri) {
@@ -417,14 +430,25 @@ std::optional<HandlerResult> DocumentsService::try_save_document(const json& arg
     if (entry == nullptr || !path) {
         return boolean(false);
     }
+    if (!overwrite_changed_files_) {
+        const auto changed = file_changed_under(*entry->document, *path);
+        if (!changed) {
+            return failed(changed.error());
+        }
+        if (*changed) {
+            return boolean(false);
+        }
+    }
+    const std::string bytes = entry->document->to_file_bytes();
     auto written = path->has_parent_path() ? platform::make_directory(path->parent_path())
                                            : std::expected<void, Error>();
     if (written) {
-        written = platform::write_file(*path, entry->document->to_file_bytes());
+        written = platform::write_file(*path, bytes);
     }
     if (!written) {
         return failed(written.error());
     }
+    entry->document->record_file_content(bytes);
     entry->document->mark_saved();
     document_saved(entry->uri);
     if (observer_.saved) {

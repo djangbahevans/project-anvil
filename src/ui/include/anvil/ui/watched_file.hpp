@@ -8,6 +8,10 @@
 
 namespace anvil::ui {
 
+// The deepest directory that exists on the way to `file`, which is where a file that does not
+// exist yet first shows up.
+std::filesystem::path nearest_existing_directory(const std::filesystem::path& file);
+
 // Tells when a file that may not exist yet is created, changed, replaced or deleted. It watches the
 // file and the nearest existing directory above it, and watches both again after every change, so
 // that an editor which saves by writing a temporary file and renaming it over the original is

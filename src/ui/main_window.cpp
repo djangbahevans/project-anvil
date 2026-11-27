@@ -5,6 +5,7 @@
 #include "anvil/core/untitled_title.hpp"
 #include "anvil/core/zoom.hpp"
 #include "anvil/exthost/contributions.hpp"
+#include "anvil/exthost/documents_service.hpp"
 #include "anvil/exthost/workspace_file_edit.hpp"
 #include "anvil/platform/editor_defaults.hpp"
 #include "anvil/platform/file.hpp"
@@ -367,6 +368,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
             });
     connect(area_, &EditorArea::text_changed, this, &MainWindow::on_text_changed);
     connect(area_, &EditorArea::new_file_requested, this, &MainWindow::add_untitled_tab);
+    connect(&open_files_, &OpenFilesWatcher::changed, this, &MainWindow::files_changed);
     connect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
     connect(area_, &EditorArea::selections_changed, this, &MainWindow::on_selections_changed);
     connect(area_, &EditorArea::tab_dropped_on_strip, this,
@@ -1514,6 +1516,8 @@ void MainWindow::apply_extension_host_options() {
     const core::EditorSettings& editor = settings_->editor();
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
                                 .insert_spaces = editor.insert_spaces});
+    bridge_.set_overwrite_changed_files(editor.save_conflict_resolution ==
+                                        core::SaveConflictResolution::overwrite_file_on_disk);
 }
 
 void MainWindow::register_commands() {
@@ -2206,12 +2210,17 @@ TabStrip::Tab MainWindow::tab_info(const core::Uri& uri) {
     const auto path = uri.file_path();
     const auto found = documents_.find(uri);
     const std::optional<QString> titled = content_title(uri);
+    QString tooltip = QString::fromStdString(path ? path->string() : uri.to_string());
+    if (deleted_files_.contains(uri)) {
+        tooltip += tr(" • Deleted");
+    }
     return {.title = titled.value_or(display_name(uri)),
-            .tooltip = QString::fromStdString(path ? path->string() : uri.to_string()),
+            .tooltip = tooltip,
             .dirty = found != documents_.end() && found->second->is_dirty(),
             .has_path = path.has_value(),
             .icon = tab_icon(uri),
-            .description = titled ? display_name(uri) : QString()};
+            .description = titled ? display_name(uri) : QString(),
+            .deleted = deleted_files_.contains(uri)};
 }
 
 void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group, core::Text text) {
@@ -2242,6 +2251,7 @@ void MainWindow::show_keybindings_reference() {
 void MainWindow::show_document(const core::Uri& uri, std::shared_ptr<core::Document> document) {
     documents_.try_emplace(uri, std::move(document));
     refresh_file_icons();
+    follow_files();
     layout_.show(uri);
     focus_current_editor();
 }
@@ -2301,6 +2311,7 @@ bool MainWindow::reopen(const workbench::ClosedEditor& closed) {
         }
         documents_.try_emplace(uri, document);
         refresh_file_icons();
+        follow_files();
         layout_.open(group, uri);
     } else {
         add_untitled_document(group);
@@ -2391,9 +2402,11 @@ void MainWindow::open_find_bar(bool with_replace) {
 void MainWindow::release_document(const core::Uri& uri) {
     forget_document_language(uri);
     untitled_titles_.erase(uri);
+    deleted_files_.erase(uri);
     wrap_overrides_.erase(documents_.at(uri));
     documents_.erase(uri);
     refresh_file_icons();
+    follow_files();
 }
 
 bool MainWindow::close_document(std::size_t index) {
@@ -2548,6 +2561,13 @@ MainWindow::load_document(const std::filesystem::path& file, const core::Uri& ur
     }
     // An extension may have opened the document already; share it so both see the same text.
     if (auto shared = bridge_.find(uri)) {
+        // Its file is not watched until the window has the document.
+        if (const auto bytes = platform::read_file(file);
+            bytes && !shared->is_dirty() && !shared->matches_file(*bytes)) {
+            if (const auto current = core::Document::from_file_bytes(*bytes)) {
+                static_cast<void>(take_file_content(uri, shared, *current, *bytes));
+            }
+        }
         return shared;
     }
     auto bytes = platform::read_file(file);
@@ -2612,6 +2632,7 @@ bool MainWindow::restore_editors() {
     }
     layout_.restore(readable);
     refresh_file_icons();
+    follow_files();
     return true;
 }
 
@@ -2637,28 +2658,211 @@ void MainWindow::switch_editors() {
     }
 }
 
-bool MainWindow::write_document(const core::Uri& uri, const std::filesystem::path& path,
-                                bool automatic) {
+MainWindow::SaveOutcome MainWindow::write_document(const core::Uri& uri,
+                                                   const std::filesystem::path& path,
+                                                   bool automatic) {
     const std::shared_ptr<core::Document> document = documents_.at(uri);
+    // Another file than the document's own is one that the user chose to replace.
+    if (uri.file_path() == path &&
+        settings_->editor().save_conflict_resolution == core::SaveConflictResolution::ask_user) {
+        const auto changed = exthost::file_changed_under(*document, path);
+        if (!changed) {
+            report_save_failure(QString::fromStdString(changed.error().message), automatic);
+            return SaveOutcome::failed;
+        }
+        if (*changed) {
+            return resolve_save_conflict(uri, document, automatic);
+        }
+    }
+    return write_over(uri, path, automatic);
+}
+
+MainWindow::SaveOutcome MainWindow::write_over(const core::Uri& uri,
+                                               const std::filesystem::path& path, bool automatic) {
+    const std::shared_ptr<core::Document> document = documents_.at(uri);
+    const std::string bytes = document->to_file_bytes();
     // The directory is made again for a document whose file was deleted together with it.
     auto written = path.has_parent_path() ? platform::make_directory(path.parent_path())
                                           : std::expected<void, Error>();
     if (written) {
-        written = platform::write_file(path, document->to_file_bytes());
+        written = platform::write_file(path, bytes);
     }
     if (!written) {
-        const QString reason = QString::fromStdString(written.error().message);
-        if (automatic) {
-            status_bar_->show_message(tr("Auto save failed: %1").arg(reason), 5000);
-        } else {
-            QMessageBox::critical(this, tr("Save"), reason);
-        }
-        return false;
+        report_save_failure(QString::fromStdString(written.error().message), automatic);
+        return SaveOutcome::failed;
     }
+    document->record_file_content(bytes);
     document->mark_saved();
+    deleted_files_.erase(uri);
     bridge_.saved(uri);
     update_document(uri);
-    return true;
+    return SaveOutcome::saved;
+}
+
+void MainWindow::report_save_failure(const QString& reason, bool automatic) {
+    if (automatic) {
+        status_bar_->show_message(tr("Auto save failed: %1").arg(reason), 5000);
+    } else {
+        QMessageBox::critical(this, tr("Save"), reason);
+    }
+}
+
+MainWindow::SaveOutcome
+MainWindow::resolve_save_conflict(const core::Uri& uri,
+                                  const std::shared_ptr<core::Document>& document, bool automatic) {
+    if (automatic) {
+        report_save_failure(tr("%1 has changed on disk").arg(document_name(uri)), true);
+        return SaveOutcome::failed;
+    }
+    // A file that cannot be taken, such as one that is no longer text, is asked about.
+    if (!document->is_dirty() && reload_document(uri, document, *uri.file_path())) {
+        return SaveOutcome::saved;
+    }
+    QMessageBox question(
+        QMessageBox::Warning, tr("Save"),
+        tr("Failed to save '%1': the content of the file is newer.").arg(document_name(uri)),
+        QMessageBox::NoButton, this);
+    question.setInformativeText(
+        tr("Overwrite the file with your changes, or revert to the file and lose them."));
+    const QAbstractButton* overwrite = question.addButton(tr("Overwrite"), QMessageBox::AcceptRole);
+    const QAbstractButton* revert_to_file =
+        question.addButton(tr("Revert"), QMessageBox::DestructiveRole);
+    question.setDefaultButton(question.addButton(QMessageBox::Cancel));
+    question.exec();
+    // The question runs a loop of its own, in which the document can be renamed or closed.
+    const auto current = uri_of(document);
+    const auto path = current ? current->file_path() : std::nullopt;
+    if (path && question.clickedButton() == overwrite) {
+        return write_over(*current, *path, false);
+    }
+    if (path && question.clickedButton() == revert_to_file) {
+        if (const auto reloaded = reload_document(*current, document, *path); !reloaded) {
+            report_save_failure(QString::fromStdString(reloaded.error().message), false);
+            return SaveOutcome::failed;
+        }
+        return SaveOutcome::saved;
+    }
+    return SaveOutcome::cancelled;
+}
+
+void MainWindow::follow_files() {
+    std::set<std::filesystem::path> files;
+    for (const auto& [uri, document] : documents_) {
+        if (const auto path = uri.file_path()) {
+            files.insert(*path);
+        }
+    }
+    open_files_.set_files(files);
+}
+
+void MainWindow::files_changed(const std::vector<std::filesystem::path>& files) {
+    const std::set<std::filesystem::path> changed(files.begin(), files.end());
+    std::vector<core::Uri> open;
+    for (const auto& [uri, document] : documents_) {
+        if (const auto path = uri.file_path(); path && changed.contains(*path)) {
+            open.push_back(uri);
+        }
+    }
+    for (const core::Uri& uri : open) {
+        check_file(uri);
+    }
+}
+
+void MainWindow::check_file(const core::Uri& uri) {
+    const auto found = documents_.find(uri);
+    const auto path = uri.file_path();
+    if (found == documents_.end() || !path) {
+        return;
+    }
+    const auto bytes = platform::read_file(*path);
+    if (!bytes) {
+        const ErrorCode code = bytes.error().code;
+        if (code == ErrorCode::not_found || code == ErrorCode::not_a_directory) {
+            set_file_deleted(uri, true);
+        }
+        return;
+    }
+    set_file_deleted(uri, false);
+    const std::shared_ptr<core::Document> document = found->second;
+    if (document->is_dirty() || document->matches_file(*bytes)) {
+        return;
+    }
+    // A file that is not text any more leaves the document as it is; saving it asks.
+    if (const auto current = core::Document::from_file_bytes(*bytes)) {
+        static_cast<void>(take_file_content(uri, document, *current, *bytes));
+    }
+}
+
+std::expected<void, Error>
+MainWindow::take_file_content(const core::Uri& uri, const std::shared_ptr<core::Document>& document,
+                              const core::Document& file, std::string_view bytes) {
+    const bool was_dirty = document->is_dirty();
+    const bool format_changed =
+        file.line_ending() != document->line_ending() || file.has_bom() != document->has_bom();
+    // Before the edit, so that extensions read its offsets with the new line ending.
+    document->set_file_format(file.line_ending(), file.has_bom());
+    core::DocumentChange change{document->version(), core::ChangeCause::edit, {}};
+    const core::Text& before = document->text();
+    const core::Text& after = file.text();
+    if (before.to_string() != after.to_string()) {
+        const auto moved = [&](std::size_t offset) {
+            return after.offset_at(before.position_at(offset));
+        };
+        std::vector<core::Selection> selections;
+        for (const core::Selection& selection : document->selections().all()) {
+            selections.push_back({moved(selection.anchor), moved(selection.active)});
+        }
+        const core::Edit replacement{0, before.size(), after.to_string()};
+        auto applied = document->apply_edits(
+            std::span(&replacement, 1),
+            {.selections_after = core::SelectionSet::from(std::move(selections),
+                                                          document->selections().primary_index())});
+        if (!applied) {
+            return std::unexpected(std::move(applied.error()));
+        }
+        change = std::move(*applied);
+    }
+    document->record_file_content(bytes);
+    document->mark_saved();
+    if (!change.changes.empty() || format_changed || was_dirty) {
+        bridge_.text_changed(uri, change);
+    }
+    if (!documents_.contains(uri)) {
+        return {};
+    }
+    if (!change.changes.empty()) {
+        for (EditorGroupWidget* group : area_->groups()) {
+            if (group->view()->document() == document) {
+                group->view()->document_changed_elsewhere(change);
+            }
+        }
+        document_edited(uri, change);
+    }
+    update_document(uri);
+    update_status();
+    return {};
+}
+
+std::expected<void, Error>
+MainWindow::reload_document(const core::Uri& uri, const std::shared_ptr<core::Document>& document,
+                            const std::filesystem::path& path) {
+    const auto bytes = platform::read_file(path);
+    if (!bytes) {
+        return std::unexpected(bytes.error());
+    }
+    const auto current = core::Document::from_file_bytes(*bytes);
+    if (!current) {
+        return std::unexpected(current.error());
+    }
+    return take_file_content(uri, document, *current, *bytes);
+}
+
+void MainWindow::set_file_deleted(const core::Uri& uri, bool deleted) {
+    const bool changed =
+        deleted ? deleted_files_.insert(uri).second : deleted_files_.erase(uri) > 0;
+    if (changed) {
+        update_document(uri);
+    }
 }
 
 void MainWindow::schedule_auto_save(const core::Uri& uri) {
@@ -2781,7 +2985,12 @@ bool MainWindow::save_all() {
             continue;
         }
         if (const auto path = uri->file_path()) {
-            all_saved = write_document(*uri, *path) && all_saved;
+            const SaveOutcome outcome = write_document(*uri, *path);
+            // Cancelling a question stops the rest.
+            if (outcome == SaveOutcome::cancelled) {
+                return false;
+            }
+            all_saved = outcome == SaveOutcome::saved && all_saved;
         } else if (!save_document(*uri)) {
             return false;
         }
@@ -2796,56 +3005,17 @@ bool MainWindow::revert() {
         return false;
     }
     const core::Uri uri = *current;
-    const std::shared_ptr<core::Document> document = documents_.at(uri);
-    const auto fail = [this](const std::string& reason) {
-        status_bar_->show_message(tr("Revert failed: %1").arg(QString::fromStdString(reason)),
-                                  5000);
+    if (const auto reloaded = reload_document(uri, documents_.at(uri), *path); !reloaded) {
+        status_bar_->show_message(
+            tr("Revert failed: %1").arg(QString::fromStdString(reloaded.error().message)), 5000);
         return false;
-    };
-    const auto bytes = platform::read_file(*path);
-    if (!bytes) {
-        return fail(bytes.error().message);
     }
-    const auto decoded = core::Document::from_file_bytes(*bytes);
-    if (!decoded) {
-        return fail(decoded.error().message);
-    }
-    const core::Text& before = document->text();
-    const core::Text& after = decoded->text();
-    if (before.to_string() != after.to_string()) {
-        const auto moved = [&](std::size_t offset) {
-            return after.offset_at(before.position_at(offset));
-        };
-        std::vector<core::Selection> selections;
-        for (const core::Selection& selection : document->selections().all()) {
-            selections.push_back({moved(selection.anchor), moved(selection.active)});
-        }
-        const core::Edit replacement{0, before.size(), after.to_string()};
-        const auto change = document->apply_edits(
-            std::span(&replacement, 1),
-            {.selections_after = core::SelectionSet::from(std::move(selections),
-                                                          document->selections().primary_index())});
-        if (!change) {
-            return fail(change.error().message);
-        }
-        bridge_.text_changed(uri, *change);
-        for (EditorGroupWidget* group : area_->groups()) {
-            if (group->view()->document() == document) {
-                group->view()->document_changed_elsewhere(*change);
-            }
-        }
-        document_edited(uri, *change);
-    }
-    document->mark_saved();
-    bridge_.saved(uri);
-    update_document(uri);
-    update_status();
     return true;
 }
 
 bool MainWindow::save_document(const core::Uri& uri) {
     if (const auto path = uri.file_path()) {
-        return write_document(uri, *path);
+        return write_document(uri, *path) == SaveOutcome::saved;
     }
     // The dialog can run while an extension renames or closes the document.
     const auto document = documents_.at(uri);
@@ -2862,7 +3032,7 @@ bool MainWindow::save_document_as(const core::Uri& uri, const QString& path) {
                              tr("%1 is already open in the editor.").arg(path));
         return false;
     }
-    if (!write_document(uri, file)) {
+    if (write_document(uri, file) != SaveOutcome::saved) {
         return false;
     }
     if (!(uri == new_uri)) {
@@ -2895,6 +3065,7 @@ void MainWindow::rekey_document(const core::Uri& uri, const core::Uri& new_uri,
         bridge_.language_changed(new_uri, *chosen);
     }
     refresh_file_icons();
+    follow_files();
     history_.replace_uri(uri, new_uri);
     std::erase(recent_documents_, new_uri);
     std::ranges::replace(recent_documents_, uri, new_uri);

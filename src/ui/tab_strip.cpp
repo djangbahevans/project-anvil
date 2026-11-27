@@ -440,10 +440,19 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
                          Qt::AlignCenter, QString(QChar(glyph.code)));
         painter.restore();
     }
-    painter.setPen(foreground);
+    const QColor title_color =
+        entry.tab.deleted ? colors_.color("list.errorForeground") : foreground;
+    painter.save();
+    if (entry.tab.deleted) {
+        QFont struck = font();
+        struck.setStrikeOut(true);
+        painter.setFont(struck);
+    }
+    painter.setPen(title_color);
     painter.drawText(
         QRect(title_left + icon_column(entry.tab), 0, entry.title_width + 2, strip_height()),
         Qt::AlignVCenter | Qt::AlignLeft, entry.tab.title);
+    painter.restore();
     if (!entry.tab.description.isEmpty()) {
         painter.save();
         painter.setFont(description_font());

@@ -63,6 +63,9 @@ enum class TabsMode { multiple, single, none };
 // workbench.editor.untitled.labelFormat: what an untitled document is named after.
 enum class UntitledLabel { content, name };
 
+// files.saveConflictResolution: what saving does with a file that another program changed.
+enum class SaveConflictResolution { ask_user, overwrite_file_on_disk };
+
 // The editor's settings, read from `Settings` with VS Code's key names, ranges and defaults.
 struct EditorSettings {
     static constexpr int min_font_size = 6;
@@ -139,6 +142,8 @@ struct EditorSettings {
     UntitledLabel untitled_label = UntitledLabel::content;
     // window.restoreWindows
     RestoreWindows restore_windows = RestoreWindows::all;
+    // files.saveConflictResolution
+    SaveConflictResolution save_conflict_resolution = SaveConflictResolution::ask_user;
 
     // workbench.statusBar.visible
     bool status_bar_visible = true;

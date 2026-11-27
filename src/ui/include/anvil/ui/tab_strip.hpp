@@ -60,6 +60,8 @@ public:
         // Drawn before the title, in the color for the kind of the theme.
         std::optional<SetiIcon> icon = std::nullopt;
         QString description = {};
+        // The file is gone: the title is struck through, in the color of an error.
+        bool deleted = false;
 
         bool operator==(const Tab&) const = default;
     };

@@ -166,6 +166,17 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
                                   "\"folders\", \"one\" or \"none\"");
         }
     }
+    if (settings.contains("files.saveConflictResolution")) {
+        const auto resolution = settings.get<std::string>("files.saveConflictResolution");
+        if (resolution == "askUser") {
+            result.save_conflict_resolution = SaveConflictResolution::ask_user;
+        } else if (resolution == "overwriteFileOnDisk") {
+            result.save_conflict_resolution = SaveConflictResolution::overwrite_file_on_disk;
+        } else {
+            problems.emplace_back(
+                "files.saveConflictResolution must be \"askUser\" or \"overwriteFileOnDisk\"");
+        }
+    }
     if (settings.contains("workbench.sideBar.location")) {
         const auto location = settings.get<std::string>("workbench.sideBar.location");
         if (location == "left") {
