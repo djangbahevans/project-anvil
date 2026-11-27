@@ -142,6 +142,8 @@ public:
 signals:
     void tab_selected(anvil::workbench::GroupId group, int index);
     void tab_moved(anvil::workbench::GroupId group, int from, int to);
+    // The strip of the group was double-clicked where it has no tab.
+    void new_file_requested(anvil::workbench::GroupId group);
     void close_requested(anvil::workbench::GroupId group, int index);
     void close_others_requested(anvil::workbench::GroupId group, int index);
     void close_to_the_right_requested(anvil::workbench::GroupId group, int index);

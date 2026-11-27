@@ -397,9 +397,6 @@ private:
     void choose_language(const core::Uri& uri, const std::string& id);
     // The highlighter for the views of the document, null when its language has none.
     std::shared_ptr<const core::Highlighter> highlighter_of(const core::Uri& uri);
-    // Tells the highlighting that the text of the document changed, and gives the views no
-    // highlighter when the document has outgrown the limit for highlighting.
-    void highlight_edit(const core::Uri& uri, const core::DocumentChange& change);
     // Forgets what the window knows of the language of a document that leaves the window, and
     // stops its highlighting.
     void forget_document_language(const core::Uri& uri);
@@ -451,6 +448,17 @@ private:
     workbench::EditorLayout saved_editors() const;
     // Closes every editor without asking and shows those of the workspace that was entered.
     void switch_editors();
+    // What the window calls a document: the title that an untitled one takes from its first line,
+    // else the name of its file or its own.
+    QString document_name(const core::Uri& uri) const;
+    // The title from the content that an untitled document goes by, if it goes by one.
+    std::optional<QString> content_title(const core::Uri& uri) const;
+    // Names an untitled document after its first line again, and tells whether that changed it.
+    bool retitle(const core::Uri& uri, const core::Document& document);
+    // What follows a change of the text of a document that has views.
+    void document_edited(const core::Uri& uri, const core::DocumentChange& change);
+    // Opens an untitled document as the last tab of the group.
+    void add_untitled_tab(workbench::GroupId group);
     // Adds an untitled document and shows it in `group`, or in the focused group.
     void add_untitled_document(std::optional<workbench::GroupId> group = std::nullopt,
                                core::Text text = {});
@@ -651,6 +659,8 @@ private:
     std::map<core::Uri, DocumentLanguage> document_languages_;
     // The languages that the user picked for documents, which the registry does not change.
     std::map<core::Uri, std::string> chosen_languages_;
+    // The titles that untitled documents have from their content.
+    std::map<core::Uri, std::string> untitled_titles_;
     // What the quick pick does with the item that is chosen, while it is not the command palette.
     std::function<void(std::size_t)> pick_action_;
     std::function<void(std::size_t)> pick_highlighted_;

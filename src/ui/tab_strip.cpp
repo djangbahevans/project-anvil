@@ -89,6 +89,19 @@ const TabStrip::Tab& TabStrip::tab(int index) const {
 
 void TabStrip::measure(Entry& entry) const {
     entry.title_width = fontMetrics().horizontalAdvance(entry.tab.title);
+    entry.description_width =
+        entry.tab.description.isEmpty()
+            ? 0
+            : zoomed(description_gap) +
+                  QFontMetrics(description_font()).horizontalAdvance(entry.tab.description);
+}
+
+QFont TabStrip::description_font() const {
+    QFont smaller = font();
+    // 0.9 em, as VS Code writes a description.
+    const int description_pixels = zoomed(font_pixels) * 9 / 10;
+    smaller.setPixelSize(description_pixels);
+    return smaller;
 }
 
 int TabStrip::add_tab(Tab tab) {
@@ -132,13 +145,14 @@ void TabStrip::set_tab(int index, Tab tab) {
         return;
     }
     const bool retitled = entry.tab.title != tab.title;
+    const bool redescribed = entry.tab.description != tab.description;
     const bool iconed = entry.tab.icon.has_value() != tab.icon.has_value();
     const bool visible_in_strip = !single_ || index == current_;
     entry.tab = std::move(tab);
-    if (retitled) {
+    if (retitled || redescribed) {
         measure(entry);
     }
-    if (retitled || iconed) {
+    if (retitled || redescribed || iconed) {
         layout_valid_ = false;
     }
     update();
@@ -263,9 +277,9 @@ void TabStrip::ensure_layout() const {
     int x = 0;
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         Entry& entry = entries_[i];
-        const int natural =
-            std::max(tab_min_width(), zoomed(title_padding) + icon_column(entry.tab) +
-                                          entry.title_width + 1 + zoomed(action_width));
+        const int natural = std::max(
+            tab_min_width(), zoomed(title_padding) + icon_column(entry.tab) + entry.title_width +
+                                 entry.description_width + 1 + zoomed(action_width));
         if (single_) {
             entry.x = 0;
             entry.width = static_cast<int>(i) == current_ ? std::max(natural, width()) : 0;
@@ -430,6 +444,18 @@ void TabStrip::paint_tab(QPainter& painter, int index, int x) const {
     painter.drawText(
         QRect(title_left + icon_column(entry.tab), 0, entry.title_width + 2, strip_height()),
         Qt::AlignVCenter | Qt::AlignLeft, entry.tab.title);
+    if (!entry.tab.description.isEmpty()) {
+        painter.save();
+        painter.setFont(description_font());
+        QColor dimmed = foreground;
+        dimmed.setAlphaF(dimmed.alphaF() * 0.7F);
+        painter.setPen(dimmed);
+        painter.drawText(
+            QRect(title_left + icon_column(entry.tab) + entry.title_width + zoomed(description_gap),
+                  0, entry.description_width, strip_height()),
+            Qt::AlignVCenter | Qt::AlignLeft, entry.tab.description);
+        painter.restore();
+    }
 
     const bool on_button = hovered && hovered_button_;
     const bool dot = entry.tab.dirty && !on_button;
@@ -593,6 +619,14 @@ void TabStrip::keyPressEvent(QKeyEvent* event) {
         return;
     }
     QWidget::keyPressEvent(event);
+}
+
+void TabStrip::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && tab_at(event->position().toPoint().x()) < 0) {
+        emit new_file_requested();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 void TabStrip::mousePressEvent(QMouseEvent* event) {

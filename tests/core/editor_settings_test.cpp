@@ -157,6 +157,16 @@ TEST(EditorSettings, EditorsAreRestoredUnlessTheSettingTurnsItOff) {
     EXPECT_FALSE(read(R"j({"workbench.editor.restoreEditors": "no"})j").has_value());
 }
 
+TEST(EditorSettings, UntitledDocumentsAreNamedAfterTheirContentUnlessTheSettingSaysName) {
+    using anvil::core::UntitledLabel;
+    EXPECT_EQ(read("{}")->untitled_label, UntitledLabel::content);
+    EXPECT_EQ(read(R"j({"workbench.editor.untitled.labelFormat": "name"})j")->untitled_label,
+              UntitledLabel::name);
+    EXPECT_EQ(read(R"j({"workbench.editor.untitled.labelFormat": "content"})j")->untitled_label,
+              UntitledLabel::content);
+    EXPECT_FALSE(read(R"j({"workbench.editor.untitled.labelFormat": "line"})j").has_value());
+}
+
 TEST(EditorSettings, RestoreWindowsHasTheValuesOfVsCode) {
     using anvil::core::RestoreWindows;
     EXPECT_EQ(read("{}")->restore_windows, RestoreWindows::all);

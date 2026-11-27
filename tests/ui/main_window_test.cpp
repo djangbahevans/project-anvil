@@ -1672,8 +1672,9 @@ TEST_F(MainWindowTest, AFileThatAnExtensionCreatesAndEditsIsADocumentForExtensio
 class TypingCostTest : public MainWindowTest {
 protected:
     // Typing into a window with 500 tabs in four groups costs about as much as with one tab, with
-    // the settings given.
-    void check_typing_cost(const std::string& settings);
+    // the settings given. With `untitled`, it is typing on the first line of an untitled document,
+    // which names the document anew with each key.
+    void check_typing_cost(const std::string& settings, bool untitled = false);
 };
 
 TEST_F(TypingCostTest, TypingCostDoesNotGrowWithTheNumberOfTabs) {
@@ -1688,7 +1689,11 @@ TEST_F(TypingCostTest, TypingCostDoesNotGrowWithTheNumberOfTabsWithTheTabBarHidd
     check_typing_cost(R"j({"workbench.editor.showTabs": "none"})j");
 }
 
-void TypingCostTest::check_typing_cost(const std::string& settings) {
+TEST_F(TypingCostTest, TypingTheTitleOfAnUntitledDocumentDoesNotGrowWithTheNumberOfTabs) {
+    check_typing_cost("{}", true);
+}
+
+void TypingCostTest::check_typing_cost(const std::string& settings, bool untitled) {
     settings_file_ = write("settings.json", settings);
     create_window();
     constexpr int keystrokes = 200;
@@ -1698,7 +1703,11 @@ void TypingCostTest::check_typing_cost(const std::string& settings) {
         for (int round = 0; round < 5; ++round) {
             const auto start = clock::now();
             for (int i = 0; i < keystrokes; ++i) {
-                type("x");
+                if (untitled && i % 2 == 1) {
+                    QTest::keyClick(window_->view(), Qt::Key_Backspace);
+                } else {
+                    type("x");
+                }
             }
             best = std::min(best, clock::now() - start);
         }
@@ -1723,6 +1732,9 @@ void TypingCostTest::check_typing_cost(const std::string& settings) {
         EXPECT_GE(group->tabs()->count(), 100);
     }
     ASSERT_EQ(tabs, 500);
+    if (untitled) {
+        ASSERT_TRUE(window_->commands().execute("workbench.action.files.newUntitledFile"));
+    }
     const auto many_tabs = time_typing();
 
     // Typing into the last tab costs about as much as typing into the only one. Laying out or
@@ -12785,4 +12797,144 @@ TEST_F(RestoreEditorsTest, AStartThatReopensTheLastFolderHasItsEditors) {
     create_window();
     ASSERT_TRUE(window_->workspace().has_value());
     EXPECT_EQ(groups(), (Groups{{"a.txt*"}}));
+}
+
+namespace {
+
+class UntitledTitleTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        settings_file_ = write("settings.json", "{}");
+    }
+    // The title and the description of a tab of the focused group, as "title|description".
+    std::string tab(int index) {
+        const ui::TabStrip::Tab info = window_->tab_strip()->tab(index);
+        return (info.title + "|" + info.description).toStdString();
+    }
+    std::string current_tab() {
+        return tab(window_->tab_strip()->current_index());
+    }
+    void double_click_strip(ui::TabStrip* strip) {
+        const QPoint empty(strip->tab_rect(strip->count() - 1).right() + 40, 10);
+        ASSERT_TRUE(strip->rect().contains(empty));
+        QTest::mouseDClick(strip, Qt::LeftButton, Qt::NoModifier, empty);
+        QApplication::processEvents();
+    }
+};
+
+} // namespace
+
+TEST_F(UntitledTitleTest, TheTabAndTheWindowFollowTheFirstLine) {
+    create_window();
+    EXPECT_EQ(current_tab(), "Untitled-1|");
+    type("  Shopping");
+    EXPECT_EQ(current_tab(), "Shopping|Untitled-1");
+    EXPECT_EQ(window_->windowTitle(), "Shopping — Anvil[*]");
+    type("   list");
+    EXPECT_EQ(current_tab(), "Shopping list|Untitled-1");
+    QTest::keyClick(window_->view(), Qt::Key_Return);
+    type("milk");
+    EXPECT_EQ(current_tab(), "Shopping list|Untitled-1");
+    window_->resize(900, 360);
+    window_->show();
+    if (const char* directory = std::getenv("ANVIL_SCREENSHOT_DIR")) {
+        QTest::qWait(100);
+        window_->grab().save(QString::fromUtf8(directory) + "/untitled_title.png");
+    }
+    // Undone to nothing, the document has its own name again.
+    while (window_->current_document()->text().size() > 0) {
+        window_->commands().execute("undo");
+    }
+    EXPECT_EQ(current_tab(), "Untitled-1|");
+    EXPECT_EQ(window_->windowTitle(), "Untitled-1 — Anvil[*]");
+}
+
+TEST_F(UntitledTitleTest, EveryGroupThatShowsTheDocumentHasItsTitle) {
+    create_window();
+    window_->resize(900, 600);
+    window_->show();
+    QApplication::processEvents();
+    const core::Uri uri = window_->current_uri();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    window_->editor_layout().open(window_->editor_layout().focused(), uri);
+    type("shared");
+    for (auto* group : window_->editor_area()->groups()) {
+        EXPECT_EQ(group->tabs()->tab(0).title, "shared") << static_cast<unsigned>(group->id());
+    }
+}
+
+TEST_F(UntitledTitleTest, TheSettingNameKeepsTheNameAlsoWhenItChanges) {
+    create_window();
+    type("notes");
+    ASSERT_EQ(current_tab(), "notes|Untitled-1");
+    write("settings.json", R"j({"workbench.editor.untitled.labelFormat": "name"})j");
+    EXPECT_TRUE(wait_until([&] { return current_tab() == "Untitled-1|"; }));
+    EXPECT_EQ(window_->windowTitle(), "Untitled-1 — Anvil[*]");
+    type("s");
+    EXPECT_EQ(current_tab(), "Untitled-1|");
+    write("settings.json", "{}");
+    EXPECT_TRUE(wait_until([&] { return current_tab() == "notess|Untitled-1"; }));
+}
+
+TEST_F(UntitledTitleTest, TheQuestionAboutUnsavedChangesAndGoToFileUseTheTitle) {
+    create_window(false, true);
+    type("draft");
+    ASSERT_TRUE(window_->commands().execute("workbench.action.quickOpen"));
+    std::vector<std::pair<QString, QString>> offered;
+    for (const std::size_t item : window_->command_palette()->shown_items()) {
+        const ui::QuickPickItem& row = window_->command_palette()->items()[item];
+        offered.emplace_back(row.label, row.description);
+    }
+    EXPECT_EQ(offered, (std::vector<std::pair<QString, QString>>{{"draft", "Untitled-1"}}));
+    QTest::keyClick(window_->command_palette()->filter_field(), Qt::Key_Escape);
+
+    QString question;
+    answer_next_prompt(QMessageBox::Cancel, [&] {
+        question = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())->text();
+    });
+    EXPECT_FALSE(window_->close_document(0));
+    EXPECT_EQ(question, "Save changes to draft?");
+}
+
+TEST_F(UntitledTitleTest, ADocumentThatStartsWithTextAndOneThatIsReopenedHaveTitles) {
+    create_window();
+    ASSERT_TRUE(window_->commands().execute("workbench.action.keybindingsReference"));
+    EXPECT_FALSE(window_->tab_strip()->tab(1).description.isEmpty()) << current_tab();
+    type("A heading\n");
+    window_->view()->select_range({0, 0});
+    type("My ");
+    const std::string titled = current_tab();
+    ASSERT_EQ(titled.substr(0, 3), "My ") << titled;
+    answer_next_prompt(QMessageBox::Discard);
+    ASSERT_TRUE(window_->close_document(1));
+    ASSERT_TRUE(window_->commands().execute("workbench.action.reopenClosedEditor"));
+    EXPECT_EQ(current_tab().substr(0, current_tab().find('|')), titled.substr(0, titled.find('|')));
+}
+
+TEST_F(UntitledTitleTest, ADoubleClickOnTheEmptyStripOpensAnUntitledDocumentAsTheLastTab) {
+    create_window();
+    // Wide enough that the strips of two groups have room beside their tabs.
+    window_->resize(1800, 600);
+    window_->show();
+    window_->activateWindow();
+    QApplication::processEvents();
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", "a").string())));
+    ASSERT_TRUE(window_->open_file(QString::fromStdString(write("b.txt", "b").string())));
+    // The tab in the middle is the active one.
+    window_->tab_strip()->set_current_index(1);
+    window_->editor_layout().activate(window_->editor_layout().focused(), 1);
+    double_click_strip(window_->tab_strip());
+    ASSERT_EQ(window_->tab_strip()->count(), 4);
+    EXPECT_EQ(window_->tab_strip()->current_index(), 3);
+    EXPECT_EQ(window_->tab_strip()->tab(3).title, "Untitled-2");
+    EXPECT_EQ(QApplication::focusWidget(), window_->view());
+
+    // In the group whose strip it was, which then has the focus.
+    const auto first = window_->editor_layout().focused();
+    window_->commands().execute("workbench.action.splitEditorRight");
+    ASSERT_NE(window_->editor_layout().focused(), first);
+    double_click_strip(window_->editor_area()->group(first)->tabs());
+    EXPECT_EQ(window_->editor_layout().focused(), first);
+    EXPECT_EQ(window_->editor_area()->group(first)->tabs()->count(), 5);
 }

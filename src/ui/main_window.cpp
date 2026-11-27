@@ -2,6 +2,7 @@
 
 #include "anvil/core/editor_settings.hpp"
 #include "anvil/core/go_to_line.hpp"
+#include "anvil/core/untitled_title.hpp"
 #include "anvil/core/zoom.hpp"
 #include "anvil/exthost/contributions.hpp"
 #include "anvil/exthost/workspace_file_edit.hpp"
@@ -365,6 +366,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                 }
             });
     connect(area_, &EditorArea::text_changed, this, &MainWindow::on_text_changed);
+    connect(area_, &EditorArea::new_file_requested, this, &MainWindow::add_untitled_tab);
     connect(qApp, &QApplication::focusChanged, this, &MainWindow::on_focus_changed);
     connect(area_, &EditorArea::selections_changed, this, &MainWindow::on_selections_changed);
     connect(area_, &EditorArea::tab_dropped_on_strip, this,
@@ -407,7 +409,7 @@ MainWindow::MainWindow(Options options, QWidget* parent)
                     group->view()->document_changed_elsewhere(change);
                 }
             }
-            highlight_edit(uri, change);
+            document_edited(uri, change);
             update_document(uri);
             const core::Uri* current = current_uri_ptr();
             if (current && *current == uri) {
@@ -905,6 +907,10 @@ void MainWindow::apply_settings() {
     apply_search_settings();
     apply_explorer_settings();
     apply_extension_host_options();
+    // The label format says whether untitled documents go by their titles.
+    for (const auto& [uri, title] : untitled_titles_) {
+        update_document(uri);
+    }
 }
 
 void MainWindow::rebuild_languages() {
@@ -1013,8 +1019,11 @@ QuickOpenEntry MainWindow::quick_open_entry(const core::Uri& uri) {
     QuickOpenEntry entry{.uri = uri};
     const auto path = uri.file_path();
     if (!path) {
-        entry.label = tab_info(uri).title.toStdString();
+        entry.label = document_name(uri).toStdString();
         entry.path = entry.label;
+        if (content_title(uri)) {
+            entry.description = display_name(uri).toStdString();
+        }
         return entry;
     }
     entry.label = path->filename().string();
@@ -1226,10 +1235,54 @@ std::shared_ptr<const core::Highlighter> MainWindow::highlighter_of(const core::
     return highlighting_->highlighter_for(uri, found->second, language_of_document(uri).id);
 }
 
-void MainWindow::highlight_edit(const core::Uri& uri, const core::DocumentChange& change) {
+void MainWindow::document_edited(const core::Uri& uri, const core::DocumentChange& change) {
     const auto found = documents_.find(uri);
-    if (found != documents_.end() && highlighting_->edited(uri, *found->second, change)) {
+    if (found == documents_.end()) {
+        return;
+    }
+    if (highlighting_->edited(uri, *found->second, change)) {
         area_->refresh_highlighters();
+    }
+    // Only when the title changes, which a keystroke past the first line never does.
+    if (retitle(uri, *found->second)) {
+        update_document(uri);
+    }
+}
+
+bool MainWindow::retitle(const core::Uri& uri, const core::Document& document) {
+    if (uri.scheme != "untitled") {
+        return false;
+    }
+    const std::optional<std::string> title = core::untitled_title(document.text());
+    const auto known = untitled_titles_.find(uri);
+    if (!title) {
+        return untitled_titles_.erase(uri) > 0;
+    }
+    if (known != untitled_titles_.end() && known->second == *title) {
+        return false;
+    }
+    untitled_titles_.insert_or_assign(uri, *title);
+    return true;
+}
+
+std::optional<QString> MainWindow::content_title(const core::Uri& uri) const {
+    const auto found = untitled_titles_.find(uri);
+    if (found == untitled_titles_.end() ||
+        settings_->editor().untitled_label != core::UntitledLabel::content) {
+        return std::nullopt;
+    }
+    return QString::fromStdString(found->second);
+}
+
+QString MainWindow::document_name(const core::Uri& uri) const {
+    return content_title(uri).value_or(display_name(uri));
+}
+
+void MainWindow::add_untitled_tab(workbench::GroupId group) {
+    add_untitled_document(group);
+    const workbench::EditorGroup* state = layout_.group(group);
+    if (state && state->active) {
+        layout_.move_tab(group, *state->active, group, state->tabs.size() - 1);
     }
 }
 
@@ -2152,11 +2205,13 @@ SetiIcon MainWindow::tab_icon(const core::Uri& uri) {
 TabStrip::Tab MainWindow::tab_info(const core::Uri& uri) {
     const auto path = uri.file_path();
     const auto found = documents_.find(uri);
-    return {.title = display_name(uri),
+    const std::optional<QString> titled = content_title(uri);
+    return {.title = titled.value_or(display_name(uri)),
             .tooltip = QString::fromStdString(path ? path->string() : uri.to_string()),
             .dirty = found != documents_.end() && found->second->is_dirty(),
             .has_path = path.has_value(),
-            .icon = tab_icon(uri)};
+            .icon = tab_icon(uri),
+            .description = titled ? display_name(uri) : QString()};
 }
 
 void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group, core::Text text) {
@@ -2164,6 +2219,7 @@ void MainWindow::add_untitled_document(std::optional<workbench::GroupId> group, 
     auto document =
         std::make_shared<core::Document>(std::move(text), settings_->editor().line_ending);
     bridge_.add_document(uri, document);
+    static_cast<void>(retitle(uri, *document));
     if (!group) {
         show_document(uri, std::move(document));
         return;
@@ -2254,7 +2310,7 @@ bool MainWindow::reopen(const workbench::ClosedEditor& closed) {
             const std::vector<core::Edit> insert = {{0, 0, closed.text->to_string()}};
             if (auto change = documents_.at(uri)->apply_edits(insert)) {
                 bridge_.text_changed(uri, *change);
-                highlight_edit(uri, *change);
+                document_edited(uri, *change);
             }
         }
     }
@@ -2334,6 +2390,7 @@ void MainWindow::open_find_bar(bool with_replace) {
 
 void MainWindow::release_document(const core::Uri& uri) {
     forget_document_language(uri);
+    untitled_titles_.erase(uri);
     wrap_overrides_.erase(documents_.at(uri));
     documents_.erase(uri);
     refresh_file_icons();
@@ -2450,7 +2507,7 @@ bool MainWindow::confirm_close(const std::shared_ptr<core::Document>& document) 
     }
     show_document(*uri, document);
     const auto answer = QMessageBox::question(
-        this, tr("Unsaved changes"), tr("Save changes to %1?").arg(display_name(*uri)),
+        this, tr("Unsaved changes"), tr("Save changes to %1?").arg(document_name(*uri)),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
     if (answer == QMessageBox::Discard) {
         return true;
@@ -2777,7 +2834,7 @@ bool MainWindow::revert() {
                 group->view()->document_changed_elsewhere(*change);
             }
         }
-        highlight_edit(uri, *change);
+        document_edited(uri, *change);
     }
     document->mark_saved();
     bridge_.saved(uri);
@@ -3166,7 +3223,7 @@ void MainWindow::on_text_changed(workbench::GroupId group, const core::DocumentC
             other->view()->document_changed_elsewhere(change);
         }
     }
-    highlight_edit(state->tabs[*state->active], change);
+    document_edited(state->tabs[*state->active], change);
     record_selection(group, workbench::SelectionReason::edit);
     if (auto_save_ == core::AutoSave::after_delay) {
         schedule_auto_save(state->tabs[*state->active]);
@@ -3306,8 +3363,9 @@ void MainWindow::update_title() {
         setWindowModified(false);
         return;
     }
-    setWindowTitle(folder.isEmpty() ? tr("%1 — Anvil[*]").arg(display_name(*current))
-                                    : tr("%1 — %2 — Anvil[*]").arg(display_name(*current), folder));
+    const QString name = document_name(*current);
+    setWindowTitle(folder.isEmpty() ? tr("%1 — Anvil[*]").arg(name)
+                                    : tr("%1 — %2 — Anvil[*]").arg(name, folder));
     setWindowModified(documents_.at(*current)->is_dirty());
 }
 

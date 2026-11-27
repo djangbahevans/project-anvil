@@ -44,6 +44,7 @@ add_executable(anvil_core_tests
   core/utf_test.cpp
   core/when_expression_test.cpp
   core/whitespace_test.cpp
+  core/untitled_title_test.cpp
   core/visible_column_test.cpp
   core/wheel_scroll_test.cpp
   core/smooth_scroll_test.cpp

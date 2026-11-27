@@ -10,6 +10,9 @@ namespace anvil::core {
 // column, or two when its first code point is a full-width character or an emoji. `line` is valid
 // UTF-8 without line breaks and `tab_size` is at least 1.
 
+// The end of the grapheme cluster that starts at byte `offset`, which is before the end of `line`.
+std::size_t cluster_end(std::string_view line, std::size_t offset);
+
 // The visible column of byte `offset`, a character boundary of `line`.
 std::size_t visible_column(std::string_view line, std::size_t offset, std::size_t tab_size);
 

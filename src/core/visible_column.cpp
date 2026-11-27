@@ -64,7 +64,16 @@ std::size_t code_point_length(char lead) {
     return byte < 0x80 ? 1 : byte >= 0xF0 ? 4 : byte >= 0xE0 ? 3 : 2;
 }
 
-// The end of the grapheme cluster that starts at `offset`, which is before the end of `line`.
+std::size_t column_after(std::string_view line, std::size_t offset, std::size_t column,
+                         std::size_t tab_size) {
+    if (line[offset] == '\t') {
+        return column + tab_size - column % tab_size;
+    }
+    return column + (is_two_columns(decode_code_point(line, offset)) ? 2 : 1);
+}
+
+} // namespace
+
 std::size_t cluster_end(std::string_view line, std::size_t offset) {
     std::size_t end = offset + code_point_length(line[offset]);
     GraphemeClass previous = grapheme_class(decode_code_point(line, offset));
@@ -78,16 +87,6 @@ std::size_t cluster_end(std::string_view line, std::size_t offset) {
     }
     return std::min(end, line.size());
 }
-
-std::size_t column_after(std::string_view line, std::size_t offset, std::size_t column,
-                         std::size_t tab_size) {
-    if (line[offset] == '\t') {
-        return column + tab_size - column % tab_size;
-    }
-    return column + (is_two_columns(decode_code_point(line, offset)) ? 2 : 1);
-}
-
-} // namespace
 
 std::size_t visible_column(std::string_view line, std::size_t offset, std::size_t tab_size) {
     std::size_t column = 0;
