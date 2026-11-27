@@ -18,6 +18,7 @@
 #include "anvil/ui/highlighting.hpp"
 #include "anvil/ui/keybinding_service.hpp"
 #include "anvil/ui/keybindings_store.hpp"
+#include "anvil/ui/open_files_watcher.hpp"
 #include "anvil/ui/panel.hpp"
 #include "anvil/ui/quick_open.hpp"
 #include "anvil/ui/quick_pick.hpp"
@@ -565,10 +566,38 @@ private:
     void document_deleted(const core::Uri& uri);
     // Drops a document that no tab shows any more, with what the window keeps about it.
     void release_document(const core::Uri& uri);
+    // What became of a save: `cancelled` when the user answered the question about a changed file
+    // by keeping both as they are.
+    enum class SaveOutcome { saved, failed, cancelled };
     // Writes the document to `path`. A failure is shown in a dialog, or in the status bar when
-    // `automatic`, which is for a save that nobody asked for.
-    bool write_document(const core::Uri& uri, const std::filesystem::path& path,
-                        bool automatic = false);
+    // `automatic`, which is for a save that nobody asked for. A file of the document that another
+    // program changed is not written over: see resolve_save_conflict.
+    SaveOutcome write_document(const core::Uri& uri, const std::filesystem::path& path,
+                               bool automatic = false);
+    SaveOutcome write_over(const core::Uri& uri, const std::filesystem::path& path, bool automatic);
+    // An automatic save gives up. A document without unsaved changes takes the file's content.
+    // Otherwise the user chooses to overwrite the file, to revert to it or to cancel.
+    SaveOutcome resolve_save_conflict(const core::Uri& uri,
+                                      const std::shared_ptr<core::Document>& document,
+                                      bool automatic);
+    void report_save_failure(const QString& reason, bool automatic);
+    // Watches the files of the open documents, which changes when a document comes or goes.
+    void follow_files();
+    void files_changed(const std::vector<std::filesystem::path>& files);
+    // Marks the document's tabs when its file is gone, and gives a document without unsaved
+    // changes the content of a file that differs.
+    void check_file(const core::Uri& uri);
+    // Gives the document the content and format of `file`, decoded from `bytes`, as one change
+    // that undo can take back, and marks it saved. Extensions and the views follow.
+    std::expected<void, Error> take_file_content(const core::Uri& uri,
+                                                 const std::shared_ptr<core::Document>& document,
+                                                 const core::Document& file,
+                                                 std::string_view bytes);
+    // take_file_content for what the file at `path` holds now.
+    std::expected<void, Error> reload_document(const core::Uri& uri,
+                                               const std::shared_ptr<core::Document>& document,
+                                               const std::filesystem::path& path);
+    void set_file_deleted(const core::Uri& uri, bool deleted);
     // Restarts the countdown of the auto save after a delay for the document shown by `uri`.
     void schedule_auto_save(const core::Uri& uri);
     // Saves the document when it has a file and unsaved changes; an untitled one is never saved.
@@ -675,6 +704,9 @@ private:
     std::map<std::shared_ptr<core::Document>, bool> wrap_overrides_;
     // The document the extension host was last told is the active editor.
     std::optional<core::Uri> shown_uri_;
+    OpenFilesWatcher open_files_{std::chrono::milliseconds(100)};
+    // The open documents whose file is gone.
+    std::set<core::Uri> deleted_files_;
     // The documents that the window has shown, the most recently first.
     std::vector<core::Uri> recent_documents_;
     workbench::NavigationHistory history_;

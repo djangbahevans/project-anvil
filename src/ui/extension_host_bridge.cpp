@@ -170,6 +170,12 @@ void ExtensionHostBridge::set_editor_options(exthost::DocumentsService::EditorOp
     }
 }
 
+void ExtensionHostBridge::set_overwrite_changed_files(bool overwrite) {
+    if (host_) {
+        host_->documents().set_overwrite_changed_files(overwrite);
+    }
+}
+
 void ExtensionHostBridge::text_changed(const core::Uri& uri, const core::DocumentChange& change) {
     if (host_) {
         host_->documents().document_changed(uri, change);

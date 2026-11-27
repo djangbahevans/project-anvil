@@ -9,8 +9,8 @@ QString to_qstring(const std::filesystem::path& path) {
     return QString::fromStdString(path.string());
 }
 
-// The deepest directory that exists on the way to `file`, which is where a file that does not
-// exist yet will first show up.
+} // namespace
+
 std::filesystem::path nearest_existing_directory(const std::filesystem::path& file) {
     std::error_code ignored;
     std::filesystem::path directory = file.parent_path();
@@ -23,8 +23,6 @@ std::filesystem::path nearest_existing_directory(const std::filesystem::path& fi
     }
     return directory;
 }
-
-} // namespace
 
 WatchedFile::WatchedFile(std::filesystem::path file, std::chrono::milliseconds debounce,
                          QObject* parent)

@@ -4,6 +4,7 @@
 #include <QAccessible>
 #include <QAction>
 #include <QApplication>
+#include <QFontMetrics>
 #include <QHelpEvent>
 #include <QImage>
 #include <QMenu>
@@ -422,6 +423,33 @@ TEST_F(TabStripTest, TheSelectedTabHasItsOwnBackgroundAndALineOnTop) {
     EXPECT_EQ(pixel(image, active.topLeft() + QPoint(5, 1)), QColor("#202020"));
     EXPECT_EQ(pixel(image, inactive.topLeft() + QPoint(5, 10)), QColor("#303030"));
     EXPECT_EQ(pixel(image, inactive.topLeft() + QPoint(5, 0)), QColor("#303030"));
+}
+
+TEST_F(TabStripTest, TheTitleOfADeletedTabIsStruckThroughInTheColorOfAnError) {
+    colors_.set_colors({{"tab.activeBackground", QColor("#202020")},
+                        {"tab.activeForeground", QColor("#ffffff")},
+                        {"list.errorForeground", QColor("#ff0000")}});
+    add("MMMMMMMM");
+    const auto red_in_row = [&](const QImage& image) {
+        std::vector<int> widest;
+        for (int y = 0; y < image.height(); ++y) {
+            int count = 0;
+            for (int x = 0; x < strip_->tab_rect(0).right(); ++x) {
+                // Exactly: the edges of text have colored fringes of their own.
+                count += pixel(image, QPoint(x, y)) == QColor("#ff0000") ? 1 : 0;
+            }
+            widest.push_back(count);
+        }
+        return *std::ranges::max_element(widest);
+    };
+    EXPECT_EQ(red_in_row(grab()), 0);
+
+    TabStrip::Tab info = strip_->tab(0);
+    info.deleted = true;
+    strip_->set_tab(0, info);
+    // A line through the title fills one row of pixels from end to end.
+    const int title = QFontMetrics(strip_->font()).horizontalAdvance("MMMMMMMM");
+    EXPECT_GE(red_in_row(grab()), title - 2);
 }
 
 TEST_F(TabStripTest, TabsAreSeparatedByABorderAndTheStripHasItsOwnBackground) {

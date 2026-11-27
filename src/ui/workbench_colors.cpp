@@ -149,6 +149,10 @@ constexpr WorkbenchColorKey table[] = {
     from_palette("list.dropBackground",
                  "Background of the rows of the folder that a drag would drop into.",
                  QPalette::Midlight),
+    fixed_color("list.errorForeground",
+                "Text of an item of a list or tree that has an error, such as the title of the tab "
+                "of a file that was deleted.",
+                qRgb(0xf4, 0x87, 0x71)),
     from_palette("list.highlightForeground",
                  "The characters of a list item that match what was typed.", QPalette::Link),
     from_palette("list.hoverBackground", "Background of the row of a list or tree under the mouse.",

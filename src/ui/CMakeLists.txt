@@ -56,6 +56,7 @@ add_library(anvil_ui STATIC
   include/anvil/ui/view_container_registry.hpp
   include/anvil/ui/view_container_stack.hpp
   include/anvil/ui/watched_file.hpp
+  include/anvil/ui/open_files_watcher.hpp
   include/anvil/ui/window_frame.hpp
   include/anvil/ui/window_state_keeper.hpp
   include/anvil/ui/workbench.hpp
@@ -81,6 +82,7 @@ add_library(anvil_ui STATIC
   view_container_registry.cpp
   view_container_stack.cpp
   watched_file.cpp
+  open_files_watcher.cpp
   window_frame.cpp
   window_state_keeper.cpp
   workbench.cpp
