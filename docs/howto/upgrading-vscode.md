@@ -49,6 +49,7 @@ node scripts/generate-languages.mjs          # the languages, then the cases tha
 node scripts/generate-language-cases.mjs
 node scripts/generate-language-comments.mjs   # the comment tokens of the languages
 node scripts/generate-comment-cases.mjs       # what the comment commands do, recorded from VS Code
+node scripts/generate-edit-cases.mjs          # indenting and deleting by word, recorded from VS Code
 node scripts/generate-grapheme-table.mjs     # the grapheme classes, then the cases that use them
 node scripts/generate-cursor-column-cases.mjs # visible columns and how Up and Down keep them
 node scripts/generate-line-break-cases.mjs    # where wrapped lines break

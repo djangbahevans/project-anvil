@@ -124,8 +124,8 @@ TEST_F(EditorViewTest, EnterBackspaceDeleteAndTab) {
     key(Qt::Key_Home);
     key(Qt::Key_Delete);
     EXPECT_EQ(text(), "    ab\n  ");
-    key(Qt::Key_Tab); // the caret is at the start of the line, so a whole tab stop is inserted
-    EXPECT_EQ(text(), "    ab\n      ");
+    key(Qt::Key_Tab); // a blank line short of a level of indentation becomes one level
+    EXPECT_EQ(text(), "    ab\n    ");
 }
 
 TEST_F(EditorViewTest, ArrowKeysMoveAndShiftArrowsSelect) {

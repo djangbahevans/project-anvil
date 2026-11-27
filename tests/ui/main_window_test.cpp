@@ -2869,6 +2869,12 @@ TEST_F(MainWindowTest, TheEditorsOperationsAreCommandsWithVsCodeIds) {
                                           "cursorEnd",
                                           "deleteLeft",
                                           "deleteRight",
+                                          "deleteWordLeft",
+                                          "deleteWordRight",
+                                          "tab",
+                                          "outdent",
+                                          "editor.action.indentLines",
+                                          "editor.action.outdentLines",
                                           "editor.action.selectAll",
                                           "editor.action.clipboardCopyAction",
                                           "editor.action.clipboardCutAction",
@@ -13443,6 +13449,69 @@ TEST_F(FilesOnDiskTest, ADocumentThatAnExtensionOpenedIsCurrentWhenTheWindowShow
     ASSERT_TRUE(wait_until([&] {
         return run("anvil.docs.active")["text"] == "changed while only the extension had it";
     }));
+}
+
+} // namespace
+
+namespace {
+
+// The keys as a window gets them, with the bindings in front of the view and the side bar able to
+// take the focus.
+class EditKeysTest : public MainWindowTest {
+protected:
+    void open_text(std::string_view text) {
+        create_window();
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write("a.txt", text).string())));
+        window_->commands().execute("workbench.view.explorer");
+        window_->activateWindow();
+        ASSERT_TRUE(QTest::qWaitForWindowActive(window_.get()));
+        window_->view()->setFocus();
+        QApplication::processEvents();
+    }
+    void press(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+        QTest::keyClick(window_->view(), key, modifiers);
+        QApplication::processEvents();
+        EXPECT_EQ(QApplication::focusWidget(), window_->view());
+    }
+};
+
+TEST_F(EditKeysTest, TabAndShiftTabIndentAndOutdentTheSelectedLines) {
+    open_text("one\ntwo\nthree");
+    press(Qt::Key_A, Qt::ControlModifier);
+    press(Qt::Key_Tab);
+    EXPECT_EQ(current_text(), "    one\n    two\n    three");
+    press(Qt::Key_Tab);
+    EXPECT_EQ(current_text(), "        one\n        two\n        three");
+    press(Qt::Key_Backtab, Qt::ShiftModifier);
+    EXPECT_EQ(current_text(), "    one\n    two\n    three");
+    // The lines stay selected.
+    press(Qt::Key_BracketLeft, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "one\ntwo\nthree");
+    press(Qt::Key_BracketRight, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "    one\n    two\n    three");
+    window_->view()->undo();
+    EXPECT_EQ(current_text(), "one\ntwo\nthree");
+}
+
+TEST_F(EditKeysTest, TabFollowsTheSettingsOfIndentation) {
+    settings_file_ =
+        write("settings.json", R"j({"editor.insertSpaces": false, "editor.tabSize": 2})j");
+    open_text("one\ntwo");
+    press(Qt::Key_A, Qt::ControlModifier);
+    press(Qt::Key_Tab);
+    EXPECT_EQ(current_text(), "\tone\n\ttwo");
+}
+
+TEST_F(EditKeysTest, CtrlBackspaceAndCtrlDeleteDeleteByWord) {
+    open_text("hello world again");
+    press(Qt::Key_End);
+    press(Qt::Key_Backspace, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), "hello world ");
+    press(Qt::Key_Home);
+    press(Qt::Key_Delete, Qt::ControlModifier);
+    EXPECT_EQ(current_text(), " world ");
+    window_->view()->undo();
+    EXPECT_EQ(current_text(), "hello world ");
 }
 
 } // namespace

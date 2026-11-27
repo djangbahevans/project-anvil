@@ -1547,6 +1547,12 @@ void MainWindow::register_commands() {
     add("cursorEnd", tr("Move Cursor to Line End"), [this] { view()->move(Motion::line_end); });
     add("deleteLeft", tr("Delete Left"), [this] { view()->delete_backward(); });
     add("deleteRight", tr("Delete Right"), [this] { view()->delete_forward(); });
+    add("deleteWordLeft", tr("Delete Word Left"), [this] { view()->delete_word_left(); });
+    add("deleteWordRight", tr("Delete Word Right"), [this] { view()->delete_word_right(); });
+    add("tab", tr("Tab"), [this] { view()->tab(); });
+    add("outdent", tr("Outdent"), [this] { view()->outdent_lines(); });
+    add("editor.action.indentLines", tr("Indent Line"), [this] { view()->indent_lines(); });
+    add("editor.action.outdentLines", tr("Outdent Line"), [this] { view()->outdent_lines(); });
     add("editor.action.selectAll", tr("Select All"), [this] { view()->select_all(); });
     add("editor.action.clipboardCutAction", tr("Cut"), [this] { view()->cut(); });
     add("editor.action.clipboardCopyAction", tr("Copy"), [this] { view()->copy(); });

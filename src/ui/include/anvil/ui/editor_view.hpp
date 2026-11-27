@@ -96,6 +96,12 @@ public:
     // Deletes the selection, or the character before or after each caret.
     void delete_backward();
     void delete_forward();
+    void delete_word_left();
+    void delete_word_right();
+    // The Tab key, Indent Line and Outdent Line, which Shift+Tab does too.
+    void tab();
+    void indent_lines();
+    void outdent_lines();
 
     // What the find bar says about the search, for the occurrence commands.
     struct OccurrenceSource {
@@ -320,7 +326,6 @@ private:
     // Goes where the caret shows, over time with smooth scrolling.
     void reveal(QPoint position);
     void restart_caret_blink();
-    void insert_tab();
 
     struct Colors;
     Colors current_colors() const;
