@@ -407,6 +407,16 @@ TEST_F(ThemeStoreTest, TheShadowOfAScrolledEditorTakesTheRegistrysColorUnlessThe
     }
 }
 
+TEST_F(ThemeStoreTest, AnOptionOfAnInputHasVsCodesHoverBackgroundExceptInHighContrast) {
+    open_shipped();
+    ASSERT_TRUE(store_->select("Dark 2026"));
+    EXPECT_EQ(colors_.color("inputOption.hoverBackground"), QColor(0x5a, 0x5d, 0x5e, 0x50));
+    ASSERT_TRUE(store_->select("Light 2026"));
+    EXPECT_EQ(colors_.color("inputOption.hoverBackground"), QColor(0xb8, 0xb8, 0xb8, 0x50));
+    ASSERT_TRUE(store_->select("Dark High Contrast"));
+    EXPECT_FALSE(colors_.is_themed("inputOption.hoverBackground"));
+}
+
 TEST_F(ThemeStoreTest, TheBorderOfTheActivityBarIsTheThemesOrItsContrastBorder) {
     write("contrast.json", R"j({"colors": {"contrastBorder": "#ff0000"}})j");
     write("both.json",

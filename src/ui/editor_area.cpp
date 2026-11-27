@@ -18,12 +18,13 @@ EditorGroupWidget::EditorGroupWidget(workbench::GroupId id, const WorkbenchColor
     tabs_ = new TabStrip(colors, this);
     view_ = new EditorView(this);
     view_->set_colors(&colors);
+    // Not in the layout: it floats over the editor.
     find_bar_ = new FindBar(view_, this);
+    find_bar_->set_colors(&colors);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(tabs_);
-    layout->addWidget(find_bar_);
     layout->addWidget(view_, 1);
     // Takes the space of the editor while it is hidden, so that the strip stays at the top.
     layout->addStretch(0);
