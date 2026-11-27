@@ -111,7 +111,8 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
           std::pair{"zenMode.hideActivityBar", &EditorSettings::zen_hide_activity_bar},
           std::pair{"explorer.confirmDelete", &EditorSettings::explorer_confirm_delete},
           std::pair{"explorer.confirmDragAndDrop", &EditorSettings::explorer_confirm_drag_and_drop},
-          std::pair{"files.enableTrash", &EditorSettings::enable_trash}}) {
+          std::pair{"files.enableTrash", &EditorSettings::enable_trash},
+          std::pair{"workbench.editor.restoreEditors", &EditorSettings::restore_editors}}) {
         if (settings.contains(key)) {
             if (const auto value = settings.get<bool>(key)) {
                 result.*field = *value;

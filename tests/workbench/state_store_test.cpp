@@ -176,6 +176,15 @@ TEST_F(StateStoreTest, OverwritingWritesAlsoAValueThatTheStoreHasAlready) {
     EXPECT_EQ(read_json(workspace_file()), nlohmann::json({{"here", 1}}));
 }
 
+TEST_F(StateStoreTest, AValueWithAFormOfItsOwnReadsBackAsItIs) {
+    const nlohmann::json value = {{"root", {{"tabs", {1, 2}}}}};
+    StateStore first = store();
+    EXPECT_FALSE(first.value(StateScope::workspace, "layout").has_value());
+    first.set(StateScope::workspace, "layout", value);
+    ASSERT_TRUE(first.flush().has_value());
+    EXPECT_EQ(store().value(StateScope::workspace, "layout"), value);
+}
+
 TEST_F(StateStoreTest, AValueOfAnotherTypeIsNoValue) {
     write_text(global_file(), R"({"text": "7", "number": 7, "real": 7.5, "flag": 1,)"
                               R"( "huge": 18446744073709551615, "null": null})");

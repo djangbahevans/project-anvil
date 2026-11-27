@@ -85,8 +85,11 @@ struct MainWindowOptions {
     // Whether the folder of the window closed last is opened where `workspace` is unset, if
     // `window.restoreWindows` says so.
     bool reopen_folder = false;
-    // Whether files are opened at the start, for which only `preserve` reopens the folder.
+    // Whether files are opened at the start, for which only `preserve` reopens the folder and the
+    // editors.
     bool opens_files = false;
+    // Whether an empty window was asked for: without a folder it restores no editors.
+    bool empty_window = false;
     // The directory with what a window starts with again (ADR 0021): its layout, size and
     // position. Empty keeps them for the life of the window only.
     std::filesystem::path state_directory;
@@ -160,10 +163,11 @@ public:
     // has no tokens.
     std::optional<core::LanguageComments> language_comments(std::string_view language_id) const;
     // Makes the folder the workspace: the extension host restarts with it (ADR 0016), and the
-    // tabs, groups and documents stay as they are. Fails, with a message in the status bar, when
+    // editors are switched for those of the folder (ADR 0022), after asking about unsaved
+    // documents. Fails when the user cancels there, and, with a message in the status bar, when
     // the path is not a folder. Opening the folder that is the workspace already does nothing.
     bool open_folder(const std::filesystem::path& folder);
-    // Leaves the workspace; the extension host restarts without one.
+    // Leaves the workspace as `open_folder` does; the extension host restarts without one.
     void close_folder();
 
     // The editor, the strip of tabs and the find bar of the focused group.
@@ -440,6 +444,13 @@ private:
     void report_truncated_selection(bool truncated);
     // Whether the `enablement` of the extension command allows it to run now.
     bool command_enabled(const std::string& id) const;
+    // Shows the editors saved for the workspace, with their documents read from disk; false when
+    // there is none to show. The window must have no editor.
+    bool restore_editors();
+    // The editor groups with the tabs that a restore can bring back: those of files.
+    workbench::EditorLayout saved_editors() const;
+    // Closes every editor without asking and shows those of the workspace that was entered.
+    void switch_editors();
     // Adds an untitled document and shows it in `group`, or in the focused group.
     void add_untitled_document(std::optional<workbench::GroupId> group = std::nullopt,
                                core::Text text = {});
@@ -503,6 +514,10 @@ private:
     bool reopen(const workbench::ClosedEditor& closed);
     // The document of a file that is open or that an extension has, or one read from the file;
     // empty, with a message, when it cannot be read.
+    // The document of the file, shared with extensions that have it open, or why it cannot be
+    // read.
+    std::expected<std::shared_ptr<core::Document>, QString>
+    load_document(const std::filesystem::path& file, const core::Uri& uri);
     std::shared_ptr<core::Document> file_document(const std::filesystem::path& file,
                                                   const core::Uri& uri);
     void save_as_dialog();

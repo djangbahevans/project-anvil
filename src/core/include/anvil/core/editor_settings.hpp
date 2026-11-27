@@ -130,6 +130,8 @@ struct EditorSettings {
     // the panel
     bool layout_controls = true;
 
+    // workbench.editor.restoreEditors: a workspace gets back the editors it was left with
+    bool restore_editors = true;
     // window.restoreWindows
     RestoreWindows restore_windows = RestoreWindows::all;
 

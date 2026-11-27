@@ -74,6 +74,11 @@ std::optional<std::vector<std::string>> StateStore::strings(StateScope scope,
     return value->get<std::vector<std::string>>();
 }
 
+std::optional<nlohmann::json> StateStore::value(StateScope scope, std::string_view key) const {
+    const nlohmann::json* found = find(scope, key);
+    return found ? std::optional(*found) : std::nullopt;
+}
+
 void StateStore::set(StateScope scope, std::string_view key, nlohmann::json value) {
     File& file = scope == StateScope::global ? global_ : workspace_;
     const auto found = file.values.find(key);

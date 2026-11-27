@@ -151,6 +151,12 @@ TEST(EditorSettings, TheCommandCenterAndTheLayoutControlsAreOnUnlessTheSettingsT
     EXPECT_TRUE(read(R"j({"window.commandCenter": true})j")->command_center);
 }
 
+TEST(EditorSettings, EditorsAreRestoredUnlessTheSettingTurnsItOff) {
+    EXPECT_TRUE(read("{}")->restore_editors);
+    EXPECT_FALSE(read(R"j({"workbench.editor.restoreEditors": false})j")->restore_editors);
+    EXPECT_FALSE(read(R"j({"workbench.editor.restoreEditors": "no"})j").has_value());
+}
+
 TEST(EditorSettings, RestoreWindowsHasTheValuesOfVsCode) {
     using anvil::core::RestoreWindows;
     EXPECT_EQ(read("{}")->restore_windows, RestoreWindows::all);
