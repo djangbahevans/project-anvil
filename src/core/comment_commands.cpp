@@ -1,4 +1,5 @@
 #include "anvil/core/editing.hpp"
+#include "cursor_commands.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -16,113 +17,9 @@
 namespace anvil::core {
 namespace {
 
+using namespace cursor_commands;
+
 using Signed = std::ptrdiff_t;
-
-struct Pos {
-    std::size_t line = 1;
-    std::size_t column = 1;
-
-    friend bool operator==(const Pos&, const Pos&) = default;
-    friend auto operator<=>(const Pos&, const Pos&) = default;
-};
-
-struct Sel {
-    Pos anchor;
-    Pos active;
-
-    Pos start() const {
-        return std::min(anchor, active);
-    }
-    Pos end() const {
-        return std::max(anchor, active);
-    }
-    bool empty() const {
-        return anchor == active;
-    }
-    bool reversed() const {
-        return active < anchor;
-    }
-    // The selection with its end moved, in the direction it had.
-    Sel with_end(Pos end) const {
-        return reversed() ? Sel{end, start()} : Sel{start(), end};
-    }
-};
-
-struct Range {
-    Pos start;
-    Pos end;
-
-    // A range whose end comes first is turned around, as VS Code's is.
-    static Range of(Pos a, Pos b) {
-        return a <= b ? Range{a, b} : Range{b, a};
-    }
-    bool empty() const {
-        return start == end;
-    }
-};
-
-// An edit in lines and columns: the text replaces the range.
-struct Op {
-    Range range;
-    std::string text;
-    // False for an edit that changes nothing but still takes part in deciding which cursors
-    // conflict.
-    bool applies = true;
-};
-
-class Model {
-public:
-    explicit Model(const Text& text) : text_(text) {}
-
-    std::size_t line_count() const {
-        return text_.line_count();
-    }
-    std::string line(std::size_t number) const {
-        const std::size_t begin = text_.line_start(number - 1);
-        return text_.slice(begin, text_.line_end(number - 1) - begin);
-    }
-    std::size_t max_column(std::size_t number) const {
-        return text_.line_end(number - 1) - text_.line_start(number - 1) + 1;
-    }
-    std::size_t line_start_offset(std::size_t number) const {
-        return text_.line_start(number - 1);
-    }
-    std::size_t line_end_offset(std::size_t number) const {
-        return text_.line_end(number - 1);
-    }
-    // Columns past the line are the end of it, and column 0 is column 1, as for VS Code's ranges.
-    std::size_t offset(Pos position) const {
-        const std::size_t line = std::clamp<std::size_t>(position.line, 1, line_count());
-        const std::size_t column = std::clamp<std::size_t>(position.column, 1, max_column(line));
-        return text_.line_start(line - 1) + column - 1;
-    }
-    Pos position(std::size_t offset) const {
-        const std::size_t line = text_.position_at(offset).line;
-        return {line + 1, offset - text_.line_start(line) + 1};
-    }
-    Sel selection(const Selection& selection) const {
-        return {position(selection.anchor), position(selection.active)};
-    }
-
-private:
-    const Text& text_;
-};
-
-// What a command decided for one selection.
-struct Command {
-    Sel selection{};
-    std::vector<Op> ops{};
-
-    // The selection is followed through the edits of all the commands, as a tracked range.
-    bool inverse = false;
-    Sel tracked{};
-    bool move_end_down = false;
-    std::size_t delta_column = 0;
-    // Block comment commands put the selection where the edits left their tokens instead. For one
-    // edit, the caret goes before the end token that it inserted, and its space.
-    std::size_t used_end_token_size = 0;
-    bool used_end_token = false;
-};
 
 // --- strings, as JavaScript searches them ---
 
@@ -182,25 +79,25 @@ bool token_at(const std::string& text, const std::string& token, std::size_t off
 
 // --- block comments ---
 
-std::vector<Op> remove_block_ops(const Range& range, const std::string& start_token,
+std::vector<Op> remove_block_ops(const LineRange& range, const std::string& start_token,
                                  const std::string& end_token) {
     std::vector<Op> ops;
     const auto before = [](Pos position, std::size_t size) {
         return Pos{position.line, position.column > size ? position.column - size : 0};
     };
     if (!range.empty()) {
-        ops.push_back({Range::of(before(range.start, start_token.size()), range.start), ""});
+        ops.push_back({LineRange::of(before(range.start, start_token.size()), range.start), ""});
         ops.push_back(
-            {Range::of(range.end, {range.end.line, range.end.column + end_token.size()}), ""});
+            {LineRange::of(range.end, {range.end.line, range.end.column + end_token.size()}), ""});
     } else {
-        ops.push_back({Range::of(before(range.start, start_token.size()),
-                                 {range.end.line, range.end.column + end_token.size()}),
+        ops.push_back({LineRange::of(before(range.start, start_token.size()),
+                                     {range.end.line, range.end.column + end_token.size()}),
                        ""});
     }
     return ops;
 }
 
-std::vector<Op> add_block_ops(const Range& range, const std::string& start_token,
+std::vector<Op> add_block_ops(const LineRange& range, const std::string& start_token,
                               const std::string& end_token, bool insert_space) {
     std::vector<Op> ops;
     if (!range.empty()) {
@@ -257,10 +154,10 @@ std::optional<std::vector<Op>> attempt_remove_block(const Model& model, const Se
     }
 
     if (start_index != -1 && end_index != -1) {
-        return remove_block_ops(
-            Range::of({start_line, static_cast<std::size_t>(start_index) + start_token.size() + 1},
-                      {end_line, static_cast<std::size_t>(end_index) + 1}),
-            start_token, end_token);
+        return remove_block_ops(LineRange::of({start_line, static_cast<std::size_t>(start_index) +
+                                                               start_token.size() + 1},
+                                              {end_line, static_cast<std::size_t>(end_index) + 1}),
+                                start_token, end_token);
     }
     return std::nullopt;
 }
@@ -310,13 +207,14 @@ Command block_comment(const Model& model, const Sel& selection, const CommentOpt
             end_token = ' ' + end_token;
             end_index -= 1;
         }
-        command.ops = remove_block_ops(
-            Range::of({start.line, static_cast<std::size_t>(start_index) + start_token.size() + 1},
-                      {end.line, static_cast<std::size_t>(end_index) + 1}),
-            start_token, end_token);
+        command.ops =
+            remove_block_ops(LineRange::of({start.line, static_cast<std::size_t>(start_index) +
+                                                            start_token.size() + 1},
+                                           {end.line, static_cast<std::size_t>(end_index) + 1}),
+                             start_token, end_token);
     } else {
         command.ops =
-            add_block_ops(Range::of(start, end), start_token, end_token, options.insert_space);
+            add_block_ops(LineRange::of(start, end), start_token, end_token, options.insert_space);
         if (command.ops.size() == 1) {
             command.used_end_token = true;
             command.used_end_token_size = end_token.size();
@@ -386,14 +284,14 @@ void line_command_as_block(const Model& model, Command& command, const Sel& s,
             const std::string content = model.line(s.start().line);
             const std::size_t first = first_non_blank(content).value_or(content.size());
             ops = add_block_ops(
-                Range::of({s.start().line, first + 1}, {s.start().line, content.size() + 1}),
+                LineRange::of({s.start().line, first + 1}, {s.start().line, content.size() + 1}),
                 start_token, end_token, options.insert_space);
         } else {
             ops = add_block_ops(
                 // Column 0, on a blank line, is kept: it counts in deciding which cursors conflict,
                 // and is the first column when the edit is made.
-                Range::of({s.start().line, first_non_blank_column(model.line(s.start().line))},
-                          {s.end().line, model.max_column(s.end().line)}),
+                LineRange::of({s.start().line, first_non_blank_column(model.line(s.start().line))},
+                              {s.end().line, model.max_column(s.end().line)}),
                 start_token, end_token, options.insert_space);
         }
         if (ops->size() == 1) {
@@ -505,282 +403,6 @@ Command line_comment(const Model& model, const Sel& selection, LineCommentType t
     return command;
 }
 
-// --- applying the commands ---
-
-struct PlacedEdit {
-    Edit edit;
-    std::size_t command = 0;
-    std::size_t op = 0;
-};
-
-class Placement {
-public:
-    explicit Placement(std::vector<PlacedEdit> edits) : edits_(std::move(edits)) {
-        std::ranges::stable_sort(edits_, [](const PlacedEdit& a, const PlacedEdit& b) {
-            return std::pair(a.edit.start, a.edit.end) < std::pair(b.edit.start, b.edit.end);
-        });
-    }
-
-    const std::vector<PlacedEdit>& edits() const {
-        return edits_;
-    }
-
-    // Where a position of the old text is in the new one, as VS Code's text model moves a tracked
-    // range: the edits are made from the last one to the first, and a position that an edit
-    // deletes goes to where the deletion was. At an insertion, the position moves after the
-    // inserted text when `moves`.
-    std::size_t map(std::size_t offset, bool moves) const {
-        std::size_t position = offset;
-        for (auto edit = edits_.rbegin(); edit != edits_.rend(); ++edit) {
-            const Edit& e = edit->edit;
-            if (e.start == e.end) {
-                if (position > e.start || (position == e.start && moves)) {
-                    position += e.text.size();
-                }
-            } else if (position >= e.end) {
-                position = position - (e.end - e.start) + e.text.size();
-            } else if (position > e.start) {
-                position = e.start;
-            }
-        }
-        return position;
-    }
-
-    // Where the text that the edit `index` (in the order of edits()) puts in is in the new text.
-    std::size_t placed_start(std::size_t index) const {
-        Signed delta = 0;
-        for (std::size_t i = 0; i < index; ++i) {
-            const Edit& e = edits_[i].edit;
-            delta += static_cast<Signed>(e.text.size()) - static_cast<Signed>(e.end - e.start);
-        }
-        return static_cast<std::size_t>(static_cast<Signed>(edits_[index].edit.start) + delta);
-    }
-
-private:
-    std::vector<PlacedEdit> edits_;
-};
-
-// The cursors whose edits overlap those of a cursor with a lower number lose, as in VS Code: the
-// edits of a loser are not made and its selection is dropped.
-std::vector<bool> losers_of(const std::vector<Command>& commands) {
-    struct Raw {
-        std::size_t major;
-        Range range;
-    };
-    std::vector<Raw> ops;
-    for (std::size_t c = 0; c < commands.size(); ++c) {
-        for (const Op& op : commands[c].ops) {
-            if (!(op.range.empty() && op.text.empty())) {
-                ops.push_back({c, op.range});
-            }
-        }
-    }
-    // The last range first: by end, then by start, descending.
-    std::ranges::stable_sort(ops, [](const Raw& a, const Raw& b) {
-        return std::pair(b.range.end, b.range.start) < std::pair(a.range.end, a.range.start);
-    });
-    std::vector<bool> loser(commands.size(), false);
-    for (Signed i = 1; i < static_cast<Signed>(ops.size()); ++i) {
-        const Raw previous = ops[static_cast<std::size_t>(i) - 1];
-        const Raw current = ops[static_cast<std::size_t>(i)];
-        if (previous.range.start < current.range.end) {
-            const std::size_t major =
-                previous.major > current.major ? previous.major : current.major;
-            loser[major] = true;
-            for (Signed j = 0; j < static_cast<Signed>(ops.size()); ++j) {
-                if (ops[static_cast<std::size_t>(j)].major == major) {
-                    ops.erase(ops.begin() + j);
-                    if (j < i) {
-                        --i;
-                    }
-                    --j;
-                }
-            }
-            if (i > 0) {
-                --i;
-            }
-        }
-    }
-    return loser;
-}
-
-// VS Code's merging of cursors that overlap, or that touch when one of them is a caret: the union
-// of the two takes the place of the one with the lower number, in the direction of that one, or of
-// the other one when it is the last cursor that was added.
-void merge_cursors(std::vector<Selection>& cursors) {
-    struct Sorted {
-        std::size_t index;
-        Selection selection;
-    };
-    std::vector<Sorted> sorted;
-    for (std::size_t i = 0; i < cursors.size(); ++i) {
-        sorted.push_back({i, cursors[i]});
-    }
-    std::ranges::stable_sort(sorted, [](const Sorted& a, const Sorted& b) {
-        return std::pair(a.selection.start(), a.selection.end()) <
-               std::pair(b.selection.start(), b.selection.end());
-    });
-    std::size_t last_added = cursors.empty() ? 0 : cursors.size() - 1;
-    for (std::size_t at = 0; at + 1 < sorted.size(); ++at) {
-        const Sorted current = sorted[at];
-        const Sorted next = sorted[at + 1];
-        const bool merge = current.selection.empty() || next.selection.empty()
-                               ? next.selection.start() <= current.selection.end()
-                               : next.selection.start() < current.selection.end();
-        if (!merge) {
-            continue;
-        }
-        const bool current_wins = current.index < next.index;
-        const std::size_t winner_at = current_wins ? at : at + 1;
-        const std::size_t looser_at = current_wins ? at + 1 : at;
-        const std::size_t winner_index = sorted[winner_at].index;
-        const std::size_t looser_index = sorted[looser_at].index;
-        const Selection looser = sorted[looser_at].selection;
-        const Selection winner = sorted[winner_at].selection;
-        if (!(looser == winner)) {
-            const std::size_t start = std::min(looser.start(), winner.start());
-            const std::size_t end = std::max(looser.end(), winner.end());
-            bool forward = !winner.reversed();
-            if (looser_index == last_added) {
-                forward = !looser.reversed();
-                last_added = winner_index;
-            }
-            const Selection merged = forward ? Selection{start, end} : Selection{end, start};
-            sorted[winner_at].selection = merged;
-            cursors[winner_index] = merged;
-        }
-        for (Sorted& other : sorted) {
-            if (other.index > looser_index) {
-                --other.index;
-            }
-        }
-        cursors.erase(cursors.begin() + static_cast<Signed>(looser_index));
-        sorted.erase(sorted.begin() + static_cast<Signed>(looser_at));
-        if (last_added >= looser_index && last_added > 0) {
-            --last_added;
-        }
-        --at;
-    }
-}
-
-struct Finished {
-    std::vector<Edit> edits;
-    // The selections of the cursors, in the order of the commands; the first is the primary one,
-    // as in VS Code.
-    std::vector<Selection> selections;
-    // No command has an edit: nothing changes, not even the selections.
-    bool cancelled = false;
-};
-
-// The edits of all the commands, as one batch, and the selection each command leaves.
-Finished finish(const Model& model, const std::vector<Command>& commands,
-                const std::vector<Sel>& cursors_before) {
-    Finished finished;
-    const bool any = std::ranges::any_of(commands, [](const Command& command) {
-        return std::ranges::any_of(
-            command.ops, [](const Op& op) { return !(op.range.empty() && op.text.empty()); });
-    });
-    if (!any) {
-        finished.cancelled = true;
-        return finished;
-    }
-    const std::vector<bool> loser = losers_of(commands);
-
-    std::vector<PlacedEdit> placed;
-    for (std::size_t c = 0; c < commands.size(); ++c) {
-        if (loser[c]) {
-            continue;
-        }
-        for (std::size_t k = 0; k < commands[c].ops.size(); ++k) {
-            const Op& op = commands[c].ops[k];
-            if (op.applies && !(op.range.empty() && op.text.empty())) {
-                placed.push_back(
-                    {Edit{model.offset(op.range.start), model.offset(op.range.end), op.text}, c,
-                     k});
-            }
-        }
-    }
-    const Placement placement(std::move(placed));
-    const auto edit_index = [&](std::size_t command, std::size_t op) {
-        const auto& edits = placement.edits();
-        for (std::size_t i = 0; i < edits.size(); ++i) {
-            if (edits[i].command == command && edits[i].op == op) {
-                return i;
-            }
-        }
-        return edits.size();
-    };
-
-    for (std::size_t c = 0; c < commands.size(); ++c) {
-        const Command& command = commands[c];
-        if (loser[c]) {
-            continue;
-        }
-        const bool has_ops = std::ranges::any_of(
-            command.ops, [](const Op& op) { return !(op.range.empty() && op.text.empty()); });
-        if (!has_ops) {
-            // A command that edits nothing leaves the cursor with the same number as the command
-            // where it was, at the same line and column, also when other commands changed the text
-            // before it on the line or moved the line.
-            const auto retained = [&](Pos position) {
-                const std::size_t line_start =
-                    placement.map(model.line_start_offset(position.line), false);
-                const std::size_t line_end =
-                    placement.map(model.line_end_offset(position.line), true);
-                return std::min(line_start + position.column - 1, line_end);
-            };
-            finished.selections.push_back(
-                Selection{retained(cursors_before[c].anchor), retained(cursors_before[c].active)});
-            continue;
-        }
-        if (command.inverse) {
-            const std::size_t first = edit_index(c, 0);
-            const std::size_t first_end =
-                placement.placed_start(first) + placement.edits()[first].edit.text.size();
-            if (command.ops.size() == 2) {
-                const std::size_t second = edit_index(c, 1);
-                finished.selections.push_back(Selection{first_end, placement.placed_start(second)});
-            } else {
-                const std::size_t caret =
-                    first_end - (command.used_end_token ? command.used_end_token_size + 1 : 0);
-                finished.selections.push_back(Selection::caret(caret));
-            }
-            continue;
-        }
-
-        const Sel& tracked = command.tracked;
-        bool start_moves = true;
-        bool end_moves = false;
-        if (tracked.empty()) {
-            start_moves = end_moves =
-                tracked.start().column != model.max_column(tracked.start().line);
-        }
-        const std::size_t start = placement.map(model.offset(tracked.start()), start_moves);
-        std::size_t end = std::max(start, placement.map(model.offset(tracked.end()), end_moves));
-        // A range that the edits emptied has no direction left.
-        const bool reversed = tracked.reversed() && start != end;
-        if (command.move_end_down) {
-            end = placement.map(model.line_start_offset(command.selection.end().line), false);
-        }
-        // A column that the shift pushes past the end of its line is the end of the line.
-        const auto shifted = [&](std::size_t offset, std::size_t line) {
-            return std::min(offset + command.delta_column,
-                            placement.map(model.line_end_offset(line), true));
-        };
-        const std::size_t start_line = tracked.start().line;
-        const std::size_t end_line =
-            command.move_end_down ? command.selection.end().line : tracked.end().line;
-        const std::size_t anchor = reversed ? shifted(end, end_line) : shifted(start, start_line);
-        const std::size_t active = reversed ? shifted(start, start_line) : shifted(end, end_line);
-        finished.selections.push_back(Selection{anchor, active});
-    }
-    for (const PlacedEdit& edit : placement.edits()) {
-        finished.edits.push_back(edit.edit);
-    }
-    merge_cursors(finished.selections);
-    return finished;
-}
-
 } // namespace
 
 EditOutcome EditController::comment_lines(LineCommentType type, const CommentOptions& options) {
@@ -788,17 +410,10 @@ EditOutcome EditController::comment_lines(LineCommentType type, const CommentOpt
     const std::vector<Selection>& selections = document_.selections().all();
     const std::size_t primary = document_.selections().primary_index();
 
-    // VS Code's cursors, the primary one first and the others in the order of the text.
-    std::vector<Sel> cursors;
+    const std::vector<Sel> cursors = cursors_of(model, document_.selections());
     std::vector<std::size_t> rank(selections.size());
     for (std::size_t i = 0; i < selections.size(); ++i) {
         rank[i] = i == primary ? 0 : (i < primary ? i + 1 : i);
-    }
-    cursors.push_back(model.selection(selections[primary]));
-    for (std::size_t i = 0; i < selections.size(); ++i) {
-        if (i != primary) {
-            cursors.push_back(model.selection(selections[i]));
-        }
     }
 
     // Selections that share a line comment it once, for the cursor that comes first. VS Code
@@ -833,18 +448,7 @@ EditOutcome EditController::comment_lines(LineCommentType type, const CommentOpt
 
 EditOutcome EditController::toggle_block_comment(const CommentOptions& options) {
     const Model model(document_.text());
-    const std::vector<Selection>& selections = document_.selections().all();
-    const std::size_t primary = document_.selections().primary_index();
-
-    // The commands follow the cursors: the primary one first and the others in the order of the
-    // text.
-    std::vector<Sel> cursors;
-    cursors.push_back(model.selection(selections[primary]));
-    for (std::size_t i = 0; i < selections.size(); ++i) {
-        if (i != primary) {
-            cursors.push_back(model.selection(selections[i]));
-        }
-    }
+    const std::vector<Sel> cursors = cursors_of(model, document_.selections());
     std::vector<Command> commands;
     for (const Sel& cursor : cursors) {
         commands.push_back(block_comment(model, cursor, options));

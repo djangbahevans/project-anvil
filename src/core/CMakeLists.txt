@@ -13,6 +13,7 @@ add_library(anvil_core STATIC
   glob.cpp
   go_to_line.cpp
   comment_commands.cpp
+  cursor_commands.cpp
   language_comments.cpp
   language_registry.cpp
   live_highlighter.cpp
