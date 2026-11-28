@@ -128,6 +128,15 @@ Document::FileContent Document::describe_file(std::string_view bytes) {
     return {bytes.size(), hash};
 }
 
+const Indentation& Document::resolve_indentation(Indentation defaults, bool detect) {
+    const IndentationAsked asked{defaults, detect};
+    if (indentation_asked_ != asked) {
+        indentation_asked_ = asked;
+        indentation_ = detect ? guess_indentation(text(), defaults) : defaults;
+    }
+    return indentation_;
+}
+
 void Document::record_file_content(std::string_view bytes) {
     file_content_ = describe_file(bytes);
 }

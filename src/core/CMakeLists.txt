@@ -15,6 +15,7 @@ add_library(anvil_core STATIC
   comment_commands.cpp
   cursor_commands.cpp
   indent_commands.cpp
+  indentation.cpp
   word_delete.cpp
   language_comments.cpp
   language_registry.cpp
