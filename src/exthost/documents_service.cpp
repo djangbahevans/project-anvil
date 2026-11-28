@@ -137,20 +137,30 @@ void DocumentsService::set_editor_options(EditorOptions options) {
     if (!synchronized_) {
         return;
     }
-    for (const Editor& editor : editors_) {
+    for (Editor& editor : editors_) {
+        const core::Indentation now = indentation_of(*entries_.at(editor.uri_key).document);
+        if (now == editor.told) {
+            continue;
+        }
+        editor.told = now;
         send(ProxyId::ExtHostEditors, "$acceptEditorPropertiesChanged",
              json::array({editor.id,
-                          {{"options", editor_options_json()},
+                          {{"options", editor_options_json(now)},
                            {"selections", nullptr},
                            {"visibleRanges", nullptr}}}));
     }
 }
 
-json DocumentsService::editor_options_json() const {
-    return {{"tabSize", editor_options_.tab_size},
-            {"indentSize", editor_options_.tab_size},
+core::Indentation DocumentsService::indentation_of(core::Document& document) const {
+    return document.resolve_indentation({editor_options_.tab_size, editor_options_.insert_spaces},
+                                        editor_options_.detect_indentation);
+}
+
+json DocumentsService::editor_options_json(core::Indentation indentation) {
+    return {{"tabSize", indentation.tab_size},
+            {"indentSize", indentation.tab_size},
             {"originalIndentSize", "tabSize"},
-            {"insertSpaces", editor_options_.insert_spaces},
+            {"insertSpaces", indentation.insert_spaces},
             {"cursorStyle", 1},
             {"lineNumbers", 1}};
 }
@@ -168,7 +178,8 @@ json DocumentsService::model_added_data(const Entry& entry) const {
     };
 }
 
-json DocumentsService::editor_added_data(const Editor& editor, const Entry& entry) const {
+json DocumentsService::editor_added_data(Editor& editor, const Entry& entry) const {
+    editor.told = indentation_of(*entry.document);
     const core::Document& document = *entry.document;
     json selections = json::array();
     for (const core::Selection& selection : document.selections().all()) {
@@ -177,7 +188,7 @@ json DocumentsService::editor_added_data(const Editor& editor, const Entry& entr
     return {
         {"id", editor.id},
         {"documentUri", uri_to_json(entry.uri)},
-        {"options", editor_options_json()},
+        {"options", editor_options_json(editor.told)},
         {"selections", std::move(selections)},
         {"visibleRanges", json::array({range_to_json(core::Range{{0, 0}, {0, 0}})})},
         {"editorPosition", 1},
@@ -190,7 +201,7 @@ std::string DocumentsService::initial_delta_args() {
         documents.push_back(model_added_data(entry));
     }
     json editors = json::array();
-    for (const Editor& editor : editors_) {
+    for (Editor& editor : editors_) {
         editors.push_back(editor_added_data(editor, entries_.at(editor.uri_key)));
     }
     json delta = {{"addedDocuments", std::move(documents)}, {"addedEditors", std::move(editors)}};
@@ -282,9 +293,10 @@ std::expected<std::string, Error> DocumentsService::add_editor(const core::Uri& 
     if (entry == nullptr) {
         return std::unexpected(failure("the document is not open: " + uri.to_string()));
     }
-    Editor editor{"anvil-editor-" + std::to_string(next_editor_++), uri.to_string()};
-    editors_.push_back(editor);
-    send_delta({{"addedEditors", json::array({editor_added_data(editor, *entry)})}});
+    editors_.push_back({"anvil-editor-" + std::to_string(next_editor_++), uri.to_string()});
+    Editor& editor = editors_.back();
+    const json added = editor_added_data(editor, *entry);
+    send_delta({{"addedEditors", json::array({added})}});
     return editor.id;
 }
 
