@@ -2,6 +2,7 @@
 
 #include "anvil/core/editing.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace anvil::core::cursor_commands {
@@ -13,12 +14,20 @@ struct PlacedEdit {
     std::size_t op = 0;
 };
 
+// The edits of all the commands in the order of the text, none overlapping another. A lookup costs
+// the logarithm of their number, since a command is run for every cursor and there can be
+// thousands.
 class Placement {
 public:
     explicit Placement(std::vector<PlacedEdit> edits) : edits_(std::move(edits)) {
         std::ranges::stable_sort(edits_, [](const PlacedEdit& a, const PlacedEdit& b) {
             return std::pair(a.edit.start, a.edit.end) < std::pair(b.edit.start, b.edit.end);
         });
+        for (const PlacedEdit& placed : edits_) {
+            const Edit& e = placed.edit;
+            before_.push_back(before_.back() + static_cast<Signed>(e.text.size()) -
+                              static_cast<Signed>(e.end - e.start));
+        }
     }
 
     const std::vector<PlacedEdit>& edits() const {
@@ -32,8 +41,17 @@ public:
     // `moves`.
     std::size_t map(std::size_t offset, bool moves) const {
         std::size_t position = offset;
-        for (auto edit = edits_.rbegin(); edit != edits_.rend(); ++edit) {
+        // The edits that start after the position leave it.
+        auto edit = std::ranges::upper_bound(
+            edits_, offset, {}, [](const PlacedEdit& placed) { return placed.edit.start; });
+        while (edit != edits_.begin()) {
+            --edit;
             const Edit& e = edit->edit;
+            // This edit and those before it end before the position, so each only shifts it.
+            if (e.end < position) {
+                const auto through = static_cast<std::size_t>(edit - edits_.begin()) + 1;
+                return static_cast<std::size_t>(static_cast<Signed>(position) + before_[through]);
+            }
             if (e.start == e.end) {
                 if (position > e.start || (position == e.start && moves)) {
                     position += e.text.size();
@@ -49,16 +67,14 @@ public:
 
     // Where the text that the edit `index` (in the order of edits()) puts in is in the new text.
     std::size_t placed_start(std::size_t index) const {
-        Signed delta = 0;
-        for (std::size_t i = 0; i < index; ++i) {
-            const Edit& e = edits_[i].edit;
-            delta += static_cast<Signed>(e.text.size()) - static_cast<Signed>(e.end - e.start);
-        }
-        return static_cast<std::size_t>(static_cast<Signed>(edits_[index].edit.start) + delta);
+        return static_cast<std::size_t>(static_cast<Signed>(edits_[index].edit.start) +
+                                        before_[index]);
     }
 
 private:
     std::vector<PlacedEdit> edits_;
+    // How much longer the text is for the edits before each index.
+    std::vector<Signed> before_{0};
 };
 
 // The cursors whose edits overlap those of a cursor with a lower number lose, as in VS Code: the
@@ -195,15 +211,14 @@ Finished finish(const Model& model, const std::vector<Command>& commands,
         }
     }
     const Placement placement(std::move(placed));
-    const auto edit_index = [&](std::size_t command, std::size_t op) {
-        const auto& edits = placement.edits();
-        for (std::size_t i = 0; i < edits.size(); ++i) {
-            if (edits[i].command == command && edits[i].op == op) {
-                return i;
-            }
-        }
-        return edits.size();
-    };
+    // Where each op of each command ended up among the edits, which are in the order of the text.
+    std::vector<std::vector<std::size_t>> index_of(commands.size());
+    for (std::size_t c = 0; c < commands.size(); ++c) {
+        index_of[c].resize(commands[c].ops.size(), placement.edits().size());
+    }
+    for (std::size_t i = 0; i < placement.edits().size(); ++i) {
+        index_of[placement.edits()[i].command][placement.edits()[i].op] = i;
+    }
 
     for (std::size_t c = 0; c < commands.size(); ++c) {
         const Command& command = commands[c];
@@ -228,11 +243,11 @@ Finished finish(const Model& model, const std::vector<Command>& commands,
             continue;
         }
         if (command.inverse) {
-            const std::size_t first = edit_index(c, 0);
+            const std::size_t first = index_of[c][0];
             const std::size_t first_end =
                 placement.placed_start(first) + placement.edits()[first].edit.text.size();
             if (command.ops.size() == 2) {
-                const std::size_t second = edit_index(c, 1);
+                const std::size_t second = index_of[c][1];
                 finished.selections.push_back(Selection{first_end, placement.placed_start(second)});
             } else {
                 const std::size_t caret =
