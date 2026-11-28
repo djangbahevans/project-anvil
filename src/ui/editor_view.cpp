@@ -209,12 +209,10 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     const int previous_line_height = line_height_;
     const int previous_char_width = char_width_;
 
-    tab_size_ = static_cast<std::size_t>(settings.tab_size);
+    default_indentation_ = {static_cast<std::size_t>(settings.tab_size), settings.insert_spaces};
+    detect_indentation_ = settings.detect_indentation;
+    take_indentation();
     line_height_ratio_ = settings.line_height_ratio;
-    if (controller_) {
-        controller_->set_tab_size(tab_size_);
-    }
-    insert_spaces_ = settings.insert_spaces;
     render_whitespace_ = settings.render_whitespace;
     render_control_characters_ = settings.render_control_characters;
     multi_cursor_modifier_ = settings.multi_cursor_modifier;
@@ -252,13 +250,31 @@ void EditorView::apply_settings(const core::EditorSettings& settings) {
     viewport()->update();
 }
 
+void EditorView::take_indentation() {
+    const core::Indentation indentation =
+        document_ ? document_->resolve_indentation(default_indentation_, detect_indentation_)
+                  : default_indentation_;
+    tab_size_ = indentation.tab_size;
+    insert_spaces_ = indentation.insert_spaces;
+    if (controller_) {
+        controller_->set_tab_size(tab_size_);
+    }
+}
+
+void EditorView::refresh_indentation() {
+    take_indentation();
+    clear_layouts();
+    rows_.reset();
+    viewport()->update();
+}
+
 void EditorView::set_document(std::shared_ptr<core::Document> document) {
     document_ = std::move(document);
     controller_ = document_ ? std::make_unique<core::EditController>(*document_) : nullptr;
     if (controller_) {
-        controller_->set_tab_size(tab_size_);
         controller_->set_row_source([this] { return rows(); });
     }
+    take_indentation();
     max_line_width_ = 0;
     highlights_.clear();
     clear_layouts();

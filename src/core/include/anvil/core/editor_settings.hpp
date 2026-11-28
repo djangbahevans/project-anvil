@@ -88,6 +88,8 @@ struct EditorSettings {
     int tab_size = 4;
     // editor.insertSpaces
     bool insert_spaces = true;
+    // editor.detectIndentation: a document's own indentation stands for the two settings above
+    bool detect_indentation = true;
     // files.eol, with "auto" resolved: the line ending of new documents
     LineEnding line_ending = LineEnding::lf;
     // workbench.colorTheme: the `id` of a color theme, or its label when it has no id

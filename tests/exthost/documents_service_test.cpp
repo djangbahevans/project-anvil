@@ -564,6 +564,48 @@ TEST_F(DocumentsServiceTest, SettingTheSameOptionsAgainSendsNothing) {
     EXPECT_TRUE(sent().calls().empty());
 }
 
+TEST_F(DocumentsServiceTest, EachEditorReportsTheIndentationOfItsDocument) {
+    const core::Uri two = open("two.txt", "a\n  b\n  c");
+    const core::Uri tabs = open("tabs.txt", "a\n\tb\n\tc");
+    const core::Uri plain = open("plain.txt", "x");
+    service_.add_editor(two);
+    service_.add_editor(tabs);
+    const std::string plain_editor = *service_.add_editor(plain);
+    const json editors = synchronize()["addedEditors"];
+    EXPECT_EQ(editors[0]["options"]["tabSize"], 2);
+    EXPECT_TRUE(editors[0]["options"]["insertSpaces"].get<bool>());
+    EXPECT_EQ(editors[1]["options"]["tabSize"], 4);
+    EXPECT_FALSE(editors[1]["options"]["insertSpaces"].get<bool>());
+    EXPECT_EQ(editors[2]["options"]["tabSize"], 4);
+
+    // Only an editor whose options differ is told: the others keep what their text shows.
+    service_.set_editor_options({.tab_size = 8});
+    auto calls = sent().calls();
+    ASSERT_EQ(calls.size(), 2u);
+    EXPECT_EQ(calls[0].second[1]["options"]["tabSize"], 8) << "the width of a file with tabs";
+    EXPECT_EQ(calls[1].second[0], plain_editor);
+
+    service_.set_editor_options({.tab_size = 8, .detect_indentation = false});
+    calls = sent().calls();
+    ASSERT_EQ(calls.size(), 2u);
+    for (const auto& [method, args] : calls) {
+        EXPECT_EQ(args[1]["options"]["tabSize"], 8);
+        EXPECT_TRUE(args[1]["options"]["insertSpaces"].get<bool>());
+    }
+}
+
+TEST_F(DocumentsServiceTest, AnEditorAddedLaterReportsItsDocumentsIndentation) {
+    const core::Uri uri = open("two.txt", "a\n  b\n  c");
+    synchronize();
+    service_.add_editor(uri);
+    const auto calls = sent().calls();
+    ASSERT_EQ(calls.size(), 1u);
+    EXPECT_EQ(calls[0].second[0]["addedEditors"][0]["options"]["tabSize"], 2);
+    // Settings that the text overrules leave the editor as it was told.
+    service_.set_editor_options({.tab_size = 4, .insert_spaces = false});
+    EXPECT_TRUE(sent().calls().empty());
+}
+
 TEST_F(DocumentsServiceTest, OptionsSetBeforeTheInitialDeltaAreSentInIt) {
     const core::Uri uri = open("a.txt", "x");
     service_.add_editor(uri);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "anvil/core/error.hpp"
+#include "anvil/core/indentation.hpp"
 #include "anvil/core/selection.hpp"
 #include "anvil/core/text.hpp"
 #include "anvil/core/text_buffer.hpp"
@@ -60,6 +61,16 @@ public:
     // Fails with ErrorCode::invalid_encoding when `bytes` is not valid UTF-8.
     static std::expected<Document, Error> from_file_bytes(std::string_view bytes);
     std::string to_file_bytes() const;
+
+    // The document's indentation: `defaults`, or with `detect` what its text shows. The text is
+    // looked at again only when an argument differs from the last call, so editing does not change
+    // the answer, as in VS Code.
+    const Indentation& resolve_indentation(Indentation defaults, bool detect);
+    // Has the next resolve_indentation look at the text again, for a document that is given its
+    // content only after it was first shown.
+    void forget_indentation() {
+        indentation_asked_.reset();
+    }
 
     // Remembers what the document's file holds, as it was read or written. from_file_bytes does
     // this for the bytes it reads.
@@ -172,8 +183,17 @@ private:
     };
     static FileContent describe_file(std::string_view bytes);
 
+    struct IndentationAsked {
+        Indentation defaults;
+        bool detect = false;
+
+        bool operator==(const IndentationAsked&) const = default;
+    };
+
     TextBuffer buffer_;
     std::optional<FileContent> file_content_;
+    std::optional<IndentationAsked> indentation_asked_;
+    Indentation indentation_;
     SelectionSet selections_;
     LineEnding line_ending_;
     bool bom_;

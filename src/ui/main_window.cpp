@@ -1515,7 +1515,8 @@ void MainWindow::pick_association(const std::string& extension, const std::strin
 void MainWindow::apply_extension_host_options() {
     const core::EditorSettings& editor = settings_->editor();
     bridge_.set_editor_options({.tab_size = static_cast<std::size_t>(editor.tab_size),
-                                .insert_spaces = editor.insert_spaces});
+                                .insert_spaces = editor.insert_spaces,
+                                .detect_indentation = editor.detect_indentation});
     bridge_.set_overwrite_changed_files(editor.save_conflict_resolution ==
                                         core::SaveConflictResolution::overwrite_file_on_disk);
 }
@@ -2328,6 +2329,14 @@ bool MainWindow::reopen(const workbench::ClosedEditor& closed) {
             if (auto change = documents_.at(uri)->apply_edits(insert)) {
                 bridge_.text_changed(uri, *change);
                 document_edited(uri, *change);
+                // It was shown while it was empty, and has its indentation from now.
+                documents_.at(uri)->forget_indentation();
+                for (EditorGroupWidget* shown : area_->groups()) {
+                    if (shown->view()->document() == documents_.at(uri)) {
+                        shown->view()->refresh_indentation();
+                    }
+                }
+                apply_extension_host_options();
             }
         }
     }
@@ -3301,8 +3310,7 @@ void MainWindow::preview_go_to_line() {
         input.remove(0, 1);
     }
     const core::GoToLine parsed = core::parse_go_to_line(
-        document->text(), static_cast<std::size_t>(settings_->editor().tab_size),
-        input.toStdString());
+        document->text(), view()->indentation().tab_size, input.toStdString());
 
     QString label;
     if (!parsed.has_line) {
@@ -3717,7 +3725,7 @@ void MainWindow::run_comment_command(bool block, core::LineCommentType type) {
     const core::EditorSettings& editor = settings_->editor();
     core::CommentOptions options;
     options.tokens = language_comments(language.id).value_or(core::LanguageComments{});
-    options.indent_size = static_cast<std::size_t>(editor.tab_size);
+    options.indent_size = view()->indentation().tab_size;
     options.insert_space = editor.comments_insert_space;
     options.ignore_empty_lines = editor.comments_ignore_empty_lines;
     if (block) {

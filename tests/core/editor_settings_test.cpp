@@ -180,6 +180,14 @@ TEST(EditorSettings, SaveConflictResolutionHasTheValuesOfVsCode) {
     EXPECT_NE(result.error().message.find("files.saveConflictResolution"), std::string::npos);
 }
 
+TEST(EditorSettings, DetectIndentationIsOnUnlessItIsTurnedOff) {
+    EXPECT_TRUE(read("{}")->detect_indentation);
+    EXPECT_FALSE(read(R"j({"editor.detectIndentation": false})j")->detect_indentation);
+    const auto result = read(R"j({"editor.detectIndentation": "no"})j");
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("editor.detectIndentation"), std::string::npos);
+}
+
 TEST(EditorSettings, RestoreWindowsHasTheValuesOfVsCode) {
     using anvil::core::RestoreWindows;
     EXPECT_EQ(read("{}")->restore_windows, RestoreWindows::all);

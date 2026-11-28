@@ -69,15 +69,18 @@ public:
         observer_ = std::move(observer);
     }
 
-    // The options that every text editor reports to extensions (`TextEditor.options`).
+    // The settings behind the options that a text editor reports to extensions
+    // (`TextEditor.options`): those of its document (`core::Document::resolve_indentation`).
     struct EditorOptions {
         std::size_t tab_size = 4;
         bool insert_spaces = true;
+        bool detect_indentation = true;
 
         friend bool operator==(const EditorOptions&, const EditorOptions&) = default;
     };
-    // Sets the options of all editors, existing and future. Extensions that already know of an
-    // editor are told when the options differ from before.
+    // Sets the settings for all editors, existing and future. Extensions that already know of an
+    // editor are told when its options differ from before, which they also do after a document
+    // forgot its indentation.
     void set_editor_options(EditorOptions options);
     const EditorOptions& editor_options() const {
         return editor_options_;
@@ -159,11 +162,14 @@ private:
     struct Editor {
         std::string id;
         std::string uri_key;
+        // The options that the extension host was told last.
+        core::Indentation told{};
     };
 
-    nlohmann::json editor_options_json() const;
+    core::Indentation indentation_of(core::Document& document) const;
+    static nlohmann::json editor_options_json(core::Indentation indentation);
     nlohmann::json model_added_data(const Entry& entry) const;
-    nlohmann::json editor_added_data(const Editor& editor, const Entry& entry) const;
+    nlohmann::json editor_added_data(Editor& editor, const Entry& entry) const;
     void send_delta(const nlohmann::json& delta);
     void send(ProxyId target, const char* method, const nlohmann::json& args);
     void activate_language(const std::string& language_id);

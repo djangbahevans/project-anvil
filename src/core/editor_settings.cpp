@@ -69,6 +69,13 @@ std::expected<EditorSettings, Error> EditorSettings::from_settings(const Setting
             problems.emplace_back("editor.insertSpaces must be true or false");
         }
     }
+    if (settings.contains("editor.detectIndentation")) {
+        if (const auto detect = settings.get<bool>("editor.detectIndentation")) {
+            result.detect_indentation = *detect;
+        } else {
+            problems.emplace_back("editor.detectIndentation must be true or false");
+        }
+    }
     if (settings.contains("workbench.colorTheme")) {
         if (const auto theme = settings.get<std::string>("workbench.colorTheme")) {
             if (!is_blank(*theme)) {
