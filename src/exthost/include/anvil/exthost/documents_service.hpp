@@ -79,7 +79,8 @@ public:
         friend bool operator==(const EditorOptions&, const EditorOptions&) = default;
     };
     // Sets the settings for all editors, existing and future. Extensions that already know of an
-    // editor are told when its options differ from before.
+    // editor are told when its options differ from before, which they also do after a document
+    // forgot its indentation.
     void set_editor_options(EditorOptions options);
     const EditorOptions& editor_options() const {
         return editor_options_;

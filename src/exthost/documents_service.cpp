@@ -130,9 +130,6 @@ void DocumentsService::send_delta(const json& delta) {
 }
 
 void DocumentsService::set_editor_options(EditorOptions options) {
-    if (options == editor_options_) {
-        return;
-    }
     editor_options_ = options;
     if (!synchronized_) {
         return;

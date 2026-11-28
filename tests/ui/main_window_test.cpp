@@ -9516,7 +9516,9 @@ TEST_F(CommentCommandsTest, TheSettingsDecideTheSpaceAndTheEmptyLines) {
 }
 
 TEST_F(CommentCommandsTest, TheTabSizeAlignsTheTokensOfIndentedLines) {
-    settings_file_ = write("settings.json", R"j({"editor.tabSize": 4})j");
+    // Without detection, which reads a width of 2 from this text.
+    settings_file_ =
+        write("settings.json", R"j({"editor.tabSize": 4, "editor.detectIndentation": false})j");
     open("a.py", "\t\tx\n    y\n");
     select({core::Selection{0, 11}});
     run("editor.action.commentLine");
@@ -13512,6 +13514,140 @@ TEST_F(EditKeysTest, CtrlBackspaceAndCtrlDeleteDeleteByWord) {
     EXPECT_EQ(current_text(), " world ");
     window_->view()->undo();
     EXPECT_EQ(current_text(), "hello world ");
+}
+
+} // namespace
+
+namespace {
+
+class IndentationTest : public MainWindowTest {
+protected:
+    void SetUp() override {
+        MainWindowTest::SetUp();
+        settings_file_ = write("settings.json", "{}");
+    }
+
+    void open(const std::string& name, std::string_view bytes) {
+        ASSERT_TRUE(window_->open_file(QString::fromStdString(write(name, bytes).string())));
+        window_->resize(900, 600);
+        QApplication::processEvents();
+    }
+    std::string text() const {
+        return window_->current_document()->text().to_string();
+    }
+    // What a Tab at the end of the document adds.
+    std::string tab_adds() {
+        const std::size_t end = window_->current_document()->text().size();
+        window_->view()->select_range(core::Selection::caret(end));
+        const std::string before = text();
+        window_->commands().execute("tab");
+        const std::string added = text().substr(before.size());
+        window_->commands().execute("undo");
+        return added;
+    }
+
+    // Indented by two spaces, and ending in a word.
+    static constexpr const char* two = "a\n  b\n  c\nword";
+};
+
+TEST_F(IndentationTest, AFileIsIndentedAsItsContentShows) {
+    create_window();
+    open("two.txt", two);
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{2, true}));
+    EXPECT_EQ(tab_adds(), "  ") << "to the next multiple of two";
+    open("tabs.txt", "a\n\tb\n\tc\n");
+    EXPECT_EQ(tab_adds(), "\t");
+    open("plain.txt", "");
+    EXPECT_EQ(tab_adds(), "    ");
+    // Each keeps its own.
+    open("two.txt", two);
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{2, true}));
+}
+
+TEST_F(IndentationTest, TheSettingsDecideWhatTheContentDoesNotAndAllOfItWithoutDetection) {
+    settings_file_ = write("settings.json", R"j({"editor.tabSize": 8})j");
+    create_window();
+    open("plain.txt", "word");
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{8, true}));
+    open("two.txt", two);
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{2, true}));
+
+    window_->change_setting("editor.detectIndentation", false);
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{8, true}));
+    EXPECT_EQ(tab_adds(), "    ") << "from column 4 to column 8";
+    window_->change_setting("editor.detectIndentation", true);
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{2, true}));
+
+    open("plain.txt", "word");
+    window_->change_setting("editor.tabSize", 3);
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{3, true}));
+}
+
+TEST_F(IndentationTest, TypingDoesNotChangeTheIndentation) {
+    create_window();
+    for (const QString& line : {QString("a"), QString("  b"), QString("  c")}) {
+        type(line);
+        QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(window_->view(), &enter);
+    }
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{4, true}));
+}
+
+TEST_F(IndentationTest, ACommentAndAGoToLineColumnUseTheDocumentsTabSize) {
+    create_window();
+    open("a.py", "a\n  b\n  c\n      x");
+    window_->view()->select_range(core::Selection::caret(text().size()));
+    window_->commands().execute("editor.action.commentLine");
+    // The token goes at the indentation rounded down to a tab stop: 6, and not 4.
+    EXPECT_EQ(text(), "a\n  b\n  c\n      # x");
+
+    open("wide.txt", "a\n  b\n  c\n\tz");
+    window_->commands().execute("workbench.action.gotoLine");
+    QTest::keyClicks(window_->command_palette()->filter_field(), "4:");
+    EXPECT_EQ(window_->command_palette()->list()->model()->index(0, 0).data().toString(),
+              "Press 'Enter' to go to line 4 or enter a column number (from 1 to 4).");
+}
+
+TEST_F(IndentationTest, AReopenedUntitledDocumentIsIndentedAsItsTextShows) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    window_->commands().execute("workbench.action.files.newUntitledFile");
+    const auto enter = [&] {
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(window_->view(), &press);
+    };
+    type("a");
+    enter();
+    type("  b");
+    enter();
+    type("c"); // Enter keeps the indentation of the line above.
+    ASSERT_EQ(text(), "a\n  b\n  c");
+    ASSERT_EQ(window_->view()->indentation(), (core::Indentation{4, true}));
+
+    window_->commands().execute("workbench.action.closeActiveEditor");
+    window_->commands().execute("workbench.action.reopenClosedEditor");
+    ASSERT_EQ(text(), "a\n  b\n  c");
+    EXPECT_EQ(window_->view()->indentation(), (core::Indentation{2, true}));
+    EXPECT_TRUE(wait_until([&] { return run("anvil.docs.active")["options"]["tabSize"] == 2; }));
+}
+
+TEST_F(IndentationTest, ExtensionsSeeTheIndentationOfEachEditor) {
+    create_window(true);
+    if (!window_) {
+        return;
+    }
+    const auto options = [&] { return run("anvil.docs.active")["options"]; };
+    open("two.txt", two);
+    ASSERT_TRUE(wait_until([&] { return options()["tabSize"] == 2; }));
+    EXPECT_EQ(options()["insertSpaces"], true);
+    open("tabs.txt", "a\n\tb\n\tc\n");
+    ASSERT_TRUE(wait_until([&] { return options()["insertSpaces"] == false; }));
+    EXPECT_EQ(options()["tabSize"], 4);
+
+    window_->change_setting("editor.detectIndentation", false);
+    EXPECT_TRUE(wait_until([&] { return options()["insertSpaces"] == true; }));
 }
 
 } // namespace

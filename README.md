@@ -84,6 +84,7 @@ A missing file means the defaults; the editor never creates it. Keys can be writ
 | `window.zoomLevel` | The zoom of the window, in steps of a factor of 1.2: -8 to 8, decimals allowed, written by View > Appearance > Zoom In, Zoom Out and Reset Zoom (Ctrl+=, Ctrl+-, Ctrl+NumPad0). Every size of the window follows it: the text, the bars, the side bar, the panel, the menus and the quick pick | 0 |
 | `editor.tabSize` | Columns per tab stop, an integer of at least 1 (values above 1024 are treated as 1024) | 4 |
 | `editor.insertSpaces` | Tab inserts spaces up to the next tab stop when `true`, a tab character when `false` | `true` |
+| `editor.detectIndentation` | Each document is indented as its content shows when it is opened; `editor.tabSize` and `editor.insertSpaces` apply to what the content does not decide, and to everything when `false` | `true` |
 | `editor.multiCursorModifier` | The key that makes a click add a cursor: `"alt"` (Alt+click), or `"ctrlCmd"` (Ctrl+click, Cmd+click on macOS). Shift with it, or Shift+Alt with `"ctrlCmd"`, selects a rectangle | `"alt"` |
 | `editor.columnSelection` | Dragging the mouse selects a rectangle, one selection per line, instead of a stream of text | `false` |
 | `editor.renderWhitespace` | Which spaces and tabs get a mark (a dot for a space, an arrow for a tab, in `editorWhitespace.foreground`): `"none"`, `"boundary"` (all but a single space between words), `"selection"` (inside selections), `"trailing"` (at the end of the line) or `"all"` | `"selection"` |

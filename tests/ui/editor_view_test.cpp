@@ -782,7 +782,10 @@ TEST_F(EditorViewTest, TabInsertsSpacesUpToTheNextMultipleOfTheTabSize) {
 
 TEST_F(EditorViewTest, TabCountsATabCharacterAsAdvancingToTheNextTabStop) {
     open("\tab");
-    view_.apply_settings(settings(14, 4, true));
+    core::EditorSettings spaces = settings(14, 4, true);
+    // The text is indented with a tab, which detection would follow.
+    spaces.detect_indentation = false;
+    view_.apply_settings(spaces);
     view_.select_range(core::Selection::caret(3));
     key(Qt::Key_Tab);
     EXPECT_EQ(text(), "\tab  ");

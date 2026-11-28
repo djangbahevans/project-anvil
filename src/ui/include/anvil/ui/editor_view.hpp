@@ -46,6 +46,12 @@ public:
     // that is not installed falls back to the system's fixed-width font. The text, caret and scroll
     // position stay as they are, so this can run while the user edits.
     void apply_settings(const core::EditorSettings& settings);
+    // The document's indentation under the settings, which the view draws tabs and edits with.
+    core::Indentation indentation() const {
+        return {tab_size_, insert_spaces_};
+    }
+    // Asks the document again, after it forgot its indentation.
+    void refresh_indentation();
 
     // Takes the colors of the editor from the workbench colors, which must outlive the view, and
     // repaints when they change; null returns to the palette of the widget. The keys read are
@@ -326,6 +332,7 @@ private:
     // Goes where the caret shows, over time with smooth scrolling.
     void reveal(QPoint position);
     void restart_caret_blink();
+    void take_indentation();
 
     struct Colors;
     Colors current_colors() const;
@@ -358,6 +365,9 @@ private:
     int char_width_ = 8;
     std::size_t tab_size_ = 4;
     bool insert_spaces_ = true;
+    // The settings behind the two above.
+    core::Indentation default_indentation_{};
+    bool detect_indentation_ = true;
     core::RenderWhitespace render_whitespace_ = core::RenderWhitespace::selection;
     bool render_control_characters_ = true;
     int max_line_width_ = 0;
