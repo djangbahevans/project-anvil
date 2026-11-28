@@ -15,6 +15,12 @@
 
 namespace anvil::core {
 
+namespace cursor_commands {
+class Model;
+struct Command;
+struct Sel;
+} // namespace cursor_commands
+
 enum class Motion {
     left,
     right,
@@ -147,6 +153,11 @@ public:
     EditOutcome delete_backward();
     // Deletes the selections, or the character after each caret.
     EditOutcome delete_forward();
+    // Deletes the selections, or from each caret what VS Code's `deleteWordLeft` and
+    // `deleteWordRight` take: the blanks beside it (two or more on the left), else the word or the
+    // run of punctuation, else the rest of the line or the line break. One undo step.
+    EditOutcome delete_word_left();
+    EditOutcome delete_word_right();
     // Deletes the selections, for cut.
     EditOutcome delete_selection();
     // Deletes what copied_text() copies, for cut: the selections, and the lines of the carets with
@@ -228,6 +239,20 @@ public:
     // line below it, like copy_lines(true).
     EditOutcome duplicate_selection();
 
+    // --- indentation ---
+
+    // VS Code's Tab: with a selection of several lines, or of a whole line, indents the lines by
+    // one level and keeps them selected; otherwise replaces each selection with spaces or a tab up
+    // to the next tab stop. A caret on a blank line that does not start with a level of indentation
+    // gets one level as its line. One undo step.
+    EditOutcome tab(bool insert_spaces);
+    // VS Code's Indent Line and Outdent Line: the leading white space of the lines of every
+    // selection goes to the next or the previous tab stop, written with spaces or tabs. A
+    // selection that ends at the start of a line leaves that line out, and an empty line stays
+    // empty unless the selection is on that line alone. One undo step.
+    EditOutcome indent_lines(bool insert_spaces);
+    EditOutcome outdent_lines(bool insert_spaces);
+
     // --- comments ---
 
     // Toggle, add or remove the line comment token of the language on the lines of every selection
@@ -304,6 +329,12 @@ private:
         selections_only,
     };
     EditOutcome delete_with(DeleteMode mode);
+    EditOutcome delete_word(bool right);
+    EditOutcome shift_lines(bool outdent, bool insert_spaces);
+    // Makes the edits of one command for each cursor, as cursor_commands.hpp describes.
+    EditOutcome run_commands(const cursor_commands::Model& model,
+                             const std::vector<cursor_commands::Command>& commands,
+                             const std::vector<cursor_commands::Sel>& cursors);
     EditOutcome adopt(SelectionSet selections, std::vector<std::size_t> row_ends = {});
     // The active ends at the end of a row, while the selections are those they were given for.
     std::vector<std::size_t> current_row_ends() const;

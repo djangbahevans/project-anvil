@@ -108,6 +108,7 @@ jobs:
           node scripts/generate-language-cases.mjs --check
           node scripts/generate-language-comments.mjs --check
           node scripts/generate-comment-cases.mjs --check
+          node scripts/generate-edit-cases.mjs --check
 
       - name: Check the grapheme table and the recorded cursor column cases
         run: |

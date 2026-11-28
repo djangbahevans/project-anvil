@@ -25,6 +25,7 @@ add_executable(anvil_core_tests
   core/jsonc_test.cpp
   core/key_chord_test.cpp
   core/comment_commands_test.cpp
+  core/edit_commands_test.cpp
   core/line_operations_test.cpp
   core/multi_cursor_test.cpp
   core/key_dispatcher_test.cpp

@@ -218,6 +218,23 @@ TEST(DefaultKeybindingsTest, TheZoomKeysAreVsCodesWithoutCtrlShiftMinusOnLinux) 
     EXPECT_EQ(keys_of(macos, "workbench.action.zoomReset"), chords({"cmd+numpad0"}));
 }
 
+TEST(DefaultKeybindingsTest, IndentingAndDeletingByWordHaveVSCodesKeys) {
+    for (const KeyPlatform platform : platforms) {
+        const bool mac = platform == KeyPlatform::macos;
+        const auto bindings = default_keybindings(platform);
+        EXPECT_EQ(keys_of(bindings, "tab"), chords({"tab"}));
+        EXPECT_EQ(keys_of(bindings, "outdent"), chords({"shift+tab"}));
+        EXPECT_EQ(keys_of(bindings, "editor.action.indentLines"),
+                  chords({mac ? "cmd+]" : "ctrl+]"}));
+        EXPECT_EQ(keys_of(bindings, "editor.action.outdentLines"),
+                  chords({mac ? "cmd+[" : "ctrl+["}));
+        EXPECT_EQ(keys_of(bindings, "deleteWordLeft"),
+                  chords({mac ? "alt+backspace" : "ctrl+backspace"}));
+        EXPECT_EQ(keys_of(bindings, "deleteWordRight"),
+                  chords({mac ? "alt+delete" : "ctrl+delete"}));
+    }
+}
+
 TEST(DefaultKeybindingsTest, ReopenClosedEditorIsCtrlShiftT) {
     EXPECT_EQ(
         keys_of(default_keybindings(KeyPlatform::linux), "workbench.action.reopenClosedEditor"),

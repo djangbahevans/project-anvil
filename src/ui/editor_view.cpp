@@ -877,6 +877,18 @@ void EditorView::delete_backward() {
     }
 }
 
+void EditorView::delete_word_left() {
+    if (controller_) {
+        apply(controller_->delete_word_left());
+    }
+}
+
+void EditorView::delete_word_right() {
+    if (controller_) {
+        apply(controller_->delete_word_right());
+    }
+}
+
 void EditorView::delete_forward() {
     if (controller_) {
         apply(controller_->delete_forward());
@@ -1133,18 +1145,22 @@ void EditorView::duplicate_selection() {
     }
 }
 
-void EditorView::insert_tab() {
-    if (!insert_spaces_) {
-        apply(controller_->type("\t"));
-        return;
+void EditorView::tab() {
+    if (controller_) {
+        apply(controller_->tab(insert_spaces_));
     }
-    // Spaces up to the next tab stop of the primary caret.
-    const core::Text& text = document_->text();
-    const std::size_t caret = document_->selections().primary().active;
-    const std::size_t line_start = text.line_start(text.position_at(caret).line);
-    const std::string before = text.slice(line_start, caret - line_start);
-    const std::size_t column = core::visible_column(before, before.size(), tab_size_);
-    apply(controller_->type(std::string(tab_size_ - column % tab_size_, ' ')));
+}
+
+void EditorView::indent_lines() {
+    if (controller_) {
+        apply(controller_->indent_lines(insert_spaces_));
+    }
+}
+
+void EditorView::outdent_lines() {
+    if (controller_) {
+        apply(controller_->outdent_lines(insert_spaces_));
+    }
 }
 
 bool EditorView::focusNextPrevChild(bool) {
@@ -1215,9 +1231,9 @@ void EditorView::keyPressEvent(QKeyEvent* event) {
     } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
         apply(controller_->insert_newline());
     } else if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier) {
-        insert_tab();
+        tab();
     } else if (event->key() == Qt::Key_Backtab) {
-        // Left to the commands that will outdent; unhandled, it would move the focus out.
+        outdent_lines();
     } else if (event->key() == Qt::Key_Escape) {
         apply(controller_->keep_primary_selection());
     } else {
